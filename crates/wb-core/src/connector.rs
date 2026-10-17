@@ -5,7 +5,7 @@
 //! partir de l'état courant de la page : déplacer, redimensionner ou faire
 //! tourner une forme fait donc suivre ses flèches sans aucune mise à jour.
 
-use crate::geom::{Frame, Pt, ray_poly_hit};
+use crate::geom::{Frame, Pt, Rect, ray_poly_hit};
 use crate::model::{Id, Kind, Label, Object, Outline, Page};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -194,9 +194,15 @@ fn simplify(pts: Vec<Pt>) -> Vec<Pt> {
     out
 }
 
+/// Longueur de la sortie perpendiculaire à un côté de forme.
+const STUB: f64 = 24.0;
+/// Dégagement minimal entre un connecteur coudé et les formes qu'il contourne.
+const CLEARANCE: f64 = 14.0;
+/// Au-delà de ce nombre d'objets, les connecteurs coudés ne cherchent plus à contourner les formes (coût linéaire par connecteur).
+const AVOID_MAX_OBJECTS: usize = 5000;
+
 /// Chemin orthogonal entre deux points, avec sortie perpendiculaire aux côtés.
 fn orthogonal(a: Pt, sa: Option<Side>, b: Pt, sb: Option<Side>) -> Vec<Pt> {
-    const STUB: f64 = 24.0;
     let a1 = sa.map_or(a, |s| a + s.dir() * STUB);
     let b1 = sb.map_or(b, |s| b + s.dir() * STUB);
     let ha = sa.map_or_else(|| (b.x - a.x).abs() >= (b.y - a.y).abs(), Side::horizontal);
@@ -326,6 +332,36 @@ impl Page {
         self.objects.iter().map(|o| (&o.id, o)).collect()
     }
 
+    /// Si le chemin coudé traverse une autre forme, cherche un chemin orthogonal qui la contourne ;
+    /// sinon (ou si rien n'est trouvé) renvoie le chemin d'origine.
+    fn avoid_obstacles(&self, path: Vec<Pt>, a: &Attach, b: &Attach, c: &Connector) -> Vec<Pt> {
+        if self.objects.len() > AVOID_MAX_OBJECTS || path.len() < 2 {
+            return path;
+        }
+        let ends: Vec<&Id> = c.targets().collect();
+        let mut others: Vec<Rect> = Vec::new();
+        let mut own: Vec<Rect> = Vec::new();
+        for o in &self.objects {
+            if !self.is_visible(o) {
+                continue;
+            }
+            let Some(f) = o.frame() else { continue };
+            if ends.contains(&&o.id) { own.push(f.aabb()) } else { others.push(f.aabb()) }
+        }
+        let inner = if path.len() >= 4 { &path[1..path.len() - 1] } else { &path[..0] };
+        if !crate::route::crosses(&path, &others) && !crate::route::crosses(inner, &own) {
+            return path;
+        }
+        let a1 = a.side.map_or(a.pt, |s| a.pt + s.dir() * STUB);
+        let b1 = b.side.map_or(b.pt, |s| b.pt + s.dir() * STUB);
+        let all: Vec<Rect> = others.into_iter().chain(own).collect();
+        let Some(mid) = crate::route::route_around(a1, b1, a.side.map(Side::horizontal), &all, CLEARANCE) else { return path };
+        let mut out = vec![a.pt];
+        out.extend(mid);
+        out.push(b.pt);
+        simplify(out)
+    }
+
     /// Tracé (polyligne) du connecteur ; `None` si une cible a disparu.
     pub fn connector_path(&self, c: &Connector) -> Option<Vec<Pt>> {
         self.connector_path_with(c, &|id| self.get(id))
@@ -349,7 +385,7 @@ impl Page {
             }
             Route::Elbow => {
                 if c.via.is_empty() {
-                    orthogonal(a.pt, a.side, b.pt, b.side)
+                    self.avoid_obstacles(orthogonal(a.pt, a.side, b.pt, b.side), &a, &b, c)
                 } else {
                     let mut pts = vec![a.pt];
                     pts.extend(&c.via);
@@ -486,5 +522,49 @@ mod tests {
         assert!(path.len() > 10);
         let (m, _) = path_midpoint(&path);
         assert!(m.dist(Pt::new(50.0, 50.0)) < 5.0);
+    }
+
+    #[test]
+    fn elbow_goes_around_a_shape_in_the_way_and_stays_orthogonal() {
+        use crate::route::crosses;
+        let mut p = Page::new("t");
+        let a = bx(&mut p, BoxGeom::Rect, 0.0, 0.0, 100.0, 50.0);
+        let b = bx(&mut p, BoxGeom::Rect, 500.0, 0.0, 100.0, 50.0);
+        let wall = bx(&mut p, BoxGeom::Rect, 250.0, -60.0, 100.0, 170.0);
+        let mut c = Connector::new(End::bound(a), End::bound(b));
+        c.route = Route::Elbow;
+        let path = p.connector_path(&c).unwrap();
+        let wall_rect = p.get(&wall).unwrap().frame().unwrap().aabb();
+        assert!(!crosses(&path, &[wall_rect]), "le chemin contourne l'obstacle : {path:?}");
+        for w in path.windows(2) {
+            assert!((w[0].x - w[1].x).abs() < 1e-6 || (w[0].y - w[1].y).abs() < 1e-6, "segment oblique : {w:?}");
+        }
+        assert!(path[0].dist(Pt::new(100.0, 25.0)) < 1e-6 && path.last().unwrap().dist(Pt::new(500.0, 25.0)) < 1e-6);
+    }
+
+    #[test]
+    fn elbow_is_unchanged_when_nothing_is_in_the_way() {
+        let mut p = Page::new("t");
+        let a = bx(&mut p, BoxGeom::Rect, 0.0, 0.0, 100.0, 50.0);
+        let b = bx(&mut p, BoxGeom::Rect, 300.0, 200.0, 100.0, 50.0);
+        bx(&mut p, BoxGeom::Rect, 900.0, 900.0, 100.0, 50.0); // loin de tout
+        let mut c = Connector::new(End::bound(a.clone()), End::bound(b.clone()));
+        c.route = Route::Elbow;
+        let with_far_shape = p.connector_path(&c).unwrap();
+        let mut alone = Page::new("t");
+        alone.objects = p.objects[..2].to_vec();
+        assert_eq!(alone.connector_path(&c).unwrap(), with_far_shape);
+    }
+
+    #[test]
+    fn elbow_to_a_free_end_also_avoids_shapes() {
+        use crate::route::crosses;
+        let mut p = Page::new("t");
+        let a = bx(&mut p, BoxGeom::Rect, 0.0, 0.0, 100.0, 50.0);
+        let wall = bx(&mut p, BoxGeom::Rect, 200.0, -100.0, 60.0, 300.0);
+        let mut c = Connector::new(End::bound(a), End::free(Pt::new(500.0, 25.0)));
+        c.route = Route::Elbow;
+        let path = p.connector_path(&c).unwrap();
+        assert!(!crosses(&path, &[p.get(&wall).unwrap().frame().unwrap().aabb()]), "{path:?}");
     }
 }

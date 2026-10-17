@@ -183,6 +183,30 @@ impl Ctx<'_> {
         format!(r#"<g transform="translate({} {}){rot}"{op}>{inner}</g>"#, n(c.x), n(c.y))
     }
 
+    /// Trait à pression de stylet : polygone plein dont la largeur suit la pression.
+    fn pressure_pen(&self, o: &Object, pts: &[Pt], pressures: &[f32]) -> String {
+        let st = &o.style;
+        let (p, q) = crate::pen::smooth(pts, Some(pressures), 4);
+        let widths: Vec<f64> = q.iter().map(|v| crate::pen::pressure_width(st.width, *v)).collect();
+        let (left, right) = crate::pen::stroke_sides(&p, &widths);
+        let color = self.col(st.stroke);
+        let op = if st.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(st.opacity))) } else { String::new() };
+        let mut d = String::new();
+        for (i, pt) in left.iter().chain(right.iter().rev()).enumerate() {
+            let _ = write!(d, "{}{} {}", if i == 0 { "M" } else { "L" }, n(pt.x), n(pt.y));
+        }
+        let (a, z) = (p[0], p[p.len() - 1]);
+        format!(
+            r#"<g fill="{color}"{op}><path d="{d}Z"/><circle cx="{}" cy="{}" r="{}"/><circle cx="{}" cy="{}" r="{}"/></g>"#,
+            n(a.x),
+            n(a.y),
+            n(widths[0] / 2.0),
+            n(z.x),
+            n(z.y),
+            n(widths[widths.len() - 1] / 2.0)
+        )
+    }
+
     fn pen(&self, o: &Object, pts: &[Pt], highlighter: bool) -> String {
         let st = &o.style;
         let op = if st.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(st.opacity))) } else { String::new() };
@@ -303,7 +327,10 @@ impl Ctx<'_> {
     fn object(&self, o: &Object) -> String {
         match &o.kind {
             Kind::Box(b) => self.boxed(o, b),
-            Kind::Pen(p) => self.pen(o, &p.pts, p.highlighter),
+            Kind::Pen(p) => match &p.pressures {
+                Some(pr) if !p.highlighter && p.pts.len() >= 2 => self.pressure_pen(o, &p.pts, pr),
+                _ => self.pen(o, &p.pts, p.highlighter),
+            },
             Kind::Connector(c) => self.connector(o, c),
             Kind::Table(t) => self.table(o, t),
             Kind::Image(i) => {
@@ -442,5 +469,18 @@ mod tests {
         let mut d = doc_with(vec![a]);
         d.pages[0].layers[0].visible = false;
         assert!(export_approx(&d, &d.pages[0]).is_none());
+    }
+
+    #[test]
+    fn pressure_pen_exports_a_filled_outline() {
+        let pts = vec![Pt::new(0.0, 0.0), Pt::new(20.0, 10.0), Pt::new(40.0, 0.0), Pt::new(60.0, 10.0)];
+        let o = Object::new_pen_with_pressure(pts.clone(), vec![0.1, 0.9, 0.2, 0.8], false, Style { width: 6.0, ..Style::default() });
+        let plain = Object::new_pen(pts, false, Style { width: 6.0, ..Style::default() });
+        let d = doc_with(vec![o]);
+        let svg = export_approx(&d, &d.pages[0]).unwrap();
+        assert!(svg.contains("<path d=\"M") && svg.contains("Z\"/>") && svg.contains("<circle"), "{svg}");
+        assert!(!svg.contains("stroke-width"), "plein, pas de trait de largeur constante");
+        let d2 = doc_with(vec![plain]);
+        assert!(export_approx(&d2, &d2.pages[0]).unwrap().contains("stroke-width"));
     }
 }

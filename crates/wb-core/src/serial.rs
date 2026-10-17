@@ -128,6 +128,9 @@ mod tests {
         let b = Object::new_box(BoxGeom::Diamond, Frame { x: 300.0, y: 0.0, w: 100.0, h: 80.0, angle: 0.3 }, Style::default(), Label::default());
         let c = Object::new(Kind::Connector(Connector::new(End::bound(a.id.clone()), End::bound(b.id.clone()))), Style::default());
         let pen = Object::new_pen(vec![Pt::new(0.0, 100.0), Pt::new(10.0, 120.0), Pt::new(30.0, 90.0)], true, Style::default());
+        let pressured =
+            Object::new_pen_with_pressure(vec![Pt::new(0.0, 0.0), Pt::new(5.0, 5.0), Pt::new(9.0, 2.0)], vec![0.1, 0.8, 0.5], false, Style::default());
+        d.pages[0].objects.push(pressured);
         let aid = d.add_asset("image/png", vec![1, 2, 3, 4]);
         let img = Object::new(Kind::Image(crate::model::ImageObj { frame: Frame::new(500.0, 0.0, 40.0, 40.0), asset: aid }), Style::default());
         d.pages[0].objects.extend([a, b, c, pen, img]);

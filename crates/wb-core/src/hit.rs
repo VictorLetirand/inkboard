@@ -37,6 +37,11 @@ impl Page {
 
     /// Le point `p` touche-t-il l'objet (avec une tolérance `tol` en unités monde) ?
     pub fn hit(&self, o: &Object, p: Pt, tol: f64) -> bool {
+        self.hit_with(o, p, tol, &|id| self.get(id))
+    }
+
+    /// Comme [`Page::hit`], avec une recherche d'objet fournie (voir [`crate::spatial::getter`]).
+    pub fn hit_with<'a>(&self, o: &Object, p: Pt, tol: f64, get: &dyn Fn(&Id) -> Option<&'a Object>) -> bool {
         let t = tol + o.style.width / 2.0;
         match &o.kind {
             Kind::Pen(pen) => {
@@ -47,7 +52,7 @@ impl Page {
                     _ => pts.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= t),
                 }
             }
-            Kind::Connector(c) => self.connector_path(c).is_some_and(|path| path.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= t)),
+            Kind::Connector(c) => self.connector_path_with(c, get).is_some_and(|path| path.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= t)),
             Kind::Table(tb) => tb.rect().expand(tol).contains(p),
             Kind::Image(i) => {
                 let l = i.frame.to_local(p);
@@ -79,10 +84,20 @@ impl Page {
 
     /// Objet le plus au premier plan sous le point, en ignorant calques masqués ou verrouillés.
     pub fn pick(&self, p: Pt, tol: f64) -> Option<usize> {
-        (0..self.objects.len()).rev().find(|&i| {
+        self.pick_with(p, tol, &|id| self.get(id), None)
+    }
+
+    /// Comme [`Page::pick`] ; `candidates` (indices croissants, par ex. issus d'un [`crate::spatial::SpatialIndex`])
+    /// limite la recherche, sinon tous les objets sont examinés.
+    pub fn pick_with<'a>(&self, p: Pt, tol: f64, get: &dyn Fn(&Id) -> Option<&'a Object>, candidates: Option<&[usize]>) -> Option<usize> {
+        let ok = |i: usize| {
             let o = &self.objects[i];
-            self.is_visible(o) && self.layer(&o.layer).is_none_or(|l| !l.locked) && self.hit(o, p, tol)
-        })
+            self.is_visible(o) && self.layer(&o.layer).is_none_or(|l| !l.locked) && self.hit_with(o, p, tol, get)
+        };
+        match candidates {
+            Some(c) => c.iter().rev().copied().find(|&i| ok(i)),
+            None => (0..self.objects.len()).rev().find(|&i| ok(i)),
+        }
     }
 
     /// Objet auquel un connecteur peut s'accrocher sous `p` (intérieur ou bord, remplissage indifférent).
@@ -106,6 +121,18 @@ impl Page {
             };
             inside.then(|| o.id.clone())
         })
+    }
+
+    /// Comme [`Page::objects_in_rect`], en s'appuyant sur un index spatial à jour.
+    pub fn objects_in_rect_idx(&self, r: Rect, contain: bool, idx: &crate::spatial::SpatialIndex) -> Vec<Id> {
+        idx.query(r)
+            .into_iter()
+            .filter(|&i| {
+                let o = &self.objects[i];
+                self.is_visible(o) && self.layer(&o.layer).is_none_or(|l| !l.locked) && (!contain || r.contains_rect(&idx.bounds(i)))
+            })
+            .map(|i| self.objects[i].id.clone())
+            .collect()
     }
 
     /// Objets sélectionnables par un lasso : entièrement contenus (`contain`) ou simplement touchés.

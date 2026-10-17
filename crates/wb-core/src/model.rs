@@ -219,6 +219,9 @@ pub struct PenObj {
     pub pts: Arc<Vec<Pt>>,
     #[serde(default)]
     pub highlighter: bool,
+    /// Pression du stylet (0..1) pour chaque point : trait d'épaisseur variable. `None` : épaisseur constante.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressures: Option<Arc<Vec<f32>>>,
 }
 
 /// Tableau de cellules (lignes × colonnes), chaque cellule contenant du texte riche.
@@ -365,7 +368,13 @@ impl Object {
     }
 
     pub fn new_pen(pts: Vec<Pt>, highlighter: bool, style: Style) -> Self {
-        Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter }), style)
+        Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures: None }), style)
+    }
+
+    /// Trait avec pression de stylet (une valeur 0..1 par point ; ignorée si les longueurs diffèrent).
+    pub fn new_pen_with_pressure(pts: Vec<Pt>, pressures: Vec<f32>, highlighter: bool, style: Style) -> Self {
+        let pressures = (pressures.len() == pts.len()).then(|| Arc::new(pressures));
+        Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures }), style)
     }
 
     /// Cadre pour les objets rectangulaires (forme, image, tableau).

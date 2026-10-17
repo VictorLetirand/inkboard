@@ -199,8 +199,8 @@ pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
                 let bb = Rect::from_points(p.pts.iter().copied()).unwrap_or_default();
                 let mut e = base(o, "freedraw", first.x, first.y, bb.w, bb.h, 0.0);
                 e.insert("points".into(), json!(p.pts.iter().map(|q| [q.x - first.x, q.y - first.y]).collect::<Vec<_>>()));
-                e.insert("pressures".into(), json!([]));
-                e.insert("simulatePressure".into(), json!(true));
+                e.insert("pressures".into(), json!(p.pressures.as_ref().map(|v| v.as_slice()).unwrap_or(&[])));
+                e.insert("simulatePressure".into(), json!(p.pressures.is_none()));
                 e.insert("lastCommittedPoint".into(), Value::Null);
                 els.push(e);
             }
@@ -484,14 +484,22 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                     report.skipped += 1;
                     continue;
                 }
+                let mut pressures: Vec<f32> =
+                    e.get("pressures").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect()).unwrap_or_default();
                 if pts.len() == 1 {
                     pts.push(pts[0]);
+                    pressures.extend(pressures.first().copied());
                 }
                 if angle != 0.0 {
                     let c = Rect::from_points(pts.iter().copied()).map(|r| r.center()).unwrap_or_default();
                     pts.iter_mut().for_each(|p| *p = p.rotate(c, angle));
                 }
-                let mut o = Object::new_pen(pts, false, Style { dash: Dash::Solid, fill: None, ..style_of(e, false) });
+                let pen_style = Style { dash: Dash::Solid, fill: None, ..style_of(e, false) };
+                let mut o = if pressures.len() == pts.len() {
+                    Object::new_pen_with_pressure(pts, pressures, false, pen_style)
+                } else {
+                    Object::new_pen(pts, false, pen_style)
+                };
                 o.style.width = (num(e, "strokeWidth").max(1.0) * 1.5).max(1.5);
                 o.id = ids[id].clone();
                 out.push(finish(o, e));
@@ -635,5 +643,24 @@ mod tests {
     fn rejects_non_excalidraw() {
         assert!(import("{\"type\":\"autre\"}", "x", &ApproxMeasurer).is_err());
         assert!(import("nope", "x", &ApproxMeasurer).is_err());
+    }
+
+    #[test]
+    fn pen_pressure_roundtrips_through_excalidraw() {
+        let mut d = wb_core::Document::new("p");
+        let pts = vec![Pt::new(0.0, 0.0), Pt::new(10.0, 5.0), Pt::new(20.0, 0.0)];
+        d.pages[0].objects.push(Object::new_pen_with_pressure(pts, vec![0.2, 0.9, 0.4], false, Style::default()));
+        d.pages[0].objects.push(Object::new_pen(vec![Pt::new(0.0, 50.0), Pt::new(10.0, 60.0)], false, Style::default()));
+        let json = export(&d, &d.pages[0], &ApproxMeasurer);
+        let v: Value = serde_json::from_str(&json).unwrap();
+        let els = v["elements"].as_array().unwrap();
+        assert_eq!(els[0]["pressures"].as_array().unwrap().len(), 3);
+        assert_eq!(els[0]["simulatePressure"], false);
+        assert_eq!(els[1]["simulatePressure"], true, "sans pression : simulée par Excalidraw");
+        let back = import(&json, "x", &ApproxMeasurer).unwrap();
+        let pens: Vec<&PenObj> = back.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Pen(p) = &o.kind { Some(p) } else { None }).collect();
+        let first = pens[0].pressures.as_ref().expect("pression conservée");
+        assert!((first[1] - 0.9).abs() < 1e-6);
+        assert!(pens[1].pressures.is_none());
     }
 }

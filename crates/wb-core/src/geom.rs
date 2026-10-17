@@ -223,10 +223,10 @@ pub fn ray_poly_hit(poly: &[Pt], origin: Pt, dir: Pt) -> Option<Pt> {
     best.map(|t| origin + dir * t)
 }
 
-/// Simplification de Ramer–Douglas–Peucker.
-pub fn rdp(pts: &[Pt], eps: f64) -> Vec<Pt> {
+/// Indices des points conservés par la simplification de Ramer–Douglas–Peucker.
+pub fn rdp_indices(pts: &[Pt], eps: f64) -> Vec<usize> {
     if pts.len() < 3 {
-        return pts.to_vec();
+        return (0..pts.len()).collect();
     }
     let mut keep = vec![false; pts.len()];
     keep[0] = true;
@@ -247,7 +247,12 @@ pub fn rdp(pts: &[Pt], eps: f64) -> Vec<Pt> {
             stack.push((mi, b));
         }
     }
-    pts.iter().zip(keep).filter_map(|(p, k)| k.then_some(*p)).collect()
+    keep.iter().enumerate().filter_map(|(i, k)| k.then_some(i)).collect()
+}
+
+/// Simplification de Ramer–Douglas–Peucker.
+pub fn rdp(pts: &[Pt], eps: f64) -> Vec<Pt> {
+    rdp_indices(pts, eps).into_iter().map(|i| pts[i]).collect()
 }
 
 #[cfg(test)]
@@ -282,6 +287,14 @@ mod tests {
         assert!(!in_poly(&sq, Pt::new(2.0, 0.0)));
         let hit = ray_poly_hit(&sq, Pt::ZERO, Pt::new(1.0, 0.0)).unwrap();
         assert!(hit.dist(Pt::new(1.0, 0.0)) < 1e-9);
+    }
+
+    #[test]
+    fn rdp_indices_match_points_and_keep_ends() {
+        let pts = [Pt::new(0.0, 0.0), Pt::new(5.0, 0.01), Pt::new(10.0, 0.0), Pt::new(10.0, 10.0)];
+        assert_eq!(rdp_indices(&pts, 0.5), vec![0, 2, 3]);
+        assert_eq!(rdp_indices(&pts[..2], 0.5), vec![0, 1]);
+        assert!(rdp_indices(&[], 1.0).is_empty());
     }
 
     #[test]
