@@ -1150,3 +1150,111 @@ fn unsaved_local_changes_are_not_overwritten_by_an_external_change() {
     assert!(t.app().dirty());
     let _ = std::fs::remove_file(&path);
 }
+
+/* --------------------------------------------- mode direct (wb-mcp pilote l'application) */
+
+struct Live {
+    srv: wb_mcp::Server,
+    file: std::path::PathBuf,
+}
+
+fn start_live(t: &mut T, tag: &str) -> Live {
+    let file = std::env::temp_dir().join(format!("wb-live-{tag}-{}.json", std::process::id()));
+    let ctx = t.h.ctx.clone();
+    t.app().live = Some(crate::live::LiveServer::start(ctx, file.clone()).unwrap());
+    Live { srv: wb_mcp::Server { live_file: Some(file.clone()), ..Default::default() }, file }
+}
+
+/// Appelle un outil MCP depuis un autre thread (comme le fait `wb-mcp`) pendant que l'interface tourne.
+fn mcp_call(t: &mut T, live: &Live, tool: &str, args: serde_json::Value) -> (bool, serde_json::Value) {
+    let srv = live.srv.clone();
+    let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}});
+    let th = std::thread::spawn(move || srv.handle(&msg).unwrap());
+    let start = std::time::Instant::now();
+    while !th.is_finished() {
+        assert!(start.elapsed() < std::time::Duration::from_secs(10), "pas de réponse");
+        t.h.step();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let r = th.join().unwrap();
+    let text = r["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned();
+    (r["result"]["isError"] == serde_json::json!(true), serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text)))
+}
+
+#[test]
+fn an_agent_edits_the_open_board_live_and_each_call_is_one_undo_step() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "edit");
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Ajouté en direct"}));
+    assert!(!err, "{r}");
+    assert_eq!(t.boxes().len(), 1);
+    assert_eq!(t.boxes()[0].1.label.text.to_plain(), "Ajouté en direct");
+    assert_eq!(t.app().sel.len(), 1, "l'objet créé est sélectionné");
+    assert!(t.app().dirty(), "modification non enregistrée : l'utilisateur garde la main");
+    let (err, r) = mcp_call(&mut t, &live, "add_formula", serde_json::json!({"latex": r"\frac{1}{2}"}));
+    assert!(!err, "{r}");
+    assert_eq!(t.objects().len(), 2);
+    // Ctrl+Z annule uniquement le dernier appel de l'agent
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert_eq!(t.objects().len(), 1);
+    // l'agent voit l'état courant et la sélection de l'utilisateur
+    let id = t.objects()[0].id.clone();
+    t.app().sel = vec![id.clone()];
+    let (err, d) = mcp_call(&mut t, &live, "describe_board", serde_json::json!({}));
+    assert!(!err);
+    assert_eq!(d["live"], true);
+    assert_eq!(d["selection"], serde_json::json!([id.0]));
+    // erreurs d'outil renvoyées à l'agent, sans rien modifier
+    let (err, e) = mcp_call(&mut t, &live, "add_formula", serde_json::json!({"latex": r"\inconnu"}));
+    assert!(err, "{e}");
+    assert_eq!(t.objects().len(), 1);
+    let _ = std::fs::remove_file(&live.file);
+}
+
+#[test]
+fn live_calls_target_the_open_file_only() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "path");
+    let mine = std::env::temp_dir().join(format!("wb-live-mine-{}.tableau.json", std::process::id()));
+    t.add_rect(0.0, 0.0, 50.0, 50.0);
+    t.app().save_to(&mine);
+    // même fichier : appliqué dans l'application
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"path": mine.to_str().unwrap(), "geom": "ellipse"}));
+    assert!(!err, "{r}");
+    assert_eq!(t.objects().len(), 2);
+    // autre fichier : l'application n'est pas touchée, le mode fichier prend le relais
+    let other = std::env::temp_dir().join(format!("wb-live-other-{}.tableau.json", std::process::id()));
+    wb_core::serial::save(&Document::new("Autre"), &other).unwrap();
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"path": other.to_str().unwrap(), "geom": "rect", "text": "dans le fichier"}));
+    assert!(!err, "{r}");
+    assert_eq!(t.objects().len(), 2, "l'application n'a pas changé");
+    assert_eq!(wb_core::serial::load(&other).unwrap().pages[0].objects.len(), 1, "le fichier a été modifié");
+    // save_board enregistre le tableau affiché
+    assert!(t.app().dirty());
+    let (err, r) = mcp_call(&mut t, &live, "save_board", serde_json::json!({}));
+    assert!(!err, "{r}");
+    assert!(!t.app().dirty());
+    assert_eq!(wb_core::serial::load(&mine).unwrap().pages[0].objects.len(), 2);
+    for f in [&mine, &other, &live.file] {
+        let _ = std::fs::remove_file(f);
+    }
+}
+
+#[test]
+fn live_server_rejects_a_wrong_token_and_cleans_up_its_discovery_file() {
+    use std::io::{BufRead, BufReader, Write};
+    let mut t = T::new();
+    let live = start_live(&mut t, "token");
+    let info = wb_mcp::live::read_info(&live.file).expect("fichier de découverte");
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", info.port)).unwrap();
+    writeln!(s, "{}", serde_json::json!({"token": "faux", "tool": "describe_board", "args": {}})).unwrap();
+    let mut line = String::new();
+    BufReader::new(s).read_line(&mut line).unwrap();
+    let r: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(r["ok"], false);
+    assert!(r["error"].as_str().unwrap().contains("jeton"), "{r}");
+    assert!(t.objects().is_empty(), "rien n'est exécuté sans jeton valide");
+    // à la fermeture, le fichier de découverte disparaît
+    t.app().live = None;
+    assert!(!live.file.exists());
+}

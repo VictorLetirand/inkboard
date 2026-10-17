@@ -24,12 +24,12 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Présentation, minuteur, vote | Excalidraw | ✔ plein écran page par page, minuteur, pastilles |
 | Connecteurs qui évitent les formes | draw.io | ✔ routage A*, points de passage |
 | Presse-papiers (images, texte) | tous | ✔ |
-| Pilotage par des agents (MCP) | – | ✔ niveau fichiers (`wb-mcp`) ; direct : à faire |
+| Pilotage par des agents (MCP) | – | ✔ `wb-mcp` : fichiers et mode direct (application ouverte, annulable, sélection visible) |
 | Export PDF | Whiteboard | ✔ vectoriel |
 
 ## Reste à faire
 
-- **`wb-mcp` niveau B** : pilotage en direct de l'application ouverte (historique d'annulation conservé, sélection, vue) ; le niveau A (fichiers, avec rechargement automatique) est fait. Validé avec Claude Code ; Claude Desktop non testé.
+- `wb-mcp` : ressources MCP (lire un tableau comme ressource), notifications vers l'agent quand l'utilisateur modifie le tableau, insertion d'images ; validation avec Claude Desktop.
 - Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
 - Coloration par langage (la coloration actuelle est générique) ; texte (`\text`) et environnements avancés de la bibliothèque de composition au-delà de ses capacités.
 - Validation sur du matériel réel de la pression et de la gomme du stylet ; gomme sous macOS/Linux (non gérée).

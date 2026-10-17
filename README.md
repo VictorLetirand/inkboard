@@ -11,7 +11,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 ```bash
 cargo run --release -p wb-app                 # l'application
 cargo run --release -p wb-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 222 tests
+cargo test --workspace                        # 225 tests
 powershell -File scripts/package.ps1          # archive portable Windows (dist/)
 ```
 
@@ -44,7 +44,7 @@ cargo run --release -p wb-cli -- info schema.drawio
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
 - **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.
-- **Agents (MCP)** : `wb-mcp --root <dossier>` expose 13 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). L'application recharge seule le fichier ouvert quand un agent le modifie.
+- **Agents (MCP)** : `wb-mcp --root <dossier>` expose 14 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). **Mode direct** : application ouverte, l'agent agit sur le tableau affiché (une étape d'annulation par appel, il voit votre sélection) ; sinon il modifie le fichier et l'application le recharge seule.
 - **Distribution** : icône, archive portable et installation par utilisateur (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
 
 ## Texte riche et raccourcis

@@ -1,10 +1,11 @@
 //! `wb-mcp` : serveur MCP du tableau blanc sur stdin/stdout.
 //!
 //! ```text
-//! wb-mcp [--root DOSSIER]
+//! wb-mcp [--root DOSSIER] [--no-live] [--live-file FICHIER]
 //! ```
 //!
 //! `--root` confine tous les fichiers lus et écrits sous ce dossier (recommandé quand un agent pilote le serveur).
+//! `--no-live` désactive le mode direct (application ouverte) ; `--live-file` change le fichier de découverte.
 
 use std::io::{BufRead, Write};
 use wb_mcp::Server;
@@ -18,7 +19,12 @@ fn main() {
                 Some(dir) => server.root = Some(dir.into()),
                 None => return eprintln!("--root attend un dossier"),
             },
-            "-h" | "--help" => return println!("wb-mcp [--root DOSSIER] — serveur MCP (stdio) du tableau blanc"),
+            "--no-live" => server.no_live = true,
+            "--live-file" => match args.next() {
+                Some(f) => server.live_file = Some(f.into()),
+                None => return eprintln!("--live-file attend un fichier"),
+            },
+            "-h" | "--help" => return println!("wb-mcp [--root DOSSIER] [--no-live] [--live-file FICHIER] — serveur MCP (stdio) du tableau blanc"),
             other => return eprintln!("argument inconnu : {other}"),
         }
     }

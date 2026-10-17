@@ -4094,6 +4094,7 @@ dependencies = [
  "serde_json",
  "wb-core",
  "wb-formats",
+ "wb-mcp",
  "wb-pen",
 ]
 

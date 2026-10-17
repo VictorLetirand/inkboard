@@ -20,6 +20,7 @@ wb-core = { path = "../wb-core" }
 wb-pen = { path = "../wb-pen" }
 raw-window-handle = "0.6.2"
 wb-formats = { path = "../wb-formats" }
+wb-mcp = { path = "../wb-mcp" }
 
 [build-dependencies]
 embed-resource = "3"

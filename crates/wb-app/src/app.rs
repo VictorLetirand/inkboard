@@ -84,6 +84,8 @@ pub struct App {
     pub system_image: fn() -> Option<RawImage>,
     /// Le stylet est-il utilisé côté gomme ? (extrémité gomme, via `wb-pen`) ; remplaçable dans les tests.
     pub eraser_probe: fn() -> bool,
+    /// Serveur local du mode direct de `wb-mcp` (absent dans les tests et les captures).
+    pub live: Option<crate::live::LiveServer>,
     /// Date de modification du fichier ouvert lors de la dernière lecture ou écriture (voir `watch.rs`).
     pub disk_mtime: Option<std::time::SystemTime>,
     pub last_watch: Instant,
@@ -158,6 +160,7 @@ impl App {
             pen_force: None,
             system_image: crate::clipboard::system_image,
             eraser_probe: wb_pen::eraser_active,
+            live: None,
             disk_mtime: None,
             last_watch: Instant::now(),
             ctx_pos: Pt::ZERO,
@@ -828,6 +831,7 @@ impl eframe::App for App {
         }
         self.apply_present_request(ctx);
         self.watch_file();
+        self.poll_live();
         self.shortcuts(ctx);
         if self.presenting {
             ui::present_overlay(self, ctx);

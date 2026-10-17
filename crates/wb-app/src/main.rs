@@ -5,6 +5,7 @@ mod clipboard;
 mod fonts;
 mod insert;
 mod keymap;
+mod live;
 mod render;
 mod rich_edit;
 mod tools;
@@ -62,6 +63,10 @@ fn main() -> eframe::Result {
                 }
             }
             let mut a = app::App::new(cc, open.clone(), screenshot.clone());
+            if screenshot.is_none() && !bench {
+                // mode direct de wb-mcp : un agent peut piloter le tableau affiché
+                a.live = live::LiveServer::start(cc.egui_ctx.clone(), wb_mcp::live::discovery_path()).ok();
+            }
             a.bench = bench.then(|| app::Bench { close_up: bench_close, ..Default::default() });
             a.edit_demo = edit_demo;
             a.formula_demo = formula_demo;

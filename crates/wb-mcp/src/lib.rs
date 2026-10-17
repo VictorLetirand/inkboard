@@ -3,6 +3,7 @@
 //! Le protocole est implémenté à la main (JSON-RPC 2.0, un message JSON par ligne sur stdin/stdout) : `initialize`, `ping`, `tools/list`, `tools/call`.
 //! Voir [`tools`] pour la liste des outils.
 
+pub mod live;
 pub mod tools;
 
 use serde_json::{Value, json};
@@ -14,6 +15,10 @@ const PROTOCOL_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
 #[derive(Clone, Debug, Default)]
 pub struct Server {
     pub root: Option<std::path::PathBuf>,
+    /// Désactive le mode direct (jamais d'appel à l'application, uniquement les fichiers).
+    pub no_live: bool,
+    /// Fichier de découverte de l'application (défaut : `live::discovery_path()`).
+    pub live_file: Option<std::path::PathBuf>,
 }
 
 fn ok(id: &Value, result: Value) -> Value {

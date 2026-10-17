@@ -17,6 +17,7 @@ impl Client {
         let mut child = Command::new(env!("CARGO_BIN_EXE_wb-mcp"))
             .arg("--root")
             .arg(root)
+            .arg("--no-live")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

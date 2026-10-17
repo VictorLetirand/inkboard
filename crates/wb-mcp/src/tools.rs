@@ -17,7 +17,7 @@ fn obj(props: Value, required: &[&str]) -> Value {
 }
 
 fn path_prop() -> Value {
-    json!({"type": "string", "description": "Chemin du fichier tableau (.tableau.json)."})
+    json!({"type": "string", "description": "Chemin du fichier tableau (.tableau.json). Facultatif quand l'application est ouverte : l'outil agit alors en direct sur le tableau affiché (annulable avec Ctrl+Z)."})
 }
 
 fn page_prop() -> Value {
@@ -39,38 +39,40 @@ pub fn list() -> Vec<Value> {
     vec![
         json!({"name": "create_board", "description": "Crée un tableau vide (fichier .tableau.json).",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
-        json!({"name": "describe_board", "description": "Liste les pages et les objets d'un tableau (id, type, texte, position, liens des connecteurs). Accepte aussi les fichiers draw.io, Excalidraw, JSON Canvas et Mermaid en lecture.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop()}), &["path"])}),
+        json!({"name": "save_board", "description": "Enregistre le tableau affiché dans l'application (mode direct ; il doit déjà avoir un fichier). Sans effet en mode fichier : chaque outil y enregistre déjà.",
+            "inputSchema": obj(json!({}), &[])}),
+        json!({"name": "describe_board", "description": "Liste les pages et les objets d'un tableau (id, type, texte, position, liens des connecteurs). En mode direct, indique aussi la sélection de l'utilisateur (`selection`). Accepte aussi les fichiers draw.io, Excalidraw, JSON Canvas et Mermaid en lecture.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop()}), &[])}),
         json!({"name": "add_shape", "description": "Ajoute une forme avec du texte (rect, ellipse, diamond, triangle, sticky = note adhésive, text = texte libre). Renvoie l'id.",
             "inputSchema": obj(pos_props(json!({
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
                 "text": {"type": "string"}, "w": {"type": "number"}, "h": {"type": "number"},
-                "font_size": {"type": "number"}, "fill": color.clone(), "stroke": color.clone()})), &["path", "geom"])}),
+                "font_size": {"type": "number"}, "fill": color.clone(), "stroke": color.clone()})), &["geom"])}),
         json!({"name": "add_connector", "description": "Relie deux objets par une flèche qui les suit quand ils bougent (ids renvoyés par add_shape ou describe_board).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "from": {"type": "string"}, "to": {"type": "string"},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"]},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Pointes de flèche (défaut : end)."},
-                "label": {"type": "string"}, "stroke": color.clone()}), &["path", "from", "to"])}),
+                "label": {"type": "string"}, "stroke": color.clone()}), &["from", "to"])}),
         json!({"name": "add_table", "description": "Ajoute un tableau de cellules ; `rows` est une liste de lignes (listes de textes). La première ligne est l'en-tête.",
-            "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}})), &["path", "rows"])}),
+            "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}})), &["rows"])}),
         json!({"name": "add_code_block", "description": "Ajoute un bloc de code (police à chasse fixe, fond sombre, coloration syntaxique).",
-            "inputSchema": obj(pos_props(json!({"code": {"type": "string"}})), &["path", "code"])}),
+            "inputSchema": obj(pos_props(json!({"code": {"type": "string"}})), &["code"])}),
         json!({"name": "add_formula", "description": "Ajoute une formule LaTeX (mode mathématique) composée comme en TeX. Erreur si le LaTeX n'est pas géré.",
-            "inputSchema": obj(pos_props(json!({"latex": {"type": "string"}, "color": color.clone()})), &["path", "latex"])}),
+            "inputSchema": obj(pos_props(json!({"latex": {"type": "string"}, "color": color.clone()})), &["latex"])}),
         json!({"name": "import_mermaid", "description": "Ajoute un diagramme Mermaid (flowchart/graph, stateDiagram, sequenceDiagram) avec mise en page automatique. Renvoie les ids créés.",
-            "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Créer une nouvelle page pour le diagramme."}})), &["path", "mermaid"])}),
+            "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Créer une nouvelle page pour le diagramme."}})), &["mermaid"])}),
         json!({"name": "update_object", "description": "Modifie un objet : texte, position (coin supérieur gauche), taille (formes), couleurs.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string"},
                 "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
-                "fill": color.clone(), "stroke": color.clone()}), &["path", "id"])}),
+                "fill": color.clone(), "stroke": color.clone()}), &["id"])}),
         json!({"name": "delete_object", "description": "Supprime un objet (les connecteurs qui y étaient liés restent, détachés).",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}}), &["path", "id"])}),
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}}), &["id"])}),
         json!({"name": "auto_layout", "description": "Réorganise les formes reliées par des connecteurs en graphe en couches.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Défaut : TB."}}), &["path"])}),
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Défaut : TB."}}), &[])}),
         json!({"name": "add_page", "description": "Ajoute une page. Renvoie son numéro.",
-            "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
+            "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
         json!({"name": "export", "description": "Exporte une page vers un fichier ; le format est choisi par l'extension de `output` : .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .tableau.json.",
-            "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop()}), &["path", "output"])}),
+            "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop()}), &["output"])}),
     ]
 }
 
@@ -137,14 +139,6 @@ fn select_page(ed: &mut Editor, spec: Option<&Value>) -> Res<()> {
     Ok(())
 }
 
-/// Ouvre le tableau et sélectionne la page demandée.
-fn open(srv: &Server, a: &Value) -> Res<(PathBuf, Editor)> {
-    let path = resolve(srv, s(a, "path")?)?;
-    let mut ed = Editor::new(load(&path)?);
-    select_page(&mut ed, a.get("page"))?;
-    Ok((path, ed))
-}
-
 fn origin(ed: &Editor, a: &Value) -> Pt {
     match (of(a, "x"), of(a, "y")) {
         (Some(x), Some(y)) => Pt::new(x, y),
@@ -156,41 +150,53 @@ fn find<'a>(ed: &'a Editor, id: &str) -> Res<&'a Object> {
     ed.page().get(&Id(id.to_owned())).ok_or_else(|| format!("objet introuvable : {id}"))
 }
 
-fn done(ed: Editor, path: &Path, result: Value) -> Res<String> {
-    save(&ed.doc, path)?;
-    Ok(result.to_string())
-}
-
 /* ----------------------------------------------------------------- appel */
 
-/// Exécute l'outil `name` ; le résultat est un texte JSON destiné à l'agent.
-pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
+/// Outils qui ne modifient pas le tableau (le fichier n'est pas réécrit).
+const READ_ONLY: [&str; 2] = ["describe_board", "export"];
+
+/// Outils qui s'appliquent à un tableau ouvert (fichier ou application) ; `create_board` ne crée que des fichiers.
+const EDITOR_TOOLS: [&str; 12] = [
+    "describe_board",
+    "add_shape",
+    "add_connector",
+    "add_table",
+    "add_code_block",
+    "add_formula",
+    "import_mermaid",
+    "update_object",
+    "delete_object",
+    "auto_layout",
+    "add_page",
+    "export",
+];
+
+/// Applique un outil à un tableau en mémoire. Utilisé tel quel par le mode fichier et par l'application (mode direct, avec son historique d'annulation).
+pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
+    if name == "save_board" {
+        return Ok(json!({"saved": true}));
+    }
+    if !EDITOR_TOOLS.contains(&name) {
+        return Err(format!("outil inconnu : {name}"));
+    }
+    if name != "add_page" {
+        select_page(ed, a.get("page"))?;
+    }
     match name {
-        "create_board" => {
-            let path = resolve(srv, s(a, "path")?)?;
-            if path.exists() {
-                return Err(format!("{} existe déjà", path.display()));
-            }
-            let doc = Document::new(os(a, "name").unwrap_or("Tableau"));
-            save(&doc, &path)?;
-            Ok(json!({"path": path.display().to_string(), "pages": 1}).to_string())
-        }
-        "describe_board" => describe(srv, a),
-        "add_shape" => add_shape(srv, a),
-        "add_connector" => add_connector(srv, a),
-        "add_table" => add_table(srv, a),
-        "add_code_block" => add_code_block(srv, a),
-        "add_formula" => add_formula(srv, a),
-        "import_mermaid" => import_mermaid(srv, a),
-        "update_object" => update_object(srv, a),
+        "describe_board" => describe(ed, a),
+        "add_shape" => add_shape(ed, a),
+        "add_connector" => add_connector(ed, a),
+        "add_table" => add_table(ed, a),
+        "add_code_block" => add_code_block(ed, a),
+        "add_formula" => add_formula(ed, a),
+        "import_mermaid" => import_mermaid(ed, a),
+        "update_object" => update_object(ed, a),
         "delete_object" => {
-            let (path, mut ed) = open(srv, a)?;
-            let id = find(&ed, s(a, "id")?)?.id.clone();
+            let id = find(ed, s(a, "id")?)?.id.clone();
             ed.remove(std::slice::from_ref(&id));
-            done(ed, &path, json!({"deleted": id.0}))
+            Ok(json!({"deleted": id.0}))
         }
         "auto_layout" => {
-            let (path, mut ed) = open(srv, a)?;
             let dir = match os(a, "direction").unwrap_or("TB") {
                 "TB" => Direction::TopDown,
                 "LR" => Direction::LeftRight,
@@ -199,18 +205,59 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
                 d => return Err(format!("direction inconnue « {d} » (TB, LR, BT, RL)")),
             };
             let ids: Vec<Id> = ed.page().objects.iter().map(|o| o.id.clone()).collect();
-            auto_layout(&mut ed, &ids, dir);
-            done(ed, &path, json!({"layout": "ok", "objects": ids.len()}))
+            auto_layout(ed, &ids, dir);
+            Ok(json!({"layout": "ok", "objects": ids.len()}))
         }
         "add_page" => {
-            let (path, mut ed) = open(srv, a)?;
             let n = ed.doc.pages.len() + 1;
             ed.add_page(os(a, "name").map_or_else(|| format!("Page {n}"), str::to_owned).as_str());
-            done(ed, &path, json!({"page": n, "pages": n}))
+            Ok(json!({"page": n, "pages": n}))
         }
-        "export" => export(srv, a),
-        other => Err(format!("outil inconnu : {other}")),
+        "export" => export(ed, a),
+        _ => unreachable!("outil vérifié ci-dessus"),
     }
+}
+
+/// Exécute l'outil `name` : dans l'application ouverte si elle est joignable et affiche ce tableau (mode direct), sinon sur le fichier `path`.
+/// Le résultat est un texte JSON destiné à l'agent.
+pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
+    if name != "create_board" && name != "save_board" && !EDITOR_TOOLS.contains(&name) {
+        return Err(format!("outil inconnu : {name}"));
+    }
+    let mut a = a.clone();
+    // les chemins sont résolus (et confinés à la racine) ici, jamais dans l'application
+    for key in ["path", "output"] {
+        if let Some(p) = os(&a, key) {
+            let abs = resolve(srv, p)?;
+            a[key] = json!(abs.display().to_string());
+        }
+    }
+    if name != "create_board" {
+        match crate::live::forward(srv, name, &a) {
+            crate::live::Forward::Done(r) => return r.map(|v| v.to_string()),
+            crate::live::Forward::NotLive => {}
+        }
+    }
+    if name == "create_board" {
+        let path = PathBuf::from(s(&a, "path")?);
+        if path.exists() {
+            return Err(format!("{} existe déjà", path.display()));
+        }
+        let doc = Document::new(os(&a, "name").unwrap_or("Tableau"));
+        save(&doc, &path)?;
+        return Ok(json!({"path": path.display().to_string(), "pages": 1}).to_string());
+    }
+    let Some(path) = os(&a, "path").map(PathBuf::from) else {
+        return Err(
+            "paramètre « path » manquant : aucun tableau n'est ouvert dans l'application (ou elle est fermée) ; indiquez le fichier .tableau.json".into()
+        );
+    };
+    let mut ed = Editor::new(load(&path)?);
+    let r = apply(&mut ed, name, &a)?;
+    if !READ_ONLY.contains(&name) && name != "save_board" {
+        save(&ed.doc, &path)?;
+    }
+    Ok(r.to_string())
 }
 
 fn geom_of(g: &str) -> Res<BoxGeom> {
@@ -250,11 +297,7 @@ fn end_json(e: &connector::End) -> Value {
     }
 }
 
-fn describe(srv: &Server, a: &Value) -> Res<String> {
-    let path = resolve(srv, s(a, "path")?)?;
-    let doc = load(&path)?;
-    let mut ed = Editor::new(doc);
-    select_page(&mut ed, a.get("page"))?;
+fn describe(ed: &mut Editor, _a: &Value) -> Res<Value> {
     let page = ed.page();
     let objects: Vec<Value> = page
         .objects
@@ -299,13 +342,12 @@ fn describe(srv: &Server, a: &Value) -> Res<String> {
         })
         .collect();
     let pages: Vec<Value> = ed.doc.pages.iter().enumerate().map(|(i, p)| json!({"number": i + 1, "name": p.name, "objects": p.objects.len()})).collect();
-    Ok(json!({"name": ed.doc.name, "pages": pages, "page": {"name": page.name, "objects": objects}}).to_string())
+    Ok(json!({"name": ed.doc.name, "pages": pages, "page": {"name": page.name, "objects": objects}}))
 }
 
-fn add_shape(srv: &Server, a: &Value) -> Res<String> {
-    let (path, mut ed) = open(srv, a)?;
+fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
     let geom = geom_of(s(a, "geom")?)?;
-    let at = origin(&ed, a);
+    let at = origin(ed, a);
     let text = os(a, "text").unwrap_or("");
     let (dw, dh) = match geom {
         BoxGeom::Sticky => (200.0, 200.0),
@@ -331,12 +373,11 @@ fn add_shape(srv: &Server, a: &Value) -> Res<String> {
     }
     let id = ed.insert(o);
     let f = ed.page().get(&id).and_then(Object::frame).ok_or("objet non créé")?;
-    done(ed, &path, json!({"id": id.0, "x": f.x.round(), "y": f.y.round(), "w": f.w.round(), "h": f.h.round()}))
+    Ok(json!({"id": id.0, "x": f.x.round(), "y": f.y.round(), "w": f.w.round(), "h": f.h.round()}))
 }
 
-fn add_connector(srv: &Server, a: &Value) -> Res<String> {
-    let (path, mut ed) = open(srv, a)?;
-    let (from, to) = (find(&ed, s(a, "from")?)?, find(&ed, s(a, "to")?)?);
+fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
+    let (from, to) = (find(ed, s(a, "from")?)?, find(ed, s(a, "to")?)?);
     for o in [from, to] {
         if !o.is_attachable() {
             return Err(format!("l'objet {} ne peut pas être relié (formes, tableaux et images seulement)", o.id.0));
@@ -361,11 +402,10 @@ fn add_connector(srv: &Server, a: &Value) -> Res<String> {
     }
     let style = Style { stroke: ocolor(a, "stroke")?.unwrap_or(Color::Ink), width: 2.0, ..Style::default() };
     let id = ed.insert(Object::new(Kind::Connector(c), style));
-    done(ed, &path, json!({"id": id.0}))
+    Ok(json!({"id": id.0}))
 }
 
-fn add_table(srv: &Server, a: &Value) -> Res<String> {
-    let (path, mut ed) = open(srv, a)?;
+fn add_table(ed: &mut Editor, a: &Value) -> Res<Value> {
     let rows: Vec<Vec<String>> = a
         .get("rows")
         .and_then(Value::as_array)
@@ -381,7 +421,7 @@ fn add_table(srv: &Server, a: &Value) -> Res<String> {
     if rows.is_empty() || cols == 0 || rows.len() > 200 || cols > 50 {
         return Err("« rows » doit contenir de 1 à 200 lignes et de 1 à 50 colonnes".into());
     }
-    let at = origin(&ed, a);
+    let at = origin(ed, a);
     let mut t = Table::new(at, rows.len(), cols);
     t.header = true;
     for (r, row) in rows.iter().enumerate() {
@@ -397,13 +437,12 @@ fn add_table(srv: &Server, a: &Value) -> Res<String> {
         t.col_w[c] = t.col_w[c].max((widest + 28.0).ceil());
     }
     let id = ed.insert(Object::new(Kind::Table(t), Style { width: 2.0, fill: None, ..Style::default() }));
-    done(ed, &path, json!({"id": id.0, "rows": rows.len(), "cols": cols}))
+    Ok(json!({"id": id.0, "rows": rows.len(), "cols": cols}))
 }
 
-fn add_code_block(srv: &Server, a: &Value) -> Res<String> {
-    let (path, mut ed) = open(srv, a)?;
+fn add_code_block(ed: &mut Editor, a: &Value) -> Res<Value> {
     let code = s(a, "code")?;
-    let at = origin(&ed, a);
+    let at = origin(ed, a);
     let style = Style { stroke: Color::rgb(0xe6, 0xe6, 0xe6), fill: Some(Color::rgb(0x1e, 0x20, 0x2e)), width: 0.0, roundness: 0.1, ..Style::default() };
     let label = Label { text: wb_core::highlight::highlight(code), family: FontFamily::Mono, size: 18.0, align: Align::Left };
     let mut o = Object::new_box(BoxGeom::Rect, Frame::new(at.x, at.y, 420.0, 120.0), style, label);
@@ -413,23 +452,21 @@ fn add_code_block(srv: &Server, a: &Value) -> Res<String> {
         b.frame.h = (lay.height + 40.0).max(90.0);
     }
     let id = ed.insert(o);
-    done(ed, &path, json!({"id": id.0}))
+    Ok(json!({"id": id.0}))
 }
 
-fn add_formula(srv: &Server, a: &Value) -> Res<String> {
-    let (path, mut ed) = open(srv, a)?;
+fn add_formula(ed: &mut Editor, a: &Value) -> Res<Value> {
     let latex = s(a, "latex")?;
     let f = wb_formats::math::render(latex, 36.0).map_err(|e| e.to_string())?;
     let aid = ed.doc.add_asset("image/svg+xml", f.svg.into_bytes());
-    let at = origin(&ed, a);
+    let at = origin(ed, a);
     let style = Style { stroke: ocolor(a, "color")?.unwrap_or(Color::Ink), width: 0.0, fill: None, ..Style::default() };
     let img = ImageObj { frame: Frame::new(at.x, at.y, f.w, f.h), asset: aid, latex: Some(latex.to_owned()) };
     let id = ed.insert(Object::new(Kind::Image(img), style));
-    done(ed, &path, json!({"id": id.0, "w": f.w.round(), "h": f.h.round()}))
+    Ok(json!({"id": id.0, "w": f.w.round(), "h": f.h.round()}))
 }
 
-fn import_mermaid(srv: &Server, a: &Value) -> Res<String> {
-    let (path, mut ed) = open(srv, a)?;
+fn import_mermaid(ed: &mut Editor, a: &Value) -> Res<Value> {
     let mut objs = wb_formats::mermaid::to_objects(s(a, "mermaid")?, &ApproxMeasurer).map_err(|e| e.to_string())?;
     if objs.is_empty() {
         return Err("le diagramme Mermaid est vide".into());
@@ -439,7 +476,7 @@ fn import_mermaid(srv: &Server, a: &Value) -> Res<String> {
         let id = ed.add_page(&format!("Mermaid {n}"));
         ed.current = id;
     }
-    let at = origin(&ed, a);
+    let at = origin(ed, a);
     let top_left =
         objs.iter().filter_map(Object::frame).fold(None::<Pt>, |acc, f| Some(acc.map_or(Pt::new(f.x, f.y), |p| Pt::new(p.x.min(f.x), p.y.min(f.y)))));
     let d = top_left.map_or(Pt::new(0.0, 0.0), |p| at - p);
@@ -447,12 +484,11 @@ fn import_mermaid(srv: &Server, a: &Value) -> Res<String> {
         o.translate(d);
     }
     let ids = ed.insert_all(objs);
-    done(ed, &path, json!({"created": ids.len(), "ids": ids.iter().map(|i| i.0.clone()).collect::<Vec<_>>()}))
+    Ok(json!({"created": ids.len(), "ids": ids.iter().map(|i| i.0.clone()).collect::<Vec<_>>()}))
 }
 
-fn update_object(srv: &Server, a: &Value) -> Res<String> {
-    let (path, mut ed) = open(srv, a)?;
-    let id = find(&ed, s(a, "id")?)?.id.clone();
+fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
+    let id = find(ed, s(a, "id")?)?.id.clone();
     let (fill, stroke) = (ocolor(a, "fill")?, ocolor(a, "stroke")?);
     let (text, x, y, w, h) = (os(a, "text").map(str::to_owned), of(a, "x"), of(a, "y"), of(a, "w"), of(a, "h"));
     let mut warn: Vec<&str> = Vec::new();
@@ -492,7 +528,7 @@ fn update_object(srv: &Server, a: &Value) -> Res<String> {
             }
         }
     });
-    done(ed, &path, json!({"id": id.0, "avertissements": warn}))
+    Ok(json!({"id": id.0, "avertissements": warn}))
 }
 
 fn table_rect(o: &Object) -> Rect {
@@ -502,16 +538,12 @@ fn table_rect(o: &Object) -> Rect {
     }
 }
 
-fn export(srv: &Server, a: &Value) -> Res<String> {
-    let path = resolve(srv, s(a, "path")?)?;
-    let output = resolve(srv, s(a, "output")?)?;
+fn export(ed: &mut Editor, a: &Value) -> Res<Value> {
+    let output = PathBuf::from(s(a, "output")?);
     let name = lower_name(&output);
     if !EXPORTS.iter().any(|e| name.ends_with(e)) {
         return Err(format!("extension de sortie non gérée (attendu : {})", EXPORTS.join(", ")));
     }
-    let doc = load(&path)?;
-    let mut ed = Editor::new(doc);
-    select_page(&mut ed, a.get("page"))?;
     let doc = &ed.doc;
     let page = ed.page();
     let svg = || export_svg(doc, page, None, &ApproxMeasurer, &SvgOptions::default()).ok_or_else(|| "la page est vide : rien à exporter".to_owned());
@@ -531,5 +563,5 @@ fn export(srv: &Server, a: &Value) -> Res<String> {
         wb_core::serial::to_json(doc, true).into_bytes()
     };
     std::fs::write(&output, &bytes).map_err(|e| format!("écriture de {} : {e}", output.display()))?;
-    Ok(json!({"output": output.display().to_string(), "bytes": bytes.len()}).to_string())
+    Ok(json!({"output": output.display().to_string(), "bytes": bytes.len()}))
 }
