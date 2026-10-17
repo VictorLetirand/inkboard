@@ -949,7 +949,7 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         && let Some(f) = app.ed.page().get(&id).and_then(Object::frame)
     {
         let pts: Vec<Pos2> = f.corners().iter().map(|p| cam.s(*p)).collect();
-        painter.add(Shape::closed_line(pts, Stroke::new(2.0, accent)));
+        painter.add(Shape::closed_line(pts, Stroke::new(2.0_f32, accent)));
     }
     // sélection
     let page = app.ed.page();
@@ -962,7 +962,7 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
             }
         };
         let locked = page.is_locked(o);
-        painter.add(Shape::closed_line(corners, Stroke::new(1.5, if locked { Color32::GRAY } else { accent })));
+        painter.add(Shape::closed_line(corners, Stroke::new(1.5_f32, if locked { Color32::GRAY } else { accent })));
     }
     if app.sel.len() > 1
         && let Some(r) = page.bounds_of(&app.sel)
@@ -970,27 +970,27 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         let sr = cam.rect_s(r);
         painter.add(Shape::dashed_line(
             &[sr.left_top(), sr.right_top(), sr.right_bottom(), sr.left_bottom(), sr.left_top()],
-            Stroke::new(1.0, accent),
+            Stroke::new(1.0_f32, accent),
             5.0,
             4.0,
         ));
     }
     for (kind, p) in app.handles(cam) {
         if matches!(kind, HandleKind::Via(_)) {
-            painter.circle(p, 5.0, accent, Stroke::new(1.5, Color32::WHITE));
+            painter.circle(p, 5.0, accent, Stroke::new(1.5_f32, Color32::WHITE));
         } else if matches!(kind, HandleKind::Mid(_)) {
-            painter.circle(p, 4.0, accent.gamma_multiply(0.25), Stroke::new(1.0, accent));
+            painter.circle(p, 4.0, accent.gamma_multiply(0.25), Stroke::new(1.0_f32, accent));
         } else if matches!(kind, HandleKind::Rotate | HandleKind::Start | HandleKind::End) {
-            painter.circle(p, 5.5, Color32::WHITE, Stroke::new(1.5, accent));
+            painter.circle(p, 5.5, Color32::WHITE, Stroke::new(1.5_f32, accent));
         } else {
-            painter.rect(egui::Rect::from_center_size(p, vec2(9.0, 9.0)), 1.0, Color32::WHITE, Stroke::new(1.5, accent), egui::StrokeKind::Middle);
+            painter.rect(egui::Rect::from_center_size(p, vec2(9.0, 9.0)), 1.0, Color32::WHITE, Stroke::new(1.5_f32, accent), egui::StrokeKind::Middle);
         }
     }
     if let Some(Drag::Marquee { start, .. }) = &app.drag
         && let Some(p) = painter.ctx().input(|i| i.pointer.hover_pos())
     {
         let r = egui::Rect::from_two_pos(cam.s(*start), p);
-        painter.rect(r, 0.0, accent.gamma_multiply(0.12), Stroke::new(1.0, accent), egui::StrokeKind::Middle);
+        painter.rect(r, 0.0, accent.gamma_multiply(0.12), Stroke::new(1.0_f32, accent), egui::StrokeKind::Middle);
     }
     // trait en cours
     if let Some(Drag::Draw { pts, pressures, has_force }) = &app.drag {
@@ -1047,7 +1047,7 @@ fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, poin
     for w in app.laser.windows(2) {
         let a = alpha(w[1].1).clamp(0.0, 1.0);
         painter.line_segment([w[0].0, w[1].0], Stroke::new(3.0 + 5.0 * a, red.gamma_multiply(a * 0.45)));
-        painter.line_segment([w[0].0, w[1].0], Stroke::new(2.5, red.gamma_multiply(a)));
+        painter.line_segment([w[0].0, w[1].0], Stroke::new(2.5_f32, red.gamma_multiply(a)));
     }
     if let Some((p, t)) = app.laser.last() {
         let a = alpha(*t).clamp(0.0, 1.0);

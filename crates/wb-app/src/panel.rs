@@ -59,10 +59,10 @@ fn swatch(ui: &mut Ui, c: Option<Color>, selected: bool, dark: bool) -> Response
         }
         None => {
             pa.rect_filled(r, 6.0, p.ui);
-            pa.line_segment([r.left_bottom() - vec2(0.0, 3.0), r.right_top() + vec2(0.0, 3.0)], Stroke::new(1.6, Color32::from_rgb(0xe0, 0x31, 0x31)));
+            pa.line_segment([r.left_bottom() - vec2(0.0, 3.0), r.right_top() + vec2(0.0, 3.0)], Stroke::new(1.6_f32, Color32::from_rgb(0xe0, 0x31, 0x31)));
         }
     }
-    pa.rect_stroke(r, 6.0, Stroke::new(1.0, p.bd), egui::StrokeKind::Inside);
+    pa.rect_stroke(r, 6.0, Stroke::new(1.0_f32, p.bd), egui::StrokeKind::Inside);
     resp
 }
 
@@ -86,7 +86,7 @@ fn custom_swatch(ui: &mut Ui, current: [u8; 3]) -> Option<[u8; 3]> {
         ];
         ui.painter().add(egui::Shape::convex_polygon(pts, mid, Stroke::NONE));
     }
-    ui.painter().circle_stroke(c, radius, Stroke::new(1.0, p.bd));
+    ui.painter().circle_stroke(c, radius, Stroke::new(1.0_f32, p.bd));
     let mut out = None;
     egui::Popup::from_toggle_button_response(&resp.clone().on_hover_text("Couleur personnalisée"))
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -265,8 +265,8 @@ fn props(app: &mut App, ui: &mut Ui) {
                     let tip = if w == 0.0 { "Sans contour".to_owned() } else { format!("Épaisseur {w}") };
                     let resp = theme::seg_button(ui, on, &tip, |p, r, c| {
                         if w == 0.0 {
-                            p.circle_stroke(r.center(), 6.0, Stroke::new(1.3, c));
-                            p.line_segment([r.center() + vec2(-5.0, 5.0), r.center() + vec2(5.0, -5.0)], Stroke::new(1.3, c));
+                            p.circle_stroke(r.center(), 6.0, Stroke::new(1.3_f32, c));
+                            p.line_segment([r.center() + vec2(-5.0, 5.0), r.center() + vec2(5.0, -5.0)], Stroke::new(1.3_f32, c));
                         } else {
                             line_preview(p, r, if highlighter { w / 3.0 } else { w * 0.9 }, Dash::Solid, c);
                         }
@@ -295,7 +295,7 @@ fn props(app: &mut App, ui: &mut Ui) {
                 for (rd, tip, rx) in [(0.0f32, "Angles vifs", 0.0f32), (0.25, "Arrondis", 4.0)] {
                     let on = if rd == 0.0 { style.roundness < 0.05 } else { style.roundness >= 0.05 };
                     if theme::seg_button(ui, on, tip, |p, r, c| {
-                        p.rect_stroke(ERect::from_center_size(r.center(), vec2(16.0, 12.0)), rx, Stroke::new(1.8, c), egui::StrokeKind::Middle);
+                        p.rect_stroke(ERect::from_center_size(r.center(), vec2(16.0, 12.0)), rx, Stroke::new(1.8_f32, c), egui::StrokeKind::Middle);
                     })
                     .clicked()
                     {
@@ -433,10 +433,10 @@ fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
                         p.galley(pos + vec2(0.6, 0.0), g, c);
                     }
                     Format::Underline => {
-                        p.line_segment([pos + vec2(0.0, g.size().y), pos + vec2(g.size().x, g.size().y)], Stroke::new(1.2, c));
+                        p.line_segment([pos + vec2(0.0, g.size().y), pos + vec2(g.size().x, g.size().y)], Stroke::new(1.2_f32, c));
                     }
                     Format::Strike => {
-                        p.line_segment([pos + vec2(-1.0, g.size().y / 2.0), pos + vec2(g.size().x + 1.0, g.size().y / 2.0)], Stroke::new(1.2, c));
+                        p.line_segment([pos + vec2(-1.0, g.size().y / 2.0), pos + vec2(g.size().x + 1.0, g.size().y / 2.0)], Stroke::new(1.2_f32, c));
                     }
                     _ => {}
                 }

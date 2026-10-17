@@ -204,8 +204,8 @@ fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark:
                 color,
                 background: sp.style.highlight.map_or(Color32::TRANSPARENT, |h| col(h, dark, 0.55)),
                 italics: sp.style.italic,
-                underline: if sp.style.underline { Stroke::new(1.0, color) } else { Stroke::NONE },
-                strikethrough: if sp.style.strike { Stroke::new(1.0, color) } else { Stroke::NONE },
+                underline: if sp.style.underline { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
+                strikethrough: if sp.style.strike { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
                 ..Default::default()
             },
         );
@@ -272,7 +272,7 @@ fn swatch(ui: &mut egui::Ui, c: Color, active: bool, tip: &str) -> egui::Respons
     ui.painter().rect_stroke(
         r,
         4.0,
-        Stroke::new(if active { 2.5 } else { 1.0 }, if active { Color32::from_rgb(0x4f, 0x6d, 0xf5) } else { Color32::from_black_alpha(70) }),
+        Stroke::new(if active { 2.5 } else { 1.0_f32 }, if active { Color32::from_rgb(0x4f, 0x6d, 0xf5) } else { Color32::from_black_alpha(70) }),
         egui::StrokeKind::Middle,
     );
     resp.on_hover_text(tip)

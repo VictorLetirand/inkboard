@@ -333,9 +333,9 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
                 let (r, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
                 let (cr, cg, cb) = preset.rgb();
                 ui.painter().circle_filled(r.center(), 11.0, Color32::from_rgb(cr, cg, cb));
-                ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(2.0, if on { p.ac } else { p.bd }));
+                ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(2.0_f32, if on { p.ac } else { p.bd }));
                 if on {
-                    ui.painter().circle_stroke(r.center(), 14.0, Stroke::new(2.0, p.acbg));
+                    ui.painter().circle_stroke(r.center(), 14.0, Stroke::new(2.0_f32, p.acbg));
                 }
                 if resp.on_hover_text(preset.label()).clicked() {
                     let mut bg = app.ed.doc.background;

@@ -62,7 +62,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     v.dark_mode = dark;
     v.panel_fill = p.ui;
     v.window_fill = p.ui;
-    v.window_stroke = Stroke::new(1.0, p.bd);
+    v.window_stroke = Stroke::new(1.0_f32, p.bd);
     v.window_corner_radius = CornerRadius::same(RADIUS);
     v.menu_corner_radius = CornerRadius::same(RADIUS);
     v.window_shadow = shadow(&p);
@@ -72,25 +72,25 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     v.code_bg_color = p.ui2;
     v.hyperlink_color = p.ac;
     v.selection.bg_fill = p.acbg;
-    v.selection.stroke = Stroke::new(1.0, p.ac);
+    v.selection.stroke = Stroke::new(1.0_f32, p.ac);
     let r = CornerRadius::same(8);
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = p.ui;
     w.noninteractive.weak_bg_fill = p.ui;
-    w.noninteractive.bg_stroke = Stroke::new(1.0, p.bd);
-    w.noninteractive.fg_stroke = Stroke::new(1.0, p.tx);
+    w.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.bd);
+    w.noninteractive.fg_stroke = Stroke::new(1.0_f32, p.tx);
     w.noninteractive.corner_radius = r;
     for (wv, fill) in [(&mut w.inactive, p.ui), (&mut w.hovered, p.ui2), (&mut w.active, p.acbg), (&mut w.open, p.ui2)] {
         wv.weak_bg_fill = fill;
         wv.bg_fill = if fill == p.ui { p.ui2 } else { fill };
-        wv.bg_stroke = Stroke::new(1.0, p.bd);
-        wv.fg_stroke = Stroke::new(1.0, p.tx);
+        wv.bg_stroke = Stroke::new(1.0_f32, p.bd);
+        wv.fg_stroke = Stroke::new(1.0_f32, p.tx);
         wv.corner_radius = r;
         wv.expansion = 0.0;
     }
-    w.hovered.bg_stroke = Stroke::new(1.0, p.bd);
-    w.active.bg_stroke = Stroke::new(1.0, p.ac);
-    w.active.fg_stroke = Stroke::new(1.0, p.ac);
+    w.hovered.bg_stroke = Stroke::new(1.0_f32, p.bd);
+    w.active.bg_stroke = Stroke::new(1.0_f32, p.ac);
+    w.active.fg_stroke = Stroke::new(1.0_f32, p.ac);
     ctx.set_visuals(v);
 
     ctx.style_mut(|s| {
@@ -113,7 +113,12 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
 
 /// Carte flottante (`.bar`, `#toolbar`, `#panel`…) : fond, bordure, coins arrondis et ombre.
 pub fn card_frame(p: &Palette, margin: i8) -> egui::Frame {
-    egui::Frame::new().fill(p.ui).stroke(Stroke::new(1.0, p.bd)).corner_radius(CornerRadius::same(RADIUS)).shadow(shadow(p)).inner_margin(Margin::same(margin))
+    egui::Frame::new()
+        .fill(p.ui)
+        .stroke(Stroke::new(1.0_f32, p.bd))
+        .corner_radius(CornerRadius::same(RADIUS))
+        .shadow(shadow(p))
+        .inner_margin(Margin::same(margin))
 }
 
 /// Pose une carte flottante ancrée dans la fenêtre, au-dessus du canevas.
@@ -157,7 +162,7 @@ pub fn text_button(ui: &mut Ui, text: &str) -> Response {
 pub fn vsep(ui: &mut Ui) {
     let p = current(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(9.0, 22.0), Sense::hover());
-    ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0, p.bd));
+    ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0_f32, p.bd));
 }
 
 /// Style des menus : lignes contiguës (pas d'espace vertical entre deux entrées).
@@ -204,7 +209,7 @@ pub fn menu_sep(ui: &mut Ui) {
     let p = current(ui.ctx());
     ui.add_space(3.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, p.bd));
+    ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0_f32, p.bd));
     ui.add_space(3.0);
 }
 
@@ -225,7 +230,7 @@ pub fn seg_button(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&egui::
     } else {
         p.ui
     };
-    ui.painter().rect(r, 7.0, fill, Stroke::new(1.0, if on { p.ac } else { p.bd }), egui::StrokeKind::Inside);
+    ui.painter().rect(r, 7.0, fill, Stroke::new(1.0_f32, if on { p.ac } else { p.bd }), egui::StrokeKind::Inside);
     content(ui.painter(), r, if on { p.ac } else { p.tx });
     resp.on_hover_text(tip)
 }
@@ -235,7 +240,7 @@ pub fn swatch_frame(ui: &mut Ui, selected: bool) -> (Response, egui::Rect) {
     let p = current(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
     if selected {
-        ui.painter().rect_stroke(r.expand(2.0), 7.0, Stroke::new(2.0, p.ac), egui::StrokeKind::Middle);
+        ui.painter().rect_stroke(r.expand(2.0), 7.0, Stroke::new(2.0_f32, p.ac), egui::StrokeKind::Middle);
     }
     (resp, r)
 }

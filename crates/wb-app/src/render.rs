@@ -117,7 +117,7 @@ impl Renderer<'_> {
                 }
             }
             Pattern::Grid | Pattern::Lines => {
-                let st = Stroke::new(1.0, Color32::from_rgba_unmultiplied(base, base, base, 24));
+                let st = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(base, base, base, 24));
                 if pattern == Pattern::Grid {
                     let mut x = rect.min.x + ox;
                     while x < rect.max.x {
@@ -316,8 +316,8 @@ impl Renderer<'_> {
                         color,
                         background: run.style.highlight.map_or(Color32::TRANSPARENT, |h| col(h, self.dark, 0.55)),
                         italics: run.style.italic,
-                        underline: if run.style.underline { Stroke::new(1.0, color) } else { Stroke::NONE },
-                        strikethrough: if run.style.strike { Stroke::new(1.0, color) } else { Stroke::NONE },
+                        underline: if run.style.underline { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
+                        strikethrough: if run.style.strike { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
                         ..Default::default()
                     },
                 );
