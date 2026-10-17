@@ -4,7 +4,7 @@ use crate::app::{App, Dialog};
 use crate::keymap::{Action, Shortcut};
 use crate::tools::Tool;
 use eframe::egui::{self, Color32, Painter, Rect as ERect, RichText as ERich, Stroke, pos2, vec2};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wb_core::editor::{AlignMode, Axis, Order};
 use wb_core::layout::{Direction, auto_layout};
 use wb_core::style::{FILLS, PALETTE};
@@ -77,6 +77,10 @@ fn tool_icon(p: &Painter, r: ERect, tool: Tool, c: Color32) {
             p.add(egui::Shape::closed_line(vec![pt(4.0, 4.0), pt(20.0, 4.0), pt(20.0, 14.0), pt(14.0, 20.0), pt(4.0, 20.0)], s));
             p.add(egui::Shape::line(vec![pt(14.0, 20.0), pt(14.0, 14.0), pt(20.0, 14.0)], s));
         }
+        Tool::Vote => {
+            p.circle_filled(pt(12.0, 12.0), 7.0 * u, c.gamma_multiply(0.85));
+            p.circle_stroke(pt(12.0, 12.0), 9.5 * u, s);
+        }
         Tool::Table => {
             p.rect_stroke(ERect::from_min_max(pt(4.0, 5.0), pt(20.0, 19.0)), 1.0, s, egui::StrokeKind::Middle);
             p.line_segment([pt(4.0, 10.0), pt(20.0, 10.0)], s);
@@ -95,7 +99,7 @@ fn image_icon(p: &Painter, r: ERect, c: Color32) {
     p.add(egui::Shape::line(vec![pt(21.0, 16.0), pt(16.0, 11.0), pt(7.0, 20.0)], s));
 }
 
-const TOOLS: [(Tool, &str); 14] = [
+const TOOLS: [(Tool, &str); 15] = [
     (Tool::Select, "Sélection (V)"),
     (Tool::Hand, "Main (H)"),
     (Tool::Pen, "Crayon (P)"),
@@ -110,6 +114,7 @@ const TOOLS: [(Tool, &str); 14] = [
     (Tool::Text, "Texte (T)"),
     (Tool::Sticky, "Note adhésive (N)"),
     (Tool::Table, "Tableau (B)"),
+    (Tool::Vote, "Pastille de vote — un clic en pose une"),
 ];
 
 pub fn tool_bar(app: &mut App, ctx: &egui::Context) {
@@ -189,6 +194,7 @@ pub fn top_bar(app: &mut App, ctx: &egui::Context) {
                         ("JSON Canvas (.canvas)", "canvas"),
                         ("Image vectorielle (.svg)", "svg"),
                         ("Image (.png)", "png"),
+                        ("Document PDF (.pdf)", "pdf"),
                     ] {
                         if ui.button(label).clicked() {
                             ui.close();
@@ -223,6 +229,20 @@ pub fn top_bar(app: &mut App, ctx: &egui::Context) {
                     selection_menu(app, ui);
                 }
             });
+            ui.menu_button("Insérer", |ui| {
+                if ui.button("Bloc de code").clicked() {
+                    app.insert_code_block();
+                    ui.close();
+                }
+                if ui.button("Formule (LaTeX)…").clicked() {
+                    app.dialog = Some(Dialog::Formula { src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into() });
+                    ui.close();
+                }
+                if ui.button("Pastille de vote").clicked() {
+                    app.tool = Tool::Vote;
+                    ui.close();
+                }
+            });
             ui.menu_button("Affichage", |ui| {
                 ui.label("Arrière-plan");
                 for p in BgPreset::ALL {
@@ -255,6 +275,24 @@ pub fn top_bar(app: &mut App, ctx: &egui::Context) {
                     app.fit_view(false);
                     ui.close();
                 }
+                ui.separator();
+                if item(ui, app, "Présenter en plein écran", Action::Present) {
+                    app.present_req = Some(true);
+                    ui.close();
+                }
+                ui.menu_button("Minuteur", |ui| {
+                    for min in [1u64, 5, 10, 15, 30] {
+                        if ui.button(format!("{min} min")).clicked() {
+                            let d = Duration::from_secs(min * 60);
+                            app.timer = Some((Instant::now() + d, d));
+                            ui.close();
+                        }
+                    }
+                    if app.timer.is_some() && ui.button("Arrêter").clicked() {
+                        app.timer = None;
+                        ui.close();
+                    }
+                });
             });
         });
     });
@@ -409,6 +447,11 @@ pub fn bottom_bar(app: &mut App, ctx: &egui::Context) {
                 app.fit_pending = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some((text, over)) = timer_text(app) {
+                    let c = if over { Color32::from_rgb(0xe0, 0x31, 0x31) } else { ui.visuals().text_color() };
+                    ui.label(ERich::new(format!("⏱ {text}")).color(c));
+                    ui.ctx().request_repaint_after(Duration::from_millis(500));
+                }
                 let v = app.ed.page().view;
                 if ui.button("Tout afficher").on_hover_text(app.keymap.label(Action::ZoomFit)).clicked() {
                     app.fit_view(false);
@@ -815,6 +858,37 @@ impl App {
     }
 }
 
+/* ------------------------------------------------------- Présentation */
+
+/// Minuteur restant sous la forme « m:ss » ; `None` si aucun minuteur n'est lancé.
+pub fn timer_text(app: &App) -> Option<(String, bool)> {
+    let (end, _) = app.timer?;
+    let left = end.saturating_duration_since(Instant::now()).as_secs();
+    Some((format!("{}:{:02}", left / 60, left % 60), left == 0))
+}
+
+/// Surimpression discrète du mode présentation : numéro de page et minuteur.
+pub fn present_overlay(app: &mut App, ctx: &egui::Context) {
+    let n = app.ed.doc.pages.len();
+    let i = app.ed.doc.pages.iter().position(|p| p.id == app.ed.current).unwrap_or(0) + 1;
+    if n > 1 {
+        egui::Area::new(egui::Id::new("present_page")).anchor(egui::Align2::CENTER_BOTTOM, vec2(0.0, -12.0)).order(egui::Order::Tooltip).show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).fill(Color32::from_black_alpha(150)).show(ui, |ui| {
+                ui.label(ERich::new(format!("{i} / {n}")).color(Color32::WHITE));
+            });
+        });
+    }
+    if let Some((text, over)) = timer_text(app) {
+        egui::Area::new(egui::Id::new("present_timer")).anchor(egui::Align2::RIGHT_TOP, vec2(-14.0, 12.0)).order(egui::Order::Tooltip).show(ctx, |ui| {
+            let fill = if over { Color32::from_rgb(0xc9, 0x2a, 0x2a) } else { Color32::from_black_alpha(150) };
+            egui::Frame::popup(ui.style()).fill(fill).show(ui, |ui| {
+                ui.label(ERich::new(text).size(22.0).color(Color32::WHITE));
+            });
+        });
+        ctx.request_repaint_after(Duration::from_millis(250));
+    }
+}
+
 /* ------------------------------------------------------------ Dialogues */
 
 pub fn dialogs(app: &mut App, ctx: &egui::Context) {
@@ -844,6 +918,26 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
             }
             if open {
                 keep = Some(Dialog::Mermaid { text, new_board, error });
+            }
+        }
+        Dialog::Formula { mut src } => {
+            let mut open = true;
+            let mut insert = false;
+            egui::Window::new("Insérer une formule").fade_in(false).open(&mut open).collapsible(false).default_width(420.0).show(ctx, |ui| {
+                ui.label("Source LaTeX. L'aperçu est une approximation en Unicode (lettres grecques, exposants, fractions simples).");
+                ui.add(egui::TextEdit::multiline(&mut src).code_editor().desired_rows(3).desired_width(f32::INFINITY));
+                ui.separator();
+                ui.label(egui::RichText::new(wb_core::latex::to_unicode(&src)).size(24.0));
+                if ui.button("Insérer").clicked() {
+                    insert = true;
+                }
+            });
+            if insert {
+                app.insert_formula(&src);
+                open = false;
+            }
+            if open {
+                keep = Some(Dialog::Formula { src });
             }
         }
         Dialog::Shortcuts { filter, recording } => {

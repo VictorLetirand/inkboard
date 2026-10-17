@@ -15,6 +15,7 @@ pub enum Dialog {
     Mermaid { text: String, new_board: bool, error: Option<String> },
     RenamePage { id: Id, name: String },
     Shortcuts { filter: String, recording: Option<Action> },
+    Formula { src: String },
 }
 
 /// Mesure de performance (`--bench`) : temps de construction d'une image, en millisecondes.
@@ -88,6 +89,14 @@ pub struct App {
     pub screenshot: Option<PathBuf>,
     pub frames: u32,
     pub fit_pending: bool,
+    /// Mode présentation : plein écran, sans interface, navigation page par page.
+    pub presenting: bool,
+    /// Demande d'entrée (`true`) ou de sortie (`false`) du mode présentation, traitée à la prochaine image.
+    pub present_req: Option<bool>,
+    /// Outil actif avant la présentation.
+    pub prev_tool: Tool,
+    /// Minuteur : instant de fin et durée totale.
+    pub timer: Option<(Instant, Duration)>,
     pub last_autosave: Instant,
     pub last_title: String,
     pub paste_count: u32,
@@ -146,6 +155,10 @@ impl App {
             screenshot,
             frames: 0,
             fit_pending: true,
+            presenting: false,
+            present_req: None,
+            prev_tool: Tool::Select,
+            timer: None,
             last_autosave: Instant::now(),
             last_title: String::new(),
             paste_count: 0,
@@ -309,7 +322,7 @@ impl App {
         }
     }
 
-    /// Exporte vers un format d'échange ; `ext` : drawio, excalidraw, canvas, svg, png.
+    /// Exporte vers un format d'échange ; `ext` : drawio, excalidraw, canvas, svg, png, pdf.
     pub fn export(&mut self, ext: &str) {
         let page = self.ed.page().clone();
         let ids: Option<Vec<Id>> = (!self.sel.is_empty()).then(|| self.sel.clone());
@@ -324,14 +337,17 @@ impl App {
                 Some(json)
             }
             "svg" => wb_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()),
-            "png" => wb_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()),
+            "png" | "pdf" => wb_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()),
             _ => None,
         };
         let Some(text) = text else { return self.toast("Rien à exporter") };
         let name = format!("{}.{ext}", self.ed.doc.name);
         if let Some(p) = rfd::FileDialog::new().set_file_name(&name).add_filter(ext, &[ext]).save_file() {
-            let bytes: Result<Vec<u8>, String> =
-                if ext == "png" { wb_formats::raster::svg_to_png(&text, 2.0).map_err(|e| e.to_string()) } else { Ok(text.into_bytes()) };
+            let bytes: Result<Vec<u8>, String> = match ext {
+                "png" => wb_formats::raster::svg_to_png(&text, 2.0).map_err(|e| e.to_string()),
+                "pdf" => wb_formats::raster::svg_to_pdf(&text).map_err(|e| e.to_string()),
+                _ => Ok(text.into_bytes()),
+            };
             match bytes.and_then(|b| std::fs::write(&p, b).map_err(|e| e.to_string())) {
                 Ok(()) => self.toast(&format!("Exporté : {}", p.display())),
                 Err(e) => self.toast(&format!("Export impossible : {e}")),
@@ -473,7 +489,58 @@ impl App {
         matches!(self.dialog, Some(Dialog::Shortcuts { recording: Some(_), .. }))
     }
 
+    /// Passe à la page suivante (`+1`) ou précédente (`-1`) ; sans effet aux extrémités.
+    pub fn step_page(&mut self, d: i32) {
+        let i = self.ed.doc.pages.iter().position(|p| p.id == self.ed.current).unwrap_or(0) as i32 + d;
+        if let Some(p) = usize::try_from(i).ok().and_then(|i| self.ed.doc.pages.get(i)) {
+            self.ed.current = p.id.clone();
+            self.sel.clear();
+            self.editing = None;
+            self.fit_pending = true;
+        }
+    }
+
+    fn apply_present_request(&mut self, ctx: &egui::Context) {
+        let Some(on) = self.present_req.take() else { return };
+        if on == self.presenting {
+            return;
+        }
+        self.presenting = on;
+        self.sel.clear();
+        self.editing = None;
+        self.drag = None;
+        self.fit_pending = true;
+        if on {
+            self.prev_tool = self.tool;
+            self.tool = Tool::Hand;
+        } else {
+            self.tool = self.prev_tool;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+    }
+
+    /// Touches du mode présentation : flèches / espace / pages pour naviguer, Échap ou F5 pour quitter.
+    fn present_keys(&mut self, ctx: &egui::Context) {
+        let (next, prev, quit) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::PageDown) || i.key_pressed(Key::Space) || i.key_pressed(Key::Enter),
+                i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::PageUp) || i.key_pressed(Key::Backspace),
+                i.key_pressed(Key::Escape) || i.key_pressed(Key::F5),
+            )
+        });
+        if quit {
+            self.present_req = Some(false);
+        } else if next {
+            self.step_page(1);
+        } else if prev {
+            self.step_page(-1);
+        }
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.presenting {
+            return self.present_keys(ctx);
+        }
         if ctx.wants_keyboard_input() || self.editing.is_some() || self.recording_shortcut() {
             return;
         }
@@ -549,6 +616,7 @@ impl App {
                 self.set_view(View { zoom: 1.0, ..v });
             }
             Action::ZoomFit => self.fit_view(false),
+            Action::Present => self.present_req = Some(!self.presenting),
             Action::ZoomIn => self.zoom_by(1.25),
             Action::ZoomOut => self.zoom_by(0.8),
             Action::EditText => {
@@ -705,11 +773,16 @@ impl eframe::App for App {
             ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
             self.ui_dark = dark;
         }
+        self.apply_present_request(ctx);
         self.shortcuts(ctx);
-        ui::top_bar(self, ctx);
-        ui::bottom_bar(self, ctx);
-        ui::tool_bar(self, ctx);
-        ui::side_panel(self, ctx);
+        if self.presenting {
+            ui::present_overlay(self, ctx);
+        } else {
+            ui::top_bar(self, ctx);
+            ui::bottom_bar(self, ctx);
+            ui::tool_bar(self, ctx);
+            ui::side_panel(self, ctx);
+        }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| crate::tools::canvas(self, ui));
         ui::dialogs(self, ctx);
         ui::toast(self, ctx);

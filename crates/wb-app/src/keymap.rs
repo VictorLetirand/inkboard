@@ -47,10 +47,11 @@ pub enum Action {
     ToolText,
     ToolSticky,
     ToolTable,
+    Present,
 }
 
 impl Action {
-    pub const ALL: [Action; 39] = [
+    pub const ALL: [Action; 40] = [
         Action::New,
         Action::Open,
         Action::Save,
@@ -90,6 +91,7 @@ impl Action {
         Action::ToolText,
         Action::ToolSticky,
         Action::ToolTable,
+        Action::Present,
     ];
 
     /// Identifiant stable utilisé dans le fichier de réglages.
@@ -134,6 +136,7 @@ impl Action {
             Action::ToolText => "tool.text",
             Action::ToolSticky => "tool.sticky",
             Action::ToolTable => "tool.table",
+            Action::Present => "view.present",
         }
     }
 
@@ -182,6 +185,7 @@ impl Action {
             Action::ToolText => "Outil : texte",
             Action::ToolSticky => "Outil : note adhésive",
             Action::ToolTable => "Outil : tableau",
+            Action::Present => "Présenter en plein écran",
         }
     }
 
@@ -192,7 +196,7 @@ impl Action {
                 "Édition"
             }
             Action::Front | Action::Forward | Action::Backward | Action::Back => "Ordre",
-            Action::Zoom100 | Action::ZoomFit | Action::ZoomIn | Action::ZoomOut => "Vue",
+            Action::Zoom100 | Action::ZoomFit | Action::ZoomIn | Action::ZoomOut | Action::Present => "Vue",
             Action::Bold | Action::Italic | Action::Underline | Action::Strike => "Texte",
             _ => "Outils",
         }
@@ -376,6 +380,7 @@ impl Keymap {
             Action::ToolText => vec![S::key(Key::T)],
             Action::ToolSticky => vec![S::key(Key::N)],
             Action::ToolTable => vec![S::key(Key::B)],
+            Action::Present => vec![S::key(Key::F5)],
         }
     }
 
@@ -498,7 +503,7 @@ mod tests {
             assert!(!km.bindings(a).is_empty(), "{a:?} sans raccourci par défaut");
         }
         assert!(km.conflicts().is_empty(), "{:?}", km.conflicts());
-        assert_eq!(Action::ALL.len(), 39);
+        assert_eq!(Action::ALL.len(), 40);
     }
 
     #[test]

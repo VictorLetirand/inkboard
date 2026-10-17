@@ -97,10 +97,16 @@ fn main() -> Result<()> {
                 std::fs::write(&output, png).with_context(|| format!("écriture de {}", output.display()))?;
                 println!("{} → {}", input.display(), output.display());
                 return Ok(());
+            } else if out_name.ends_with(".pdf") {
+                let svg = export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("la page est vide : rien à exporter")?;
+                let pdf = wb_formats::raster::svg_to_pdf(&svg)?;
+                std::fs::write(&output, pdf).with_context(|| format!("écriture de {}", output.display()))?;
+                println!("{} → {}", input.display(), output.display());
+                return Ok(());
             } else if out_name.ends_with(".svg") {
                 export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("la page est vide : rien à exporter")?
             } else {
-                bail!("extension de sortie non reconnue : {out_name} (attendu : .tableau.json, .drawio, .excalidraw, .canvas, .svg, .png)");
+                bail!("extension de sortie non reconnue : {out_name} (attendu : .tableau.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf)");
             };
             std::fs::write(&output, text).with_context(|| format!("écriture de {}", output.display()))?;
             println!("{} → {}{}", input.display(), output.display(), if report.is_empty() { String::new() } else { format!("  (à noter : {report})") });

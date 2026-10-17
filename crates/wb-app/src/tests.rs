@@ -928,3 +928,87 @@ fn elbow_connectors_route_around_shapes_placed_in_the_way() {
     let direct = page.connector_path(cn).unwrap();
     assert_eq!(direct.len(), 2, "ligne droite quand rien ne gêne : {direct:?}");
 }
+
+/* ------------------------------------------------------ éléments préfabriqués */
+
+#[test]
+fn code_block_is_a_dark_monospace_box_in_one_undo_step() {
+    let mut t = T::new();
+    t.app().insert_code_block();
+    t.h.step();
+    let boxes = t.boxes();
+    assert_eq!(boxes.len(), 1);
+    let b = &boxes[0].1;
+    assert_eq!(b.label.family, FontFamily::Mono);
+    assert_eq!(b.label.align, Align::Left);
+    assert!(boxes[0].0.style.fill.is_some());
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert!(t.objects().is_empty());
+}
+
+#[test]
+fn formula_is_converted_to_unicode_text() {
+    let mut t = T::new();
+    t.app().insert_formula(r"\alpha^2 + \frac{1}{2}");
+    t.h.step();
+    let boxes = t.boxes();
+    assert_eq!(boxes[0].1.label.text.to_plain(), "α² + 1⁄2");
+    assert_eq!(boxes[0].1.geom, BoxGeom::Text);
+    t.app().insert_formula("   ");
+    assert_eq!(t.boxes().len(), 1, "une formule vide n'insère rien");
+}
+
+#[test]
+fn vote_tool_drops_one_dot_per_click() {
+    let mut t = T::new();
+    t.app().set_tool(Tool::Vote);
+    t.h.step();
+    t.click((200.0, 200.0));
+    t.click((300.0, 200.0));
+    assert_eq!(t.boxes().len(), 2);
+    assert!(t.boxes().iter().all(|(_, b)| b.geom == BoxGeom::Ellipse));
+}
+
+/* ------------------------------------------------- présentation et minuteur */
+
+fn page_index(t: &mut T) -> usize {
+    let app = t.app();
+    app.ed.doc.pages.iter().position(|p| p.id == app.ed.current).unwrap()
+}
+
+#[test]
+fn presentation_mode_hides_the_ui_and_navigates_between_pages() {
+    let mut t = T::new();
+    t.app().ed.add_page("Deux");
+    t.app().ed.add_page("Trois");
+    let first = t.app().ed.doc.pages[0].id.clone();
+    t.app().ed.current = first.clone();
+    t.key(Key::F5);
+    t.h.step();
+    assert!(t.app().presenting);
+    t.key(Key::ArrowRight);
+    assert_eq!(page_index(&mut t), 1);
+    t.key(Key::Space);
+    assert_eq!(page_index(&mut t), 2);
+    t.key(Key::ArrowRight);
+    assert_eq!(page_index(&mut t), 2, "pas de page après la dernière");
+    t.key(Key::ArrowLeft);
+    assert_eq!(page_index(&mut t), 1);
+    t.key(Key::Escape);
+    t.h.step();
+    assert!(!t.app().presenting);
+    assert_eq!(t.app().tool, Tool::Select);
+}
+
+#[test]
+fn timer_counts_down_and_reports_when_over() {
+    let mut t = T::new();
+    assert!(crate::ui::timer_text(t.app()).is_none());
+    let d = std::time::Duration::from_secs(90);
+    t.app().timer = Some((std::time::Instant::now() + d, d));
+    let (txt, over) = crate::ui::timer_text(t.app()).unwrap();
+    assert!(txt == "1:30" || txt == "1:29", "{txt}");
+    assert!(!over);
+    t.app().timer = Some((std::time::Instant::now(), d));
+    assert_eq!(crate::ui::timer_text(t.app()), Some(("0:00".to_owned(), true)));
+}

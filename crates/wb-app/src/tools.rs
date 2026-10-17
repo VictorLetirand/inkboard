@@ -20,6 +20,8 @@ pub enum Tool {
     Text,
     Sticky,
     Table,
+    /// Pastilles de vote : un clic pose une pastille.
+    Vote,
 }
 
 pub use crate::rich_edit::Editing;
@@ -311,6 +313,7 @@ impl App {
             Tool::Pen | Tool::Highlighter => {
                 self.drag = Some(Drag::Draw { pts: vec![w], pressures: vec![self.pen_force.unwrap_or(0.5)], has_force: self.pen_force.is_some() })
             }
+            Tool::Vote => self.insert_vote_dot(w),
             Tool::Eraser => {
                 self.drag = Some(Drag::Erase { hit: Vec::new(), last: w });
                 self.erase_at(w, w, f64::from(cam.zoom));

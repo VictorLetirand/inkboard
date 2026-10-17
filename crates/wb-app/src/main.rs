@@ -3,6 +3,7 @@
 mod app;
 mod clipboard;
 mod fonts;
+mod insert;
 mod keymap;
 mod render;
 mod rich_edit;
@@ -35,7 +36,13 @@ fn main() -> eframe::Result {
         }
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1360.0, 860.0]).with_min_inner_size([720.0, 480.0]).with_title("Tableau blanc"),
+        viewport: {
+            let mut v = egui::ViewportBuilder::default().with_inner_size([1360.0, 860.0]).with_min_inner_size([720.0, 480.0]).with_title("Tableau blanc");
+            if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")) {
+                v = v.with_icon(icon);
+            }
+            v
+        },
         ..Default::default()
     };
     eframe::run_native(
