@@ -22,7 +22,7 @@ impl App {
     /// Bloc de code : rectangle sombre, police à chasse fixe, texte aligné à gauche.
     pub fn insert_code_block(&mut self) {
         let style = Style { stroke: Color::rgb(0xe6, 0xe6, 0xe6), fill: Some(Color::rgb(0x1e, 0x20, 0x2e)), width: 0.0, roundness: 0.1, ..Style::default() };
-        let label = Label { text: RichText::plain(CODE_SAMPLE), family: FontFamily::Mono, size: 18.0, align: Align::Left };
+        let label = Label { text: wb_core::highlight::highlight(CODE_SAMPLE), family: FontFamily::Mono, size: 18.0, align: Align::Left };
         let mut o = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 420.0, 120.0), style, label);
         if let Kind::Box(b) = &mut o.kind {
             let lay = b.layout(&self.measurer);
@@ -31,6 +31,15 @@ impl App {
         }
         self.place_box(o);
         self.toast("Double-clic pour modifier le code");
+    }
+
+    /// Recolore le texte d'une forme à chasse fixe (la mise en forme existante est remplacée par la coloration syntaxique).
+    pub fn recolor_code(&mut self, id: &Id) {
+        self.ed.update(id, |o| {
+            if let Kind::Box(b) = &mut o.kind {
+                b.label.text = wb_core::highlight::highlight(&b.label.text.to_plain());
+            }
+        });
     }
 
     /// Formule : le source LaTeX est converti en Unicode (approximation) dans une zone de texte à police serif.

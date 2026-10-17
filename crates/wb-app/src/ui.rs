@@ -334,6 +334,13 @@ pub fn selection_menu(app: &mut App, ui: &mut egui::Ui) {
         ui.close();
     }
     if let [id] = sel.as_slice()
+        && app.ed.page().get(id).is_some_and(|o| matches!(&o.kind, Kind::Box(b) if b.label.family == FontFamily::Mono))
+        && ui.button("Colorer le code").clicked()
+    {
+        app.recolor_code(id);
+        ui.close();
+    }
+    if let [id] = sel.as_slice()
         && app.ed.page().get(id).is_some_and(|o| matches!(&o.kind, Kind::Connector(c) if !c.via.is_empty()))
         && ui.button("Redresser (retirer les points de passage)").clicked()
     {

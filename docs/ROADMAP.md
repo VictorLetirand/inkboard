@@ -19,7 +19,7 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Raccourcis personnalisables | Excalidraw | ✔ 40 commandes, plusieurs raccourcis, fichier JSON, conflits gérés (jalon 2) |
 | Stylet : pression | Excalidraw | ✔ largeur variable (à valider sur du matériel réel) |
 | Stylet : gomme au bouton | Excalidraw | ✘ non exposée par egui |
-| Blocs de code | Excalidraw | ✔ (sans coloration syntaxique) |
+| Blocs de code | Excalidraw | ✔ coloration syntaxique minimale (commentaires, chaînes, nombres, mots-clés ; menu « Colorer le code ») |
 | LaTeX | Excalidraw | ◐ aperçu Unicode approximatif (pas de composition) |
 | Présentation, minuteur, vote | Excalidraw | ✔ plein écran page par page, minuteur, pastilles |
 | Connecteurs qui évitent les formes | draw.io | ✔ routage A*, points de passage |
@@ -31,7 +31,7 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 - **`wb-mcp`** : serveur MCP en Rust sur `wb-core` (créer/modifier des objets, importer Mermaid, exporter) ; niveau A sur fichiers,
   niveau B en direct avec l'application ouverte. *Volontairement repoussé.*
 - Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
-- Coloration syntaxique des blocs de code ; vraie composition LaTeX.
+- Vraie composition LaTeX ; coloration par langage (la coloration actuelle est générique).
 - Gomme au bouton du stylet (dépend d'egui/winit) ; validation de la pression sur du matériel réel.
 - Alignement par ligne dans le champ de saisie pendant l'édition d'un texte centré multiligne.
 - Version WASM du moteur (même code) si un usage web est souhaité.
@@ -41,7 +41,7 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 - Pas de tests visuels automatisés (la capture d'écran `--screenshot` sert au contrôle manuel).
 - Les traits au crayon sont exportés en images vers draw.io (pas d'équivalent éditable).
 - Les formats d'échange n'ont été confrontés qu'à leurs propres exports et à des fichiers écrits à la main, à l'exception de
-  l'export draw.io vérifié dans le visualiseur officiel ; aucun vrai fichier Excalidraw/Obsidian n'a été testé.
+  l'export draw.io vérifié dans le visualiseur officiel ; des fichiers Excalidraw et Obsidian Canvas écrits comme les vrais outils (`wb-formats/tests/realistic.rs`) s'importent correctement, mais aucun fichier réel d'utilisateur n'a été testé.
 - Le workflow CI (`.github/workflows/ci.yml`) n'a jamais été exécuté.
 - Le routage coudé avec contournement est désactivé au-delà de 5 000 objets (coût linéaire par connecteur).
 - La formule LaTeX est figée en texte Unicode : le source n'est pas conservé.

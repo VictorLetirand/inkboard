@@ -11,7 +11,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 ```bash
 cargo run --release -p wb-app                 # l'application
 cargo run --release -p wb-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 204 tests
+cargo test --workspace                        # 211 tests
 powershell -File scripts/package.ps1          # archive portable Windows (dist/)
 ```
 
@@ -38,7 +38,7 @@ cargo run --release -p wb-cli -- info schema.drawio
   **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
 - **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw). La gomme au bouton du stylet n'est pas exposée par egui.
 - **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
-- **Menu Insérer** : bloc de code (police à chasse fixe), formule LaTeX (aperçu Unicode approximatif : lettres grecques, exposants, fractions simples),
+- **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), formule LaTeX (aperçu Unicode approximatif : lettres grecques, exposants, fractions simples),
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
 - **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.

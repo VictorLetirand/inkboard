@@ -9,6 +9,7 @@
 pub mod connector;
 pub mod editor;
 pub mod geom;
+pub mod highlight;
 pub mod history;
 pub mod hit;
 pub mod latex;

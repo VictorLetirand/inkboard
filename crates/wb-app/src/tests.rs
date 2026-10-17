@@ -1012,3 +1012,21 @@ fn timer_counts_down_and_reports_when_over() {
     t.app().timer = Some((std::time::Instant::now(), d));
     assert_eq!(crate::ui::timer_text(t.app()), Some(("0:00".to_owned(), true)));
 }
+
+#[test]
+fn code_block_is_colored_and_recolor_applies_to_edited_code() {
+    let mut t = T::new();
+    t.app().insert_code_block();
+    t.h.step();
+    let spans = t.boxes()[0].1.label.text.0.clone();
+    assert!(spans.iter().any(|s| s.style.color.is_some()), "le bloc de code est coloré");
+    let id = t.objects()[0].id.clone();
+    t.app().ed.update(&id, |o| {
+        if let Kind::Box(b) = &mut o.kind {
+            b.label.text = RichText::plain("let x = 1;");
+        }
+    });
+    t.app().recolor_code(&id);
+    assert!(t.boxes()[0].1.label.text.0.iter().any(|s| s.style.color.is_some()));
+    assert_eq!(t.boxes()[0].1.label.text.to_plain(), "let x = 1;");
+}
