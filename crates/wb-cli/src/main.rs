@@ -147,7 +147,8 @@ fn bench_document(count: usize) -> Document {
             objs.push(Object::new_pen(pts, false, Style::default()));
         } else if shapes.len() > 2 {
             let a = shapes[shapes.len() - 1].clone();
-            let b = shapes[(rnd() * shapes.len() as f64) as usize % shapes.len()].clone();
+            // liens locaux, comme dans un vrai schéma : vers l'une des 8 formes précédentes
+            let b = shapes[shapes.len().saturating_sub(2 + (rnd() * 8.0) as usize) % shapes.len()].clone();
             if a != b {
                 objs.push(Object::new(Kind::Connector(Connector::new(End::bound(a), End::bound(b))), Style { width: 2.0, ..Style::default() }));
             }

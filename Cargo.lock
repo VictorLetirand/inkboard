@@ -3782,6 +3782,7 @@ dependencies = [
 name = "wb-app"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "eframe",
  "egui_kittest",
  "image",

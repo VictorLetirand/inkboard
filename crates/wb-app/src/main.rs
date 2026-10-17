@@ -1,6 +1,7 @@
 //! Tableau blanc : application de bureau (egui).
 
 mod app;
+mod clipboard;
 mod fonts;
 mod keymap;
 mod render;
@@ -16,6 +17,7 @@ fn main() -> eframe::Result {
     let mut open: Option<PathBuf> = None;
     let mut screenshot: Option<PathBuf> = None;
     let mut bench = false;
+    let mut bench_close = false;
     let mut edit_demo = false;
     let mut shortcuts_demo = false;
     let mut it = args.iter();
@@ -23,6 +25,10 @@ fn main() -> eframe::Result {
         match a.as_str() {
             "--screenshot" => screenshot = it.next().map(PathBuf::from),
             "--bench" => bench = true,
+            "--bench-close" => {
+                bench = true;
+                bench_close = true;
+            }
             "--edit-demo" => edit_demo = true,
             "--shortcuts-demo" => shortcuts_demo = true,
             other => open = Some(PathBuf::from(other)),
@@ -37,7 +43,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut a = app::App::new(cc, open.clone(), screenshot.clone());
-            a.bench = bench.then(app::Bench::default);
+            a.bench = bench.then(|| app::Bench { close_up: bench_close, ..Default::default() });
             a.edit_demo = edit_demo;
             if shortcuts_demo {
                 a.dialog = Some(app::Dialog::Shortcuts { filter: String::new(), recording: Some(keymap::Action::ToolPen) });

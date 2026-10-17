@@ -21,11 +21,45 @@ pub enum Dialog {
 #[derive(Default)]
 pub struct Bench {
     pub frame_ms: Vec<f64>,
+    /// Durée d'une recherche d'objet sous le pointeur (survol), en millisecondes.
+    pub pick_ms: Vec<f64>,
+    /// Vue rapprochée (zoom 100 %) au lieu de « tout afficher ».
+    pub close_up: bool,
 }
 
+/// Image brute : largeur, hauteur, pixels RGBA.
+pub type RawImage = (usize, usize, Vec<u8>);
+
+/// Caches recalculés quand la révision du document change : positions par identifiant et index spatial.
+pub struct Caches {
+    pub rev: u64,
+    pub page: Id,
+    pub len: usize,
+    pub ids: std::collections::HashMap<Id, usize>,
+    pub spatial: Option<wb_core::spatial::SpatialIndex>,
+    /// Durée de la dernière reconstruction (ms).
+    pub build_ms: f64,
+}
+
+impl Default for Caches {
+    fn default() -> Self {
+        Self { rev: u64::MAX, page: Id::new(), len: 0, ids: Default::default(), spatial: None, build_ms: 0.0 }
+    }
+}
+
+/// Sous ce nombre d'objets, le parcours linéaire est plus simple et aussi rapide : pas d'index spatial.
+const INDEX_MIN_OBJECTS: usize = 400;
+
 pub struct App {
+    pub caches: Caches,
     pub bench: Option<Bench>,
     pub keymap: Keymap,
+    /// Dernière pression de stylet reçue (0..1) pendant un contact, si le matériel la fournit.
+    pub pen_force: Option<f32>,
+    /// Lecture d'une image du presse-papiers système (remplaçable dans les tests).
+    pub system_image: fn() -> Option<RawImage>,
+    /// Point monde du dernier clic droit (menu contextuel des tableaux).
+    pub ctx_pos: Pt,
     pub keymap_path: Option<PathBuf>,
     pub ui_dark: bool,
     pub edit_demo: bool,
@@ -79,8 +113,12 @@ impl App {
         cc.egui_ctx.set_visuals(egui::Visuals::light());
         let measurer = EguiMeasurer(cc.egui_ctx.clone());
         let mut app = Self {
+            caches: Caches::default(),
             bench: None,
             keymap: Keymap::default(),
+            pen_force: None,
+            system_image: crate::clipboard::system_image,
+            ctx_pos: Pt::ZERO,
             keymap_path: None,
             ui_dark: false,
             edit_demo: false,
@@ -144,6 +182,45 @@ impl App {
         }
         app.saved_rev = app.ed.revision();
         app
+    }
+
+    /// Met à jour les caches si le document a changé depuis leur construction.
+    pub fn refresh_caches(&mut self) {
+        let page = self.ed.page();
+        if self.caches.rev == self.ed.revision() && self.caches.page == page.id && self.caches.len == page.objects.len() {
+            return;
+        }
+        let t0 = Instant::now();
+        let ids = wb_core::spatial::id_index(page);
+        let spatial = (page.objects.len() >= INDEX_MIN_OBJECTS).then(|| wb_core::spatial::SpatialIndex::build(page, &ids));
+        self.caches =
+            Caches { rev: self.ed.revision(), page: page.id.clone(), len: page.objects.len(), ids, spatial, build_ms: t0.elapsed().as_secs_f64() * 1000.0 };
+    }
+
+    /// Vrai pendant un geste qui modifie des objets sans passer par l'historique : l'index spatial est alors périmé.
+    pub fn objects_moving(&self) -> bool {
+        matches!(self.drag, Some(Drag::Move { .. } | Drag::Resize { .. } | Drag::Rotate { .. } | Drag::Endpoint { .. } | Drag::Via { .. }))
+            || self.prop_edit.is_some()
+    }
+
+    /// Objet le plus au premier plan sous `w` (index spatial quand il est valable).
+    pub fn pick_at(&mut self, w: Pt, tol: f64) -> Option<usize> {
+        self.refresh_caches();
+        let page = self.ed.page();
+        let ids = &self.caches.ids;
+        let get = |id: &Id| ids.get(id).map(|&i| &page.objects[i]);
+        let cands = if self.objects_moving() { None } else { self.caches.spatial.as_ref().map(|s| s.query_point(w, tol)) };
+        page.pick_with(w, tol, &get, cands.as_deref())
+    }
+
+    /// Objets d'un rectangle de sélection (lasso).
+    pub fn rect_select(&mut self, r: Rect, contain: bool) -> Vec<Id> {
+        self.refresh_caches();
+        let page = self.ed.page();
+        match (&self.caches.spatial, self.objects_moving()) {
+            (Some(ix), false) => page.objects_in_rect_idx(r, contain, ix),
+            _ => page.objects_in_rect(r, contain),
+        }
     }
 
     pub fn toast(&mut self, msg: &str) {
@@ -403,12 +480,12 @@ impl App {
         let events = ctx.input(|i| i.events.clone());
         for ev in events {
             match ev {
-                egui::Event::Copy => self.copy_selection(),
+                egui::Event::Copy => self.copy_to_system(ctx),
                 egui::Event::Cut => {
-                    self.copy_selection();
+                    self.copy_to_system(ctx);
                     self.delete_selection();
                 }
-                egui::Event::Paste(_) => self.paste(),
+                egui::Event::Paste(text) => self.paste_event(&text),
                 egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } => self.on_key(key, modifiers),
                 _ => {}
             }
@@ -524,9 +601,24 @@ impl App {
     }
 
     fn bench_step(&mut self, ctx: &egui::Context, started: Instant) {
+        if self.bench.is_some() {
+            let v = self.ed.page().view;
+            let t0 = Instant::now();
+            for k in 0..20 {
+                let w =
+                    Pt::new((f64::from(self.canvas_size.0) * (0.2 + 0.03 * f64::from(k)) - v.x) / v.zoom, (f64::from(self.canvas_size.1) * 0.5 - v.y) / v.zoom);
+                let _ = self.pick_at(w, 6.0 / v.zoom);
+            }
+            let per = t0.elapsed().as_secs_f64() * 1000.0 / 20.0;
+            if let Some(b) = self.bench.as_mut() {
+                b.pick_ms.push(per);
+            }
+        }
         let Some(b) = self.bench.as_mut() else { return };
         b.frame_ms.push(started.elapsed().as_secs_f64() * 1000.0);
         let n = b.frame_ms.len();
+        let close_up = b.close_up;
+        let _ = &b;
         let report = (n >= 126).then(|| {
             let mut t: Vec<f64> = b.frame_ms[6..].to_vec();
             t.sort_by(f64::total_cmp);
@@ -535,15 +627,33 @@ impl App {
         if n == 3 {
             self.fit_pending = true;
         }
+        if n == 5 && close_up {
+            // vue rapprochée : zoom 100 % centré sur le milieu du contenu
+            if let Some(b) = self.ed.page().content_bounds() {
+                let (w, h) = (f64::from(self.canvas_size.0), f64::from(self.canvas_size.1));
+                self.set_view(View { x: w / 2.0 - b.center().x, y: h / 2.0 - b.center().y, zoom: 1.0 });
+            }
+        }
         if n > 6 {
             let v = self.ed.page().view;
-            let k = if (n / 40) % 2 == 0 { 1.01 } else { 0.99 };
+            let k = if close_up {
+                1.0
+            } else if (n / 40) % 2 == 0 {
+                1.01
+            } else {
+                0.99
+            };
             self.set_view(View { x: v.x + 9.0, y: v.y + 5.0, zoom: (v.zoom * k).clamp(0.05, 4.0) });
         }
         ctx.request_repaint();
         if let Some((avg, med, p95, worst)) = report {
             println!("objets : {}", self.ed.page().objects.len());
             println!("image (CPU) : moyenne {avg:.2} ms · médiane {med:.2} ms · p95 {p95:.2} ms · pire {worst:.2} ms");
+            println!("reconstruction des caches (une fois par modification) : {:.1} ms", self.caches.build_ms);
+            let picks = self.bench.as_ref().map(|b| b.pick_ms.clone()).unwrap_or_default();
+            if !picks.is_empty() {
+                println!("survol (recherche sous le pointeur) : moyenne {:.3} ms", picks.iter().sum::<f64>() / picks.len() as f64);
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }

@@ -12,7 +12,11 @@ struct T {
 
 impl T {
     fn new() -> Self {
-        let mut h = Harness::builder().with_size(vec2(1300.0, 850.0)).build_eframe(|cc| App::build(cc, None, None, false));
+        let mut h = Harness::builder().with_size(vec2(1300.0, 850.0)).build_eframe(|cc| {
+            let mut app = App::build(cc, None, None, false);
+            app.system_image = || None; // jamais le vrai presse-papiers dans les tests
+            app
+        });
         h.step();
         h.step();
         let mut t = T { h };
@@ -663,4 +667,264 @@ fn menu_labels_follow_the_keymap() {
     t.app().keymap.remove(Action::Undo, &Shortcut::ctrl(Key::Z));
     t.app().keymap.add(Action::Undo, Shortcut::new(Key::W, true, false, true)).unwrap();
     assert_eq!(t.app().keymap.label(Action::Undo), "Ctrl+Alt+W");
+}
+
+/* ----------------------------------------------------- presse-papiers système */
+
+#[test]
+fn pasting_plain_text_creates_a_text_box_in_the_view() {
+    let mut t = T::new();
+    t.h.event(Event::Paste(
+        "Une idée
+sur deux lignes"
+            .into(),
+    ));
+    t.h.step();
+    let b = t.boxes();
+    assert_eq!(b.len(), 1);
+    assert_eq!(b[0].1.geom, BoxGeom::Text);
+    assert_eq!(
+        b[0].1.label.text.to_plain(),
+        "Une idée
+sur deux lignes"
+    );
+    assert!(b[0].1.frame.w > 20.0 && b[0].1.frame.h > 20.0, "dimensionné d'après le texte");
+    assert_eq!(t.app().sel.len(), 1);
+}
+
+#[test]
+fn pasting_a_system_image_inserts_a_png_asset() {
+    let mut t = T::new();
+    t.app().system_image = || Some((4, 2, vec![200; 4 * 2 * 4]));
+    t.h.event(Event::Paste(String::new()));
+    t.h.step();
+    let objs = t.objects();
+    let Kind::Image(i) = &objs[0].kind else { panic!("pas d'image : {objs:?}") };
+    let asset = t.app().ed.doc.assets.get(&i.asset).expect("ressource enregistrée");
+    assert_eq!(asset.mime, "image/png");
+    let decoded = image::load_from_memory(&asset.data).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (4, 2));
+    assert!((i.frame.w / i.frame.h - 2.0).abs() < 1e-9, "proportions conservées");
+}
+
+#[test]
+fn large_pasted_images_are_scaled_down() {
+    let mut t = T::new();
+    let at = Pt::new(0.0, 0.0);
+    t.app().insert_rgba(2000, 1000, &vec![255; 2000 * 1000 * 4], at);
+    let id = t.app().sel[0].clone();
+    let f = t.frame(&id);
+    assert!(f.w <= 480.0 + 1e-9 && (f.w / f.h - 2.0).abs() < 1e-9, "{f:?}");
+    assert!(f.center().dist(at) < 1e-6);
+}
+
+#[test]
+fn paste_marker_pastes_internal_objects_and_empty_paste_falls_back_to_them() {
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 50.0, 50.0);
+    t.app().sel = vec![a];
+    t.app().copy_selection();
+    t.h.event(Event::Paste(crate::clipboard::MARKER.into()));
+    t.h.step();
+    assert_eq!(t.objects().len(), 2, "objet interne collé, pas une zone de texte avec le repère");
+    t.h.event(Event::Paste(String::new()));
+    t.h.step();
+    assert_eq!(t.objects().len(), 3);
+    assert!(t.boxes().iter().all(|(_, b)| b.geom == BoxGeom::Rect));
+}
+
+#[test]
+fn invalid_pixel_buffer_is_rejected_without_panicking() {
+    let mut t = T::new();
+    t.app().insert_rgba(10, 10, &[0; 5], Pt::ZERO);
+    assert!(t.objects().is_empty());
+    assert!(t.app().toast.is_some());
+}
+
+#[test]
+fn rich_format_applies_to_all_cells_of_a_selected_table() {
+    let mut t = T::new();
+    t.app().set_tool(Tool::Table);
+    t.click((400.0, 300.0));
+    let id = t.objects()[0].id.clone();
+    t.app().ed.update(&id, |o| {
+        if let Kind::Table(tb) = &mut o.kind {
+            tb.cell_mut(0, 0).unwrap().set_plain("a");
+            tb.cell_mut(1, 1).unwrap().set_plain("b");
+        }
+    });
+    t.app().sel = vec![id.clone()];
+    t.app().apply_format(Format::Bold);
+    let Kind::Table(tb) = &t.app().ed.page().get(&id).unwrap().kind else { unreachable!() };
+    assert!(tb.cell(0, 0).unwrap().all(0, 1, |s| s.bold) && tb.cell(1, 1).unwrap().all(0, 1, |s| s.bold));
+}
+
+/* ------------------------------------------------------------ stylet */
+
+fn touch(t: &mut T, phase: egui::TouchPhase, p: Pos2, force: f32) {
+    t.h.event(Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(0), phase, pos: p, force: Some(force) });
+}
+
+#[test]
+fn pen_pressure_from_touch_events_makes_a_variable_width_stroke() {
+    let mut t = T::new();
+    t.app().set_tool(Tool::Pen);
+    let pts: Vec<(f64, f64, f32)> = vec![(100.0, 100.0, 0.1), (140.0, 110.0, 0.3), (180.0, 120.0, 0.6), (220.0, 120.0, 0.9), (260.0, 110.0, 1.0)];
+    let first = t.at(pts[0].0, pts[0].1);
+    touch(&mut t, egui::TouchPhase::Start, first, pts[0].2);
+    t.mv(first);
+    t.button(first, true, Modifiers::NONE);
+    for (x, y, f) in &pts[1..] {
+        let p = t.at(*x, *y);
+        touch(&mut t, egui::TouchPhase::Move, p, *f);
+        t.mv(p);
+    }
+    let last = t.at(260.0, 110.0);
+    touch(&mut t, egui::TouchPhase::End, last, 0.0);
+    t.button(last, false, Modifiers::NONE);
+    let objs = t.objects();
+    let Kind::Pen(p) = &objs[0].kind else { panic!("pas de trait") };
+    let pr = p.pressures.as_ref().expect("la pression est conservée");
+    assert_eq!(pr.len(), p.pts.len(), "une pression par point, même après simplification");
+    assert!((pr[0] - 0.1).abs() < 1e-6 && (pr[pr.len() - 1] - 1.0).abs() < 1e-6, "{pr:?}");
+    assert!(pr.windows(2).all(|w| w[0] <= w[1] + 1e-6), "pressions croissantes : {pr:?}");
+    assert_eq!(t.app().pen_force, None, "la pression est oubliée au relâchement");
+}
+
+#[test]
+fn mouse_strokes_have_constant_width_and_highlighter_ignores_pressure() {
+    let mut t = T::new();
+    t.app().set_tool(Tool::Pen);
+    t.drag((100.0, 100.0), (300.0, 160.0));
+    assert!(matches!(&t.objects()[0].kind, Kind::Pen(p) if p.pressures.is_none()));
+    t.app().set_tool(Tool::Highlighter);
+    let a = t.at(100.0, 300.0);
+    touch(&mut t, egui::TouchPhase::Start, a, 0.3);
+    t.mv(a);
+    t.button(a, true, Modifiers::NONE);
+    let b = t.at(300.0, 300.0);
+    touch(&mut t, egui::TouchPhase::Move, b, 0.9);
+    t.mv(b);
+    touch(&mut t, egui::TouchPhase::End, b, 0.0);
+    t.button(b, false, Modifiers::NONE);
+    let objs = t.objects();
+    assert!(matches!(&objs[1].kind, Kind::Pen(p) if p.highlighter && p.pressures.is_none()));
+}
+
+/* ------------------------------------------------------------ grands tableaux */
+
+#[test]
+fn spatial_index_keeps_picking_and_moving_correct_on_a_large_board() {
+    let mut t = T::new();
+    let mut ids = Vec::new();
+    for i in 0..600 {
+        ids.push(t.add_rect((i % 30) as f64 * 150.0, (i / 30) as f64 * 130.0, 100.0, 80.0));
+    }
+    t.h.step();
+    assert!(t.app().caches.spatial.is_some(), "au-delà de 400 objets l'index spatial est actif");
+    let target = ids[35].clone(); // colonne 5, ligne 1
+    let f = t.frame(&target);
+    t.click((f.x + 50.0, f.y + 40.0));
+    assert_eq!(t.app().sel, vec![target.clone()]);
+    // déplacement loin des autres, puis vérification avec l'index reconstruit
+    t.drag((f.x + 50.0, f.y + 40.0), (f.x + 50.0 + 5000.0, f.y + 40.0 + 3000.0));
+    let moved = t.frame(&target);
+    assert!((moved.x - (f.x + 5000.0)).abs() < 2.0, "{moved:?}");
+    t.app().sel.clear();
+    t.app().set_view(View { x: 500.0 - moved.x, y: 300.0 - moved.y, zoom: 1.0 });
+    t.h.step();
+    t.click((moved.x + 50.0, moved.y + 40.0));
+    assert_eq!(t.app().sel, vec![target.clone()], "l'objet est retrouvé à sa nouvelle position");
+    t.app().sel.clear();
+    t.app().set_view(View { x: 500.0 - f.x, y: 300.0 - f.y, zoom: 1.0 });
+    t.h.step();
+    t.click((f.x + 50.0, f.y + 40.0));
+    assert!(t.app().sel.is_empty(), "plus rien à l'ancienne position");
+    t.app().set_view(View { x: 0.0, y: 0.0, zoom: 1.0 });
+    t.h.step();
+    // lasso sur une zone dense
+    t.drag((125.0, 105.0), (480.0, 300.0)); // départ dans un interstice : lasso, pas déplacement
+    let sel = t.app().sel.len();
+    let linear = t.app().ed.page().objects_in_rect(Rect::new(125.0, 105.0, 355.0, 195.0), true).len();
+    assert_eq!(sel, linear, "le lasso donne le même résultat avec ou sans index");
+    assert!(sel >= 2, "{sel} objets attendus au moins");
+}
+
+/* ------------------------------------------------- points de passage et coudés */
+
+fn linked_pair(t: &mut T) -> (Id, Id, Id) {
+    let a = t.add_rect(0.0, 100.0, 120.0, 80.0);
+    let b = t.add_rect(400.0, 100.0, 120.0, 80.0);
+    let c = t.app().ed.connect(&a, &b);
+    (a, b, c)
+}
+
+fn via_of(t: &mut T, c: &Id) -> Vec<Pt> {
+    let Kind::Connector(cn) = &t.app().ed.page().get(c).unwrap().kind else { unreachable!() };
+    cn.via.clone()
+}
+
+#[test]
+fn dragging_a_segment_midpoint_handle_inserts_a_waypoint_in_one_undo_step() {
+    let mut t = T::new();
+    let (_a, _b, c) = linked_pair(&mut t);
+    t.app().sel = vec![c.clone()];
+    t.h.step();
+    t.drag((260.0, 140.0), (260.0, 320.0));
+    let via = via_of(&mut t, &c);
+    assert_eq!(via.len(), 1, "{via:?}");
+    assert!(via[0].dist(Pt::new(260.0, 320.0)) < 2.0);
+    let page = t.app().ed.page();
+    let Kind::Connector(cn) = &page.get(&c).unwrap().kind else { unreachable!() };
+    let path = page.connector_path(cn).unwrap();
+    assert!(path.iter().any(|p| p.y > 300.0), "la flèche passe par le nouveau point");
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert!(via_of(&mut t, &c).is_empty());
+}
+
+#[test]
+fn waypoints_can_be_moved_and_removed() {
+    let mut t = T::new();
+    let (_a, _b, c) = linked_pair(&mut t);
+    t.app().ed.update(&c, |o| {
+        if let Kind::Connector(cn) = &mut o.kind {
+            cn.via = vec![Pt::new(260.0, 300.0)];
+        }
+    });
+    t.app().sel = vec![c.clone()];
+    t.h.step();
+    t.drag((260.0, 300.0), (300.0, 360.0));
+    let via = via_of(&mut t, &c);
+    assert!(via[0].dist(Pt::new(300.0, 360.0)) < 2.0, "{via:?}");
+    // Alt + clic sur la poignée : retire le point
+    let p = t.at(300.0, 360.0);
+    t.h.input_mut().modifiers = Modifiers::ALT;
+    t.mv(p);
+    t.button(p, true, Modifiers::ALT);
+    t.button(p, false, Modifiers::ALT);
+    t.h.input_mut().modifiers = Modifiers::NONE;
+    assert!(via_of(&mut t, &c).is_empty());
+}
+
+#[test]
+fn elbow_connectors_route_around_shapes_placed_in_the_way() {
+    let mut t = T::new();
+    let (_a, _b, c) = linked_pair(&mut t);
+    t.app().ed.update(&c, |o| {
+        if let Kind::Connector(cn) = &mut o.kind {
+            cn.route = Route::Elbow;
+        }
+    });
+    let wall = t.add_rect(230.0, 60.0, 60.0, 160.0);
+    let wall_rect = t.frame(&wall).rect();
+    let page = t.app().ed.page();
+    let Kind::Connector(cn) = &page.get(&c).unwrap().kind else { unreachable!() };
+    let path = page.connector_path(cn).unwrap();
+    assert!(!wb_core::route::crosses(&path, &[wall_rect]), "{path:?}");
+    // le mur déplacé hors du chemin : le tracé redevient le plus simple
+    t.app().ed.update(&wall, |o| o.translate(Pt::new(0.0, 600.0)));
+    let page = t.app().ed.page();
+    let Kind::Connector(cn) = &page.get(&c).unwrap().kind else { unreachable!() };
+    let direct = page.connector_path(cn).unwrap();
+    assert_eq!(direct.len(), 2, "ligne droite quand rien ne gêne : {direct:?}");
 }

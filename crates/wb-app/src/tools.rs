@@ -3,7 +3,7 @@
 use crate::app::App;
 use crate::render::{Cam, Renderer};
 use eframe::egui::{self, Color32, CursorIcon, PointerButton, Pos2, Sense, Shape, Stroke, vec2};
-use wb_core::geom::{Frame, Pt, Rect, rdp};
+use wb_core::geom::{Frame, Pt, Rect};
 use wb_core::transform::{Handle, constrain_angle, resize_frame, resize_rect, rotation_toward, scale_objects, snap_angle, snap_point};
 use wb_core::*;
 
@@ -25,15 +25,56 @@ pub enum Tool {
 pub use crate::rich_edit::Editing;
 
 pub enum Drag {
-    Pan { from: Pos2, view: View },
-    Move { start: Pt, orig: Vec<Object>, moved: bool, collapse_to: Option<Id> },
-    Resize { handle: Handle, orig: Vec<Object>, orig_frame: Frame, orig_rect: Rect, single_frame: bool },
-    Rotate { center: Pt, a0: f64, orig: Vec<Object> },
-    Endpoint { orig: Object, is_start: bool },
-    Marquee { start: Pt, base: Vec<Id> },
-    Draw { pts: Vec<Pt> },
-    Create { tool: Tool, start: Pt, start_target: Option<Id> },
-    Erase { hit: Vec<Id>, last: Pt },
+    Pan {
+        from: Pos2,
+        view: View,
+    },
+    Move {
+        start: Pt,
+        orig: Vec<Object>,
+        moved: bool,
+        collapse_to: Option<Id>,
+    },
+    Resize {
+        handle: Handle,
+        orig: Vec<Object>,
+        orig_frame: Frame,
+        orig_rect: Rect,
+        single_frame: bool,
+    },
+    Rotate {
+        center: Pt,
+        a0: f64,
+        orig: Vec<Object>,
+    },
+    Endpoint {
+        orig: Object,
+        is_start: bool,
+    },
+    /// Point de passage d'un connecteur ; `inserted` : le point vient d'être créé depuis une poignée de milieu de segment.
+    Via {
+        orig: Object,
+        idx: usize,
+        inserted: bool,
+    },
+    Marquee {
+        start: Pt,
+        base: Vec<Id>,
+    },
+    Draw {
+        pts: Vec<Pt>,
+        pressures: Vec<f32>,
+        has_force: bool,
+    },
+    Create {
+        tool: Tool,
+        start: Pt,
+        start_target: Option<Id>,
+    },
+    Erase {
+        hit: Vec<Id>,
+        last: Pt,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -42,6 +83,8 @@ enum HandleKind {
     Rotate,
     Start,
     End,
+    Via(usize),
+    Mid(usize),
 }
 
 struct SelBox {
@@ -51,6 +94,8 @@ struct SelBox {
     /// Un seul objet à cadre (forme, image, tableau) : redimensionnement exact dans son repère.
     single_frame: bool,
     ends: Option<(Pt, Pt)>,
+    /// Points de passage (connecteur seul).
+    via: Vec<Pt>,
 }
 
 const MIN_SIZE: f64 = 4.0;
@@ -124,15 +169,16 @@ impl App {
         }
         if let [o] = objs.as_slice() {
             return Some(match &o.kind {
-                Kind::Box(b) => SelBox { frame: b.frame, edges: b.geom != BoxGeom::Text, rotate: true, single_frame: true, ends: None },
-                Kind::Image(i) => SelBox { frame: i.frame, edges: true, rotate: true, single_frame: true, ends: None },
-                Kind::Table(t) => SelBox { frame: Frame::from_rect(t.rect()), edges: true, rotate: false, single_frame: true, ends: None },
+                Kind::Box(b) => SelBox { frame: b.frame, edges: b.geom != BoxGeom::Text, rotate: true, single_frame: true, ends: None, via: Vec::new() },
+                Kind::Image(i) => SelBox { frame: i.frame, edges: true, rotate: true, single_frame: true, ends: None, via: Vec::new() },
+                Kind::Table(t) => SelBox { frame: Frame::from_rect(t.rect()), edges: true, rotate: false, single_frame: true, ends: None, via: Vec::new() },
                 Kind::Pen(p) => SelBox {
                     frame: Frame::from_rect(Rect::from_points(p.pts.iter().copied()).unwrap_or_default()),
                     edges: true,
                     rotate: true,
                     single_frame: false,
                     ends: None,
+                    via: Vec::new(),
                 },
                 Kind::Connector(c) => {
                     let path = page.connector_path(c)?;
@@ -142,18 +188,30 @@ impl App {
                         rotate: false,
                         single_frame: false,
                         ends: Some((path[0], path[path.len() - 1])),
+                        via: c.via.clone(),
                     }
                 }
             });
         }
         let r = page.bounds_of(&self.sel)?;
-        Some(SelBox { frame: Frame::from_rect(r), edges: true, rotate: true, single_frame: false, ends: None })
+        Some(SelBox { frame: Frame::from_rect(r), edges: true, rotate: true, single_frame: false, ends: None, via: Vec::new() })
     }
 
     fn handles(&self, cam: &Cam) -> Vec<(HandleKind, Pos2)> {
         let Some(sb) = self.selection_box() else { return Vec::new() };
         if let Some((a, b)) = sb.ends {
-            return vec![(HandleKind::Start, cam.s(a)), (HandleKind::End, cam.s(b))];
+            let mut v = vec![(HandleKind::Start, cam.s(a)), (HandleKind::End, cam.s(b))];
+            // poignées des points de passage, puis du milieu de chaque tronçon (pour en créer un nouveau)
+            let controls: Vec<Pt> = std::iter::once(a).chain(sb.via.iter().copied()).chain(std::iter::once(b)).collect();
+            for (i, p) in sb.via.iter().enumerate() {
+                v.push((HandleKind::Via(i), cam.s(*p)));
+            }
+            for (k, w) in controls.windows(2).enumerate() {
+                if w[0].dist(w[1]) * f64::from(cam.zoom) > 30.0 {
+                    v.push((HandleKind::Mid(k), cam.s(w[0].lerp(w[1], 0.5))));
+                }
+            }
+            return v;
         }
         let f = sb.frame;
         let mut v: Vec<(HandleKind, Pos2)> =
@@ -188,11 +246,32 @@ impl App {
                         self.drag = Some(Drag::Endpoint { orig: o, is_start: h == HandleKind::Start });
                     }
                 }
+                HandleKind::Via(i) => {
+                    if let Some(o) = orig.into_iter().next() {
+                        if alt {
+                            // Alt + clic : supprime ce point de passage
+                            self.ed.update(&o.id, |x| {
+                                if let Kind::Connector(c) = &mut x.kind
+                                    && i < c.via.len()
+                                {
+                                    c.via.remove(i);
+                                }
+                            });
+                        } else {
+                            self.drag = Some(Drag::Via { orig: o, idx: i, inserted: false });
+                        }
+                    }
+                }
+                HandleKind::Mid(k) => {
+                    if let Some(o) = orig.into_iter().next() {
+                        self.drag = Some(Drag::Via { orig: o, idx: k, inserted: true });
+                    }
+                }
             }
             return;
         }
         let tol = 6.0 / f64::from(cam.zoom);
-        match self.ed.page().pick(w, tol) {
+        match self.pick_at(w, tol) {
             Some(i) => {
                 let o = self.ed.page().objects[i].clone();
                 if shift {
@@ -229,7 +308,9 @@ impl App {
         match tool {
             Tool::Select => self.press_select(cam, screen, w, shift, alt),
             Tool::Hand => self.drag = Some(Drag::Pan { from: screen, view: self.ed.page().view }),
-            Tool::Pen | Tool::Highlighter => self.drag = Some(Drag::Draw { pts: vec![w] }),
+            Tool::Pen | Tool::Highlighter => {
+                self.drag = Some(Drag::Draw { pts: vec![w], pressures: vec![self.pen_force.unwrap_or(0.5)], has_force: self.pen_force.is_some() })
+            }
             Tool::Eraser => {
                 self.drag = Some(Drag::Erase { hit: Vec::new(), last: w });
                 self.erase_at(w, w, f64::from(cam.zoom));
@@ -248,7 +329,7 @@ impl App {
         let mut found: Vec<Id> = Vec::new();
         for i in 0..=n {
             let p = a.lerp(b, i as f64 / n as f64);
-            if let Some(idx) = self.ed.page().pick(p, tol) {
+            if let Some(idx) = self.pick_at(p, tol) {
                 let o = &self.ed.page().objects[idx];
                 if !self.ed.page().is_locked(o) {
                     found.push(o.id.clone());
@@ -377,19 +458,34 @@ impl App {
                 self.set_live(&[o]);
                 Drag::Endpoint { orig, is_start }
             }
+            Drag::Via { orig, idx, inserted } => {
+                let mut o = orig.clone();
+                let p = if self.snap { snap_point(w, f64::from(crate::render::GRID)) } else { w };
+                if let Kind::Connector(c) = &mut o.kind {
+                    if inserted {
+                        c.via.insert(idx.min(c.via.len()), p);
+                    } else if let Some(v) = c.via.get_mut(idx) {
+                        *v = p;
+                    }
+                }
+                self.set_live(&[o]);
+                Drag::Via { orig, idx, inserted }
+            }
             Drag::Marquee { start, base } => {
                 let r = Rect::from_corners(start, w);
-                let ids = self.ed.page().objects_in_rect(r, w.x >= start.x);
+                let ids = self.rect_select(r, w.x >= start.x);
                 let mut sel = base.clone();
                 sel.extend(ids);
                 self.sel = self.ed.page().expand_groups(&sel);
                 Drag::Marquee { start, base }
             }
-            Drag::Draw { mut pts } => {
+            Drag::Draw { mut pts, mut pressures, mut has_force } => {
                 if pts.last().is_none_or(|l| l.dist(w) * zoom >= 1.2) {
                     pts.push(w);
+                    pressures.push(self.pen_force.unwrap_or(0.5));
+                    has_force |= self.pen_force.is_some();
                 }
-                Drag::Draw { pts }
+                Drag::Draw { pts, pressures, has_force }
             }
             Drag::Create { tool, start, start_target } => {
                 self.draft = self.make_draft(tool, start, start_target.clone(), w, shift, alt);
@@ -471,16 +567,21 @@ impl App {
                 }
             }
             Drag::Resize { orig, .. } | Drag::Rotate { orig, .. } => self.commit_live(&orig),
-            Drag::Endpoint { orig, .. } => self.commit_live(std::slice::from_ref(&orig)),
+            Drag::Endpoint { orig, .. } | Drag::Via { orig, .. } => self.commit_live(std::slice::from_ref(&orig)),
             Drag::Marquee { .. } | Drag::Pan { .. } => {}
-            Drag::Draw { pts } => {
-                let tool = self.tool;
+            Drag::Draw { pts, pressures, has_force } => {
+                let hl = self.tool == Tool::Highlighter;
                 let eps = 0.45 / zoom;
-                let pts = if pts.len() > 2 { rdp(&pts, eps) } else { pts };
-                let pts = if pts.len() == 1 { vec![pts[0], pts[0]] } else { pts };
-                let hl = tool == Tool::Highlighter;
-                let id = self.ed.insert(Object::new_pen(pts, hl, Style { fill: None, dash: Dash::Solid, ..self.style.clone() }));
-                let _ = id;
+                // simplification : on garde les indices pour que chaque pression suive son point
+                let keep = if pts.len() > 2 { wb_core::geom::rdp_indices(&pts, eps) } else { (0..pts.len()).collect() };
+                let mut p: Vec<Pt> = keep.iter().map(|i| pts[*i]).collect();
+                let mut pr: Vec<f32> = keep.iter().map(|i| pressures[*i]).collect();
+                if p.len() == 1 {
+                    p.push(p[0]);
+                    pr.push(pr[0]);
+                }
+                let style = Style { fill: None, dash: Dash::Solid, ..self.style.clone() };
+                self.ed.insert(if has_force && !hl { Object::new_pen_with_pressure(p, pr, false, style) } else { Object::new_pen(p, hl, style) });
             }
             Drag::Erase { hit, .. } => {
                 if !hit.is_empty() {
@@ -604,6 +705,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         app.fit_selection_next = false;
     }
     let ctx = ui.ctx().clone();
+    app.refresh_caches();
     let view = app.ed.page().view;
     let mut cam = Cam { origin: rect.min + vec2(view.x as f32, view.y as f32), zoom: view.zoom as f32 };
 
@@ -630,6 +732,18 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         let v = app.ed.page().view;
         cam = Cam { origin: rect.min + vec2(v.x as f32, v.y as f32), zoom: v.zoom as f32 };
     }
+
+    // ---- pression du stylet : les événements tactiles portent la force (0..1) quand le matériel la fournit
+    ctx.input(|i| {
+        for e in &i.events {
+            if let egui::Event::Touch { phase, force, .. } = e {
+                match phase {
+                    egui::TouchPhase::Start | egui::TouchPhase::Move => app.pen_force = force.or(app.pen_force),
+                    egui::TouchPhase::End | egui::TouchPhase::Cancel => app.pen_force = None,
+                }
+            }
+        }
+    });
 
     // ---- pointeur
     let (pressed, down, released, middle, secondary, dbl, pos, alt, shift) = ctx.input(|i| {
@@ -658,9 +772,12 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         } else if pressed && editing_now && inside {
             app.commit_editing();
         }
+        if secondary && inside {
+            app.ctx_pos = w;
+        }
         if secondary
             && inside
-            && let Some(i) = app.ed.page().pick(w, 6.0 / f64::from(cam.zoom))
+            && let Some(i) = app.pick_at(w, 6.0 / f64::from(cam.zoom))
         {
             let id = app.ed.page().objects[i].id.clone();
             if !app.sel.contains(&id) {
@@ -701,7 +818,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
                     },
                     Some(HandleKind::Rotate) => CursorIcon::Grab,
                     Some(_) => CursorIcon::Crosshair,
-                    None => match app.ed.page().pick(w, 6.0 / f64::from(cam.zoom)) {
+                    None => match app.pick_at(w, 6.0 / f64::from(cam.zoom)) {
                         Some(i) if app.sel.contains(&app.ed.page().objects[i].id) => CursorIcon::Move,
                         _ => CursorIcon::Default,
                     },
@@ -726,6 +843,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     let editing_id = app.editing.as_ref().map(|e| e.id.clone());
     {
         let page = app.ed.page();
+        let fresh = !app.objects_moving();
         let mut rd = Renderer {
             painter: &painter,
             cam,
@@ -735,6 +853,8 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
             measurer: &app.measurer,
             textures: &mut app.textures,
             bg: Color32::from_rgb(r, g, b),
+            ids: Some(&app.caches.ids),
+            index: if fresh { app.caches.spatial.as_ref() } else { None },
         };
         rd.background(rect);
         rd.page(rect, editing_id.as_ref(), &ghost);
@@ -766,7 +886,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
 
 fn handle_double_click(app: &mut App, cam: &Cam, w: Pt) {
     let tol = 6.0 / f64::from(cam.zoom);
-    match app.ed.page().pick(w, tol) {
+    match app.pick_at(w, tol) {
         Some(i) => {
             let o = app.ed.page().objects[i].clone();
             match &o.kind {
@@ -804,8 +924,18 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
     // brouillon en cours de création
     if let Some(d) = &app.draft {
         let (r, g, b) = app.ed.doc.background.preset.rgb();
-        let mut rd =
-            Renderer { painter, cam: *cam, dark, doc: &app.ed.doc, page, measurer: &app.measurer, textures: &mut app.textures, bg: Color32::from_rgb(r, g, b) };
+        let mut rd = Renderer {
+            painter,
+            cam: *cam,
+            dark,
+            doc: &app.ed.doc,
+            page,
+            measurer: &app.measurer,
+            textures: &mut app.textures,
+            bg: Color32::from_rgb(r, g, b),
+            ids: None,
+            index: None,
+        };
         rd.draw_one(d);
     }
     // aperçu d'un connecteur en cours de création / de modification : cible visée
@@ -847,7 +977,11 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         ));
     }
     for (kind, p) in app.handles(cam) {
-        if matches!(kind, HandleKind::Rotate | HandleKind::Start | HandleKind::End) {
+        if matches!(kind, HandleKind::Via(_)) {
+            painter.circle(p, 5.0, accent, Stroke::new(1.5, Color32::WHITE));
+        } else if matches!(kind, HandleKind::Mid(_)) {
+            painter.circle(p, 4.0, accent.gamma_multiply(0.25), Stroke::new(1.0, accent));
+        } else if matches!(kind, HandleKind::Rotate | HandleKind::Start | HandleKind::End) {
             painter.circle(p, 5.5, Color32::WHITE, Stroke::new(1.5, accent));
         } else {
             painter.rect(egui::Rect::from_center_size(p, vec2(9.0, 9.0)), 1.0, Color32::WHITE, Stroke::new(1.5, accent), egui::StrokeKind::Middle);
@@ -860,15 +994,34 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         painter.rect(r, 0.0, accent.gamma_multiply(0.12), Stroke::new(1.0, accent), egui::StrokeKind::Middle);
     }
     // trait en cours
-    if let Some(Drag::Draw { pts }) = &app.drag {
+    if let Some(Drag::Draw { pts, pressures, has_force }) = &app.drag {
         let hl = app.tool == Tool::Highlighter;
-        let o = Object::new_pen(pts.clone(), hl, Style { fill: None, dash: Dash::Solid, ..app.style.clone() });
+        let style = Style { fill: None, dash: Dash::Solid, ..app.style.clone() };
+        let o = if *has_force && !hl && pts.len() >= 2 {
+            Object::new_pen_with_pressure(pts.clone(), pressures.clone(), false, style)
+        } else {
+            Object::new_pen(pts.clone(), hl, style)
+        };
         let (r, g, b) = app.ed.doc.background.preset.rgb();
         let page = app.ed.page();
-        let mut rd =
-            Renderer { painter, cam: *cam, dark, doc: &app.ed.doc, page, measurer: &app.measurer, textures: &mut app.textures, bg: Color32::from_rgb(r, g, b) };
+        let mut rd = Renderer {
+            painter,
+            cam: *cam,
+            dark,
+            doc: &app.ed.doc,
+            page,
+            measurer: &app.measurer,
+            textures: &mut app.textures,
+            bg: Color32::from_rgb(r, g, b),
+            ids: None,
+            index: None,
+        };
         rd.draw_one(&Object {
-            kind: if pts.len() < 2 { Kind::Pen(PenObj { pts: std::sync::Arc::new(vec![pts[0], pts[0]]), highlighter: hl }) } else { o.kind.clone() },
+            kind: if pts.len() < 2 {
+                Kind::Pen(PenObj { pts: std::sync::Arc::new(vec![pts[0], pts[0]]), highlighter: hl, pressures: None })
+            } else {
+                o.kind.clone()
+            },
             ..o
         });
     }

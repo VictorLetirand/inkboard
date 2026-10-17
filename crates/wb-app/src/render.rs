@@ -68,6 +68,10 @@ pub struct Renderer<'a> {
     pub measurer: &'a EguiMeasurer,
     pub textures: &'a mut TextureCache,
     pub bg: Color32,
+    /// Table identifiant → position (en cache dans l'application) ; calculée à la volée si absente.
+    pub ids: Option<&'a HashMap<Id, usize>>,
+    /// Index spatial à jour (absent pendant les gestes qui déplacent des objets).
+    pub index: Option<&'a wb_core::spatial::SpatialIndex>,
 }
 
 impl Renderer<'_> {
@@ -120,13 +124,28 @@ impl Renderer<'_> {
     pub fn page(&mut self, clip: egui::Rect, skip_text: Option<&Id>, ghost: &[Id]) {
         let clip = clip.expand(60.0);
         let page: &Page = self.page;
-        let index = page.index();
-        let get = |id: &Id| index.get(id).copied();
-        for o in &page.objects {
+        let owned;
+        let ids: &HashMap<Id, usize> = match self.ids {
+            Some(i) => i,
+            None => {
+                owned = wb_core::spatial::id_index(page);
+                &owned
+            }
+        };
+        let get = |id: &Id| ids.get(id).map(|&i| &page.objects[i]);
+        let (a, z) = (self.cam.w(clip.min), self.cam.w(clip.max));
+        let visible: Option<Vec<usize>> = self.index.map(|ix| ix.query(Rect::from_corners(a, z)));
+        let order: Box<dyn Iterator<Item = usize>> = match &visible {
+            Some(v) => Box::new(v.iter().copied()),
+            None => Box::new(0..page.objects.len()),
+        };
+        for i in order {
+            let o = &page.objects[i];
             if !page.is_visible(o) {
                 continue;
             }
-            let b = self.cam.rect_s(page.bounds_with(o, &get));
+            let wb = self.index.map_or_else(|| page.bounds_with(o, &get), |ix| ix.bounds(i));
+            let b = self.cam.rect_s(wb);
             if !b.intersects(clip) {
                 continue;
             }
@@ -306,26 +325,35 @@ impl Renderer<'_> {
     fn pen(&self, o: &Object, p: &PenObj, op: f32) {
         let st = &o.style;
         let c = col(st.stroke, self.dark, op);
-        let pts: Vec<Pos2> = p.pts.iter().map(|q| self.cam.s(*q)).collect();
-        if pts.len() < 2 {
+        if p.pts.len() < 2 {
             return;
         }
-        // lissage : courbes quadratiques passant par les milieux
-        let mut out = vec![pts[0]];
-        if pts.len() > 2 {
-            let mut prev = pts[0];
-            for i in 1..pts.len() - 1 {
-                let mid = pts[i].lerp(pts[i + 1], 0.5);
-                for k in 1..=4 {
-                    let t = k as f32 / 4.0;
-                    let u = 1.0 - t;
-                    out.push(pos2(u * u * prev.x + 2.0 * u * t * pts[i].x + t * t * mid.x, u * u * prev.y + 2.0 * u * t * pts[i].y + t * t * mid.y));
-                }
-                prev = mid;
-            }
+        let (sm, pr) = wb_core::pen::smooth(&p.pts, p.pressures.as_ref().map(|v| v.as_slice()), 4);
+        if p.pressures.is_some() && !p.highlighter {
+            self.pressure_stroke(&sm, &pr, st.width, c);
+        } else {
+            let pts: Vec<Pos2> = sm.iter().map(|q| self.cam.s(*q)).collect();
+            self.stroke_path(&pts, false, st.width, c, Dash::Solid, !p.highlighter);
         }
-        out.push(pts[pts.len() - 1]);
-        self.stroke_path(&out, false, st.width, c, Dash::Solid, !p.highlighter);
+    }
+
+    /// Trait d'épaisseur variable : bande de triangles dont la largeur suit la pression, avec embouts arrondis.
+    fn pressure_stroke(&self, pts: &[Pt], pressures: &[f32], base: f64, color: Color32) {
+        let widths: Vec<f64> = pressures.iter().map(|p| wb_core::pen::pressure_width(base, *p)).collect();
+        let (left, right) = wb_core::pen::stroke_sides(pts, &widths);
+        let mut mesh = Mesh::default();
+        for (l, r) in left.iter().zip(&right) {
+            mesh.vertices.push(Vertex { pos: self.cam.s(*l), uv: egui::epaint::WHITE_UV, color });
+            mesh.vertices.push(Vertex { pos: self.cam.s(*r), uv: egui::epaint::WHITE_UV, color });
+        }
+        for i in 0..pts.len().saturating_sub(1) as u32 {
+            let k = i * 2;
+            mesh.indices.extend_from_slice(&[k, k + 1, k + 2, k + 1, k + 3, k + 2]);
+        }
+        self.painter.add(Shape::mesh(mesh));
+        for (i, p) in [(0, pts[0]), (pts.len() - 1, pts[pts.len() - 1])] {
+            self.painter.circle_filled(self.cam.s(p), (widths[i] as f32 * self.cam.zoom / 2.0).max(0.4), color);
+        }
     }
 
     fn connector<'x>(&self, o: &Object, c: &Connector, op: f32, get: &dyn Fn(&Id) -> Option<&'x Object>) {

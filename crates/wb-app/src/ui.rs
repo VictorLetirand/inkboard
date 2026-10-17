@@ -272,6 +272,10 @@ pub fn selection_menu(app: &mut App, ui: &mut egui::Ui) {
         app.copy_selection();
         ui.close();
     }
+    if ui.button("Copier comme image").clicked() {
+        app.copy_as_image();
+        ui.close();
+    }
     if ui.button("Coller").clicked() {
         app.paste();
         ui.close();
@@ -280,6 +284,29 @@ pub fn selection_menu(app: &mut App, ui: &mut egui::Ui) {
         app.sel = app.ed.duplicate(&sel, Pt::new(24.0, 24.0));
         ui.close();
     }
+    if let [id] = sel.as_slice()
+        && app.ed.page().get(id).is_some_and(|o| matches!(o.kind, Kind::Box(_) | Kind::Table(_) | Kind::Connector(_)))
+        && ui.button("Modifier le texte").clicked()
+    {
+        let cell = match &app.ed.page().get(id).map(|o| &o.kind) {
+            Some(Kind::Table(t)) => t.cell_at(app.ctx_pos),
+            _ => None,
+        };
+        app.start_editing(id, cell);
+        ui.close();
+    }
+    if let [id] = sel.as_slice()
+        && app.ed.page().get(id).is_some_and(|o| matches!(&o.kind, Kind::Connector(c) if !c.via.is_empty()))
+        && ui.button("Redresser (retirer les points de passage)").clicked()
+    {
+        app.ed.update(id, |o| {
+            if let Kind::Connector(c) = &mut o.kind {
+                c.via.clear();
+            }
+        });
+        ui.close();
+    }
+    table_menu(app, ui, &sel);
     ui.separator();
     for (label, o) in [("Premier plan", Order::Front), ("Avancer", Order::Forward), ("Reculer", Order::Backward), ("Arrière-plan", Order::Back)] {
         if ui.button(label).clicked() {
@@ -320,6 +347,33 @@ pub fn selection_menu(app: &mut App, ui: &mut egui::Ui) {
     if item(ui, app, "Supprimer", Action::Delete) {
         app.delete_selection();
         ui.close();
+    }
+}
+
+/// Opérations sur la ligne / colonne située sous le clic droit, si un tableau est sélectionné.
+fn table_menu(app: &mut App, ui: &mut egui::Ui, sel: &[Id]) {
+    let [id] = sel else { return };
+    let Some((r, c)) = app.ed.page().get(id).and_then(|o| if let Kind::Table(t) = &o.kind { t.cell_at(app.ctx_pos) } else { None }) else { return };
+    ui.separator();
+    ui.label(ERich::new(format!("Cellule ligne {} · colonne {}", r + 1, c + 1)).small().weak());
+    type Op = fn(&mut wb_core::Table, usize, usize);
+    let ops: [(&str, Op); 6] = [
+        ("Insérer une ligne au-dessus", |t, r, _| t.insert_row(r)),
+        ("Insérer une ligne en dessous", |t, r, _| t.insert_row(r + 1)),
+        ("Insérer une colonne à gauche", |t, _, c| t.insert_col(c)),
+        ("Insérer une colonne à droite", |t, _, c| t.insert_col(c + 1)),
+        ("Supprimer la ligne", |t, r, _| t.remove_row(r)),
+        ("Supprimer la colonne", |t, _, c| t.remove_col(c)),
+    ];
+    for (label, op) in ops {
+        if ui.button(label).clicked() {
+            app.ed.update(id, |o| {
+                if let Kind::Table(t) = &mut o.kind {
+                    op(t, r, c);
+                }
+            });
+            ui.close();
+        }
     }
 }
 
@@ -565,7 +619,9 @@ fn props(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
         });
-        if has_sel || app.editing.is_some() {
+    }
+    if has_sel || app.editing.is_some() {
+        {
             section(ui, if app.editing.is_some() { "Mise en forme de la sélection" } else { "Mise en forme de tout le texte" });
             ui.horizontal(|ui| {
                 for (name, f) in [("B", Format::Bold), ("I", Format::Italic), ("U", Format::Underline), ("S", Format::Strike)] {

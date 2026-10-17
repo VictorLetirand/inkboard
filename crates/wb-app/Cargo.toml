@@ -11,6 +11,7 @@ name = "tableau-blanc"
 path = "src/main.rs"
 
 [dependencies]
+arboard = "3.7.0"
 eframe = "0.33.3"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 rfd = "0.17.2"
