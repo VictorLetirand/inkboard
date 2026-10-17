@@ -11,10 +11,23 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Fichier de découverte : `%APPDATA%\TableauBlanc\live.json` (ou équivalent).
+/// Dossier des données de l'application : `%APPDATA%\TableauBlanc` (Windows), `~/Library/Application Support/TableauBlanc` (macOS),
+/// `$XDG_DATA_HOME/TableauBlanc` ou `~/.local/share/TableauBlanc` (Linux) ; le dossier courant en dernier recours.
+pub fn data_dir() -> PathBuf {
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        home().map(|h| h.join("Library").join("Application Support"))
+    } else {
+        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| home().map(|h| h.join(".local").join("share")))
+    };
+    base.unwrap_or_else(|| PathBuf::from(".")).join("TableauBlanc")
+}
+
+/// Fichier de découverte : `live.json` dans le dossier des données.
 pub fn discovery_path() -> PathBuf {
-    let base = std::env::var_os("APPDATA").or_else(|| std::env::var_os("XDG_DATA_HOME")).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("TableauBlanc").join("live.json")
+    data_dir().join("live.json")
 }
 
 /// Port et jeton publiés par l'application.

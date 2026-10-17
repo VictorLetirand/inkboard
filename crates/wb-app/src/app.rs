@@ -151,8 +151,7 @@ pub struct App {
 }
 
 fn autosave_path() -> PathBuf {
-    let base = std::env::var_os("APPDATA").or_else(|| std::env::var_os("XDG_DATA_HOME")).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("TableauBlanc").join("autosave.tableau.json")
+    wb_mcp::live::data_dir().join("autosave.tableau.json")
 }
 
 impl App {
