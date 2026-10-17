@@ -16,12 +16,13 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Export lisible dans d'autres outils | Whiteboard, Miro | ✔ draw.io, Excalidraw, JSON Canvas, SVG, PNG |
 | Hors ligne, sans compte, sans limite de tableaux | Miro | ✔ par construction |
 | Colorer / surligner des mots d'un paragraphe | Excalidraw | ✔ sélection de mots, gras/italique/souligné/barré, couleur, surlignage (jalon 2) |
-| Raccourcis personnalisables | Excalidraw | ✔ 40 commandes, plusieurs raccourcis, fichier JSON, conflits gérés (jalon 2) |
+| Raccourcis personnalisables | Excalidraw | ✔ 41 commandes, plusieurs raccourcis, fichier JSON, conflits gérés (jalon 2) |
 | Stylet : pression | Excalidraw | ◐ largeur variable ; **non validé sur du matériel réel** (mode `--pen-test`) |
 | Stylet : gomme (extrémité) | Excalidraw | ◐ implémenté via l'API Pointer de Windows ; **non validé sur du matériel réel** (mode `--pen-test` pour le valider : docs/STYLET.md) |
 | Blocs de code | Excalidraw | ✔ coloration syntaxique minimale (commentaires, chaînes, nombres, mots-clés ; menu « Colorer le code ») |
 | LaTeX | Excalidraw | ✔ composition TeX (STIX Two Math), formule modifiable, couleur suivie |
-| Présentation, minuteur, vote | Excalidraw | ✔ plein écran page par page, minuteur, pastilles |
+| Présentation, minuteur, vote | Excalidraw | ✔ plein écran page par page, minuteur, pastilles, pointeur laser |
+| Interface soignée (cartes flottantes, thème sombre) | – | ✔ identique au prototype web |
 | Connecteurs qui évitent les formes | draw.io | ✔ routage A*, points de passage |
 | Presse-papiers (images, texte) | tous | ✔ |
 | Pilotage par des agents (MCP) | – | ✔ `wb-mcp` : fichiers et mode direct (application ouverte, annulable, sélection visible) |

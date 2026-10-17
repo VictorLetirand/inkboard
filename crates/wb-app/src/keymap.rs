@@ -47,11 +47,12 @@ pub enum Action {
     ToolText,
     ToolSticky,
     ToolTable,
+    ToolLaser,
     Present,
 }
 
 impl Action {
-    pub const ALL: [Action; 40] = [
+    pub const ALL: [Action; 41] = [
         Action::New,
         Action::Open,
         Action::Save,
@@ -91,6 +92,7 @@ impl Action {
         Action::ToolText,
         Action::ToolSticky,
         Action::ToolTable,
+        Action::ToolLaser,
         Action::Present,
     ];
 
@@ -136,6 +138,7 @@ impl Action {
             Action::ToolText => "tool.text",
             Action::ToolSticky => "tool.sticky",
             Action::ToolTable => "tool.table",
+            Action::ToolLaser => "tool.laser",
             Action::Present => "view.present",
         }
     }
@@ -185,6 +188,7 @@ impl Action {
             Action::ToolText => "Outil : texte",
             Action::ToolSticky => "Outil : note adhésive",
             Action::ToolTable => "Outil : tableau",
+            Action::ToolLaser => "Outil : pointeur laser",
             Action::Present => "Présenter en plein écran",
         }
     }
@@ -218,6 +222,7 @@ impl Action {
             Action::ToolText => Tool::Text,
             Action::ToolSticky => Tool::Sticky,
             Action::ToolTable => Tool::Table,
+            Action::ToolLaser => Tool::Laser,
             _ => return None,
         })
     }
@@ -380,6 +385,7 @@ impl Keymap {
             Action::ToolText => vec![S::key(Key::T)],
             Action::ToolSticky => vec![S::key(Key::N)],
             Action::ToolTable => vec![S::key(Key::B)],
+            Action::ToolLaser => vec![S::key(Key::F)],
             Action::Present => vec![S::key(Key::F5)],
         }
     }
@@ -503,7 +509,7 @@ mod tests {
             assert!(!km.bindings(a).is_empty(), "{a:?} sans raccourci par défaut");
         }
         assert!(km.conflicts().is_empty(), "{:?}", km.conflicts());
-        assert_eq!(Action::ALL.len(), 40);
+        assert_eq!(Action::ALL.len(), 41);
     }
 
     #[test]

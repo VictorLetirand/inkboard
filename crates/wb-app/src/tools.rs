@@ -22,6 +22,8 @@ pub enum Tool {
     Table,
     /// Pastilles de vote : un clic pose une pastille.
     Vote,
+    /// Pointeur laser : une traînée rouge qui s'efface, pour montrer sans dessiner.
+    Laser,
 }
 
 pub use crate::rich_edit::Editing;
@@ -315,6 +317,7 @@ impl App {
                 self.drag = Some(Drag::Draw { pts: vec![w], pressures: vec![self.pen_force.unwrap_or(0.5)], has_force: self.pen_force.is_some() })
             }
             Tool::Vote => self.insert_vote_dot(w),
+            Tool::Laser => {}
             Tool::Eraser => {
                 self.drag = Some(Drag::Erase { hit: Vec::new(), last: w });
                 self.erase_at(w, w, f64::from(cam.zoom));
@@ -866,26 +869,16 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         rd.page(rect, editing_id.as_ref(), &ghost);
     }
     draw_overlay(app, &painter, &cam, dark);
+    laser_trail(app, &painter, &ctx, if resp.contains_pointer() { ptr } else { None });
     crate::rich_edit::draw_text_editor(app, ui, &cam);
     let _ = rect;
 
     // ---- menu contextuel
     resp.context_menu(|ui| {
         if app.sel.is_empty() {
-            if ui.button("Coller").clicked() {
-                app.paste();
-                ui.close();
-            }
-            if ui.button("Tout sélectionner").clicked() {
-                app.select_all();
-                ui.close();
-            }
-            if ui.button("Tout afficher").clicked() {
-                app.fit_view(false);
-                ui.close();
-            }
+            crate::chrome::canvas_menu(app, ui);
         } else {
-            crate::ui::selection_menu(app, ui);
+            crate::chrome::selection_menu(app, ui);
         }
     });
 }
@@ -1031,4 +1024,35 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
             ..o
         });
     }
+}
+
+/// Durée de vie d'un point de la traînée du pointeur laser.
+const LASER_LIFE: std::time::Duration = std::time::Duration::from_millis(900);
+
+/// Enregistre la position du pointeur (outil laser) et dessine la traînée qui s'efface.
+fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, pointer: Option<Pos2>) {
+    let now = std::time::Instant::now();
+    app.laser.retain(|(_, t)| now.duration_since(*t) < LASER_LIFE);
+    if app.tool == Tool::Laser
+        && let Some(p) = pointer
+        && app.laser.last().is_none_or(|(l, _)| l.distance(p) > 1.0)
+    {
+        app.laser.push((p, now));
+    }
+    if app.laser.is_empty() {
+        return;
+    }
+    let red = Color32::from_rgb(0xff, 0x2d, 0x2d);
+    let alpha = |t: std::time::Instant| 1.0 - now.duration_since(t).as_secs_f32() / LASER_LIFE.as_secs_f32();
+    for w in app.laser.windows(2) {
+        let a = alpha(w[1].1).clamp(0.0, 1.0);
+        painter.line_segment([w[0].0, w[1].0], Stroke::new(3.0 + 5.0 * a, red.gamma_multiply(a * 0.45)));
+        painter.line_segment([w[0].0, w[1].0], Stroke::new(2.5, red.gamma_multiply(a)));
+    }
+    if let Some((p, t)) = app.laser.last() {
+        let a = alpha(*t).clamp(0.0, 1.0);
+        painter.circle_filled(*p, 9.0, red.gamma_multiply(a * 0.3));
+        painter.circle_filled(*p, 4.5, red.gamma_multiply(a));
+    }
+    ctx.request_repaint();
 }

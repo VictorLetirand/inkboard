@@ -97,6 +97,14 @@ pub struct App {
     pub ctx_pos: Pt,
     pub keymap_path: Option<PathBuf>,
     pub ui_dark: bool,
+    /// Le panneau de droite montre la liste des calques.
+    pub layers_open: bool,
+    /// Traînée du pointeur laser : positions écran et instants.
+    pub laser: Vec<(egui::Pos2, Instant)>,
+    /// Identifiant du menu principal (pour l'ouvrir dans les captures `--ui-demo menu`).
+    pub menu_popup: Option<egui::Id>,
+    /// Démonstration pour les captures : `menu`, `panel`, `dark` (séparés par des virgules).
+    pub ui_demo: String,
     pub edit_demo: bool,
     /// Démonstration pour les captures : insère quelques formules composées.
     pub formula_demo: bool,
@@ -155,7 +163,7 @@ impl App {
     /// `restore` : recharge le dernier enregistrement automatique (désactivé dans les tests).
     pub fn build(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>, screenshot: Option<PathBuf>, restore: bool) -> Self {
         fonts::install(&cc.egui_ctx);
-        cc.egui_ctx.set_visuals(egui::Visuals::light());
+        crate::theme::apply(&cc.egui_ctx, false);
         let measurer = EguiMeasurer(cc.egui_ctx.clone());
         let mut app = Self {
             caches: Caches::default(),
@@ -172,6 +180,10 @@ impl App {
             ctx_pos: Pt::ZERO,
             keymap_path: None,
             ui_dark: false,
+            layers_open: false,
+            laser: Vec::new(),
+            menu_popup: None,
+            ui_demo: String::new(),
             edit_demo: false,
             formula_demo: false,
             ed: Editor::new(Document::default()),
@@ -566,6 +578,9 @@ impl App {
 
     /// Touches du mode présentation : flèches / espace / pages pour naviguer, Échap ou F5 pour quitter.
     fn present_keys(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.key_pressed(Key::F)) {
+            self.tool = if self.tool == Tool::Laser { Tool::Hand } else { Tool::Laser };
+        }
         let (next, prev, quit) = ctx.input(|i| {
             (
                 i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::PageDown) || i.key_pressed(Key::Space) || i.key_pressed(Key::Enter),
@@ -774,6 +789,26 @@ impl App {
     fn screenshot_step(&mut self, ctx: &egui::Context) {
         let Some(path) = self.screenshot.clone() else { return };
         self.frames += 1;
+        if !self.ui_demo.is_empty() && self.frames == 3 {
+            let demo = self.ui_demo.clone();
+            if demo.contains("dark") {
+                let mut bg = self.ed.doc.background;
+                bg.preset = BgPreset::Slate;
+                self.ed.set_background(bg);
+            }
+            if demo.contains("panel") {
+                self.set_tool(Tool::Shape(BoxGeom::Rect));
+                if let Some(id) = self.ed.page().objects.iter().find(|o| matches!(o.kind, Kind::Box(_))).map(|o| o.id.clone()) {
+                    self.sel = vec![id];
+                }
+            }
+        }
+        if self.ui_demo.contains("menu")
+            && self.frames == 6
+            && let Some(id) = self.menu_popup
+        {
+            egui::Popup::open_id(ctx, id);
+        }
         if self.formula_demo && self.frames == 3 {
             let demo = [
                 r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}",
@@ -809,7 +844,7 @@ impl App {
             }
         }
         ctx.request_repaint();
-        if self.frames == 8 {
+        if self.frames == if self.ui_demo.contains("menu") { 18 } else { 8 } {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }
         let shot = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
@@ -832,7 +867,7 @@ impl eframe::App for App {
         }
         let dark = self.ed.doc.background.preset.is_dark();
         if dark != self.ui_dark {
-            ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
+            crate::theme::apply(ctx, dark);
             self.ui_dark = dark;
         }
         self.apply_present_request(ctx);
@@ -842,10 +877,7 @@ impl eframe::App for App {
         if self.presenting {
             ui::present_overlay(self, ctx);
         } else {
-            ui::top_bar(self, ctx);
-            ui::bottom_bar(self, ctx);
-            ui::tool_bar(self, ctx);
-            ui::side_panel(self, ctx);
+            crate::chrome::show(self, ctx);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| crate::tools::canvas(self, ui));
         ui::dialogs(self, ctx);

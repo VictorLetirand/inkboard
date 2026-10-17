@@ -1,14 +1,18 @@
 //! Tableau blanc : application de bureau (egui).
 
 mod app;
+mod chrome;
 mod clipboard;
 mod fonts;
+mod icons;
 mod insert;
 mod keymap;
 mod live;
+mod panel;
 mod pen_test;
 mod render;
 mod rich_edit;
+mod theme;
 mod tools;
 mod ui;
 mod watch;
@@ -26,6 +30,7 @@ fn main() -> eframe::Result {
     let mut shortcuts_demo = false;
     let mut formula_demo = false;
     let mut pen_test = false;
+    let mut ui_demo = String::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -39,6 +44,7 @@ fn main() -> eframe::Result {
             "--shortcuts-demo" => shortcuts_demo = true,
             "--formula-demo" => formula_demo = true,
             "--pen-test" => pen_test = true,
+            "--ui-demo" => ui_demo = it.next().cloned().unwrap_or_default(),
             other => open = Some(PathBuf::from(other)),
         }
     }
@@ -73,6 +79,7 @@ fn main() -> eframe::Result {
             a.bench = bench.then(|| app::Bench { close_up: bench_close, ..Default::default() });
             a.edit_demo = edit_demo;
             a.formula_demo = formula_demo;
+            a.ui_demo = ui_demo.clone();
             a.pen_test = pen_test.then(pen_test::PenReport::default);
             if shortcuts_demo {
                 a.dialog = Some(app::Dialog::Shortcuts { filter: String::new(), recording: Some(keymap::Action::ToolPen) });

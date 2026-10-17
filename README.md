@@ -11,7 +11,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 ```bash
 cargo run --release -p wb-app                 # l'application
 cargo run --release -p wb-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 235 tests
+cargo test --workspace                        # 243 tests
 powershell -File scripts/package.ps1          # archive portable Windows (dist/)
 ```
 
@@ -34,6 +34,18 @@ cargo run --release -p wb-cli -- info schema.drawio
 | [`wb-cli`](crates/wb-cli) | `wb convert`, `wb info`, `wb bench`. |
 | [`wb-app`](crates/wb-app) | Application de bureau (egui) : canvas, outils, panneau de style, pages, calques, texte riche, raccourcis personnalisables, dialogues. |
 
+## Interface
+
+L'interface reprend celle du prototype web : un canevas plein écran et des **cartes flottantes** (blanches, bordées, ombrées, coins de 10 px) — titre et menu en haut à gauche,
+outils au centre en haut, réglages de style à gauche (visibles seulement quand il y a quelque chose à régler), annuler / zoom en bas à gauche, pages au centre en bas, aide en bas à droite.
+Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmentés, menu principal à entrées contiguës avec raccourcis, thème **clair et sombre** qui suit le fond du tableau.
+
+![Interface](docs/img/interface.png)
+
+| Menu principal | Thème sombre et réglages de style |
+|---|---|
+| ![Menu](docs/img/menu.png) | ![Thème sombre](docs/img/theme-sombre.png) |
+
 ## Fonctions notables
 
 - **Connecteurs liés** (droits, coudés, courbes) qui suivent les formes ; les coudés **contournent les formes** rencontrées ; poignées de
@@ -43,6 +55,7 @@ cargo run --release -p wb-cli -- info schema.drawio
 - **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
+- **Pointeur laser** (F) : une traînée rouge qui s'efface, pour montrer sans dessiner ; en présentation, F l'active.
 - **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.
 - **Agents (MCP)** : `wb-mcp --root <dossier>` expose 16 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). **Ressources MCP** (tableau affiché, fichiers) avec notifications d'abonnement, outil `board_changes` (ce que vous avez modifié depuis le dernier regard de l'agent), insertion d'images. **Mode direct** : application ouverte, l'agent agit sur le tableau affiché (une étape d'annulation par appel, il voit votre sélection) ; sinon il modifie le fichier et l'application le recharge seule.
 - **Distribution** : icône, archive portable et installation par utilisateur (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
@@ -53,7 +66,7 @@ cargo run --release -p wb-cli -- info schema.drawio
   gras (Ctrl+B), italique (Ctrl+I), souligné (Ctrl+U), barré, **couleur** et **surlignage** par mot, via la barre flottante
   ou le panneau de droite. Sans sélection, la mise en forme s'applique à tout le texte ; hors édition, à tout le texte des
   objets sélectionnés. La frappe continue dans le style du caractère précédent.
-- **Raccourcis personnalisables** : menu *Affichage → Raccourcis clavier…* (40 commandes, plusieurs raccourcis par commande,
+- **Raccourcis personnalisables** : menu *Affichage → Raccourcis clavier…* (41 commandes, plusieurs raccourcis par commande,
   recherche, réinitialisation par commande ou globale, remplacement automatique en cas de conflit). Réglages dans
   `%APPDATA%\TableauBlanc\keymap.json` (modifiable à la main ; les entrées invalides sont ignorées et signalées).
   Réservés : Échap, flèches (déplacement fin), Ctrl+C/X/V.

@@ -39,12 +39,15 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
 - `rich_edit.rs` : édition de texte riche. Le champ de saisie egui garde la chaîne brute ; `RichText` suit chaque frappe
   (`apply_edit` : préfixe/suffixe communs) et un `layouter` affiche les styles. La barre flottante et les raccourcis appellent
   `RichText::format` (moteur). La sélection est mémorisée puis rétablie après un clic sur la barre.
-- `keymap.rs` : `Action` (40 commandes) → `Shortcut`s, remplacement en cas de conflit, combinaisons réservées, fichier JSON tolérant.
+- `keymap.rs` : `Action` (41 commandes) → `Shortcut`s, remplacement en cas de conflit, combinaisons réservées, fichier JSON tolérant.
   `App::run_action` est le point d'entrée unique des commandes (raccourcis, menus).
-- `ui.rs` : barres, panneau de style, calques, dialogues (dont réglage des raccourcis). `app.rs` : état, fichiers, sauvegarde automatique.
+- `theme.rs` : palette claire/sombre du prototype, styles egui (arrondis, ombres, tailles de texte) et widgets partagés (boutons à icône, lignes de menu, boutons segmentés, cartes flottantes) ;
+  `icons.rs` : jeu d'icônes SVG du prototype, rastérisé une fois (resvg, 3×) en texture blanche puis teinté ; `chrome.rs` : les cartes (titre + menu, outils, pages, zoom, aide), le menu principal et les menus contextuels ;
+  `panel.rs` : panneau de style flottant (pastilles, boutons segmentés, ordre, alignement, calques) ; `ui.rs` : présentation, dialogues centrés sur fond assombri, notifications.
+  Le canevas occupe toute la fenêtre ; les cartes sont des `egui::Area` au-dessus (l'aire d'une carte nouvellement apparue est trop large pendant ses toutes premières images : les tests laissent le panneau se stabiliser avec `T::tool`). `app.rs` : état, fichiers, sauvegarde automatique.
 - `clipboard.rs` : presse-papiers (objets internes, images et texte du système). `insert.rs` : bloc de code, formule, pastille de vote.
   Mode présentation (`App::presenting`, `present_overlay`) et minuteur dans `app.rs` / `ui.rs`.
-- `tests.rs` : 75 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
+- `tests.rs` : 78 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
 
 ## Modules ajoutés au noyau (`wb-core`)
 
@@ -77,8 +80,8 @@ accessibilité limitée. Si le rendu devait dépasser egui
 | Crate | Tests | Ce qui est couvert |
 |---|---|---|
 | `wb-core` | 101 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
-| `wb-formats` | 45 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
+| `wb-formats` | 46 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
 | `wb-mcp` | 8 | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports) ; le mode direct, les ressources/notifications et `board_changes` en direct sont testés dans `wb-app` (5 tests : édition annulable, ciblage du fichier ouvert, jeton, ressources et notifications, changements et images) |
-| `wb-app` | 78 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
+| `wb-app` | 85 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
 
 En plus : l'export draw.io a été ouvert dans le visualiseur officiel diagrams.net (formes, flèches liées, pointillés, rotation).

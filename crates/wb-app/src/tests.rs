@@ -21,9 +21,16 @@ impl T {
         h.step();
         let mut t = T { h };
         t.app().fit_pending = false;
-        t.app().set_view(View { x: 0.0, y: 0.0, zoom: 1.0 });
+        t.app().set_view(View { x: 300.0, y: 150.0, zoom: 1.0 }); // hors des cartes flottantes (titre, outils, panneau)
         t.h.step();
         t
+    }
+    /// Change d'outil puis laisse le panneau de style (une carte flottante) se stabiliser : ses premières images couvrent une zone trop large.
+    fn tool(&mut self, tool: Tool) {
+        self.app().set_tool(tool);
+        for _ in 0..3 {
+            self.h.step();
+        }
     }
     fn app(&mut self) -> &mut App {
         self.h.state_mut()
@@ -100,7 +107,7 @@ fn app_starts_with_an_empty_page() {
 #[test]
 fn dragging_with_rect_tool_creates_a_rectangle_and_returns_to_select() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Shape(BoxGeom::Rect));
+    t.tool(Tool::Shape(BoxGeom::Rect));
     t.drag((100.0, 100.0), (300.0, 220.0));
     let b = t.boxes();
     assert_eq!(b.len(), 1);
@@ -113,7 +120,7 @@ fn dragging_with_rect_tool_creates_a_rectangle_and_returns_to_select() {
 #[test]
 fn clicking_with_a_shape_tool_creates_a_default_sized_shape() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Shape(BoxGeom::Ellipse));
+    t.tool(Tool::Shape(BoxGeom::Ellipse));
     t.click((400.0, 300.0));
     let b = t.boxes();
     assert_eq!(b.len(), 1);
@@ -124,7 +131,7 @@ fn clicking_with_a_shape_tool_creates_a_default_sized_shape() {
 #[test]
 fn shift_makes_a_square_and_undo_removes_it() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Shape(BoxGeom::Rect));
+    t.tool(Tool::Shape(BoxGeom::Rect));
     t.drag_mods((100.0, 100.0), (300.0, 160.0), Modifiers::SHIFT);
     let f = t.boxes()[0].1.frame;
     assert!((f.w - f.h).abs() < 1.0, "carré : {f:?}");
@@ -137,7 +144,7 @@ fn shift_makes_a_square_and_undo_removes_it() {
 #[test]
 fn pen_draws_a_stroke_with_several_points() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Pen);
+    t.tool(Tool::Pen);
     t.drag((100.0, 100.0), (300.0, 160.0));
     let objs = t.objects();
     assert_eq!(objs.len(), 1);
@@ -149,7 +156,7 @@ fn pen_draws_a_stroke_with_several_points() {
 #[test]
 fn highlighter_is_translucent() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Highlighter);
+    t.tool(Tool::Highlighter);
     t.drag((100.0, 100.0), (300.0, 100.0));
     let o = &t.objects()[0];
     assert!(matches!(&o.kind, Kind::Pen(p) if p.highlighter));
@@ -161,7 +168,7 @@ fn arrow_tool_binds_both_ends_to_shapes() {
     let mut t = T::new();
     let a = t.add_rect(100.0, 100.0, 120.0, 80.0);
     let b = t.add_rect(400.0, 100.0, 120.0, 80.0);
-    t.app().set_tool(Tool::Arrow);
+    t.tool(Tool::Arrow);
     t.drag((160.0, 140.0), (460.0, 140.0));
     let conns: Vec<Object> = t.objects().into_iter().filter(|o| matches!(o.kind, Kind::Connector(_))).collect();
     assert_eq!(conns.len(), 1);
@@ -177,7 +184,7 @@ fn arrow_tool_binds_both_ends_to_shapes() {
 fn arrow_ending_on_empty_space_is_free() {
     let mut t = T::new();
     t.add_rect(100.0, 100.0, 120.0, 80.0);
-    t.app().set_tool(Tool::Line);
+    t.tool(Tool::Line);
     t.drag((160.0, 140.0), (600.0, 500.0));
     let Some(Object { kind: Kind::Connector(c), .. }) = t.objects().into_iter().find(|o| matches!(o.kind, Kind::Connector(_))) else {
         panic!("pas de connecteur")
@@ -198,7 +205,7 @@ fn moving_a_shape_drags_its_arrow_along_and_undo_restores_both() {
         page.connector_path(cn).unwrap()
     };
     let before = path_of(&mut t, &c);
-    t.app().set_tool(Tool::Select);
+    t.tool(Tool::Select);
     t.drag((410.0, 110.0), (410.0, 310.0));
     let fb = t.frame(&b);
     assert!((fb.y - 300.0).abs() < 1.5, "{fb:?}");
@@ -267,7 +274,7 @@ fn eraser_removes_what_it_touches() {
     let mut t = T::new();
     let a = t.add_rect(100.0, 100.0, 120.0, 80.0);
     let b = t.add_rect(500.0, 100.0, 120.0, 80.0);
-    t.app().set_tool(Tool::Eraser);
+    t.tool(Tool::Eraser);
     t.drag((90.0, 140.0), (240.0, 140.0));
     assert!(t.app().ed.page().get(&a).is_none());
     assert!(t.app().ed.page().get(&b).is_some());
@@ -313,7 +320,7 @@ fn text_editing_commits_text_and_fits_the_box() {
 #[test]
 fn empty_fresh_text_is_discarded_without_polluting_history() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Text);
+    t.tool(Tool::Text);
     t.click((300.0, 300.0));
     assert!(t.app().editing.is_some(), "l'éditeur s'ouvre");
     t.app().commit_editing();
@@ -324,7 +331,7 @@ fn empty_fresh_text_is_discarded_without_polluting_history() {
 #[test]
 fn table_tool_inserts_a_table_and_cells_are_editable() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Table);
+    t.tool(Tool::Table);
     t.click((400.0, 300.0));
     let objs = t.objects();
     let Kind::Table(tb) = &objs[0].kind else { panic!("pas de tableau") };
@@ -574,7 +581,7 @@ fn rebinding_a_tool_key_takes_effect_immediately() {
     t.key(Key::R);
     assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Rect));
     t.app().keymap.add(Action::ToolEllipse, Shortcut::key(Key::R)).unwrap();
-    t.app().set_tool(Tool::Select);
+    t.tool(Tool::Select);
     t.key(Key::R);
     assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Ellipse), "R appartient maintenant à l'ellipse");
     t.app().keymap.add(Action::ToolRect, Shortcut::key(Key::K)).unwrap();
@@ -744,7 +751,7 @@ fn invalid_pixel_buffer_is_rejected_without_panicking() {
 #[test]
 fn rich_format_applies_to_all_cells_of_a_selected_table() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Table);
+    t.tool(Tool::Table);
     t.click((400.0, 300.0));
     let id = t.objects()[0].id.clone();
     t.app().ed.update(&id, |o| {
@@ -768,7 +775,7 @@ fn touch(t: &mut T, phase: egui::TouchPhase, p: Pos2, force: f32) {
 #[test]
 fn pen_pressure_from_touch_events_makes_a_variable_width_stroke() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Pen);
+    t.tool(Tool::Pen);
     let pts: Vec<(f64, f64, f32)> = vec![(100.0, 100.0, 0.1), (140.0, 110.0, 0.3), (180.0, 120.0, 0.6), (220.0, 120.0, 0.9), (260.0, 110.0, 1.0)];
     let first = t.at(pts[0].0, pts[0].1);
     touch(&mut t, egui::TouchPhase::Start, first, pts[0].2);
@@ -794,10 +801,10 @@ fn pen_pressure_from_touch_events_makes_a_variable_width_stroke() {
 #[test]
 fn mouse_strokes_have_constant_width_and_highlighter_ignores_pressure() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Pen);
+    t.tool(Tool::Pen);
     t.drag((100.0, 100.0), (300.0, 160.0));
     assert!(matches!(&t.objects()[0].kind, Kind::Pen(p) if p.pressures.is_none()));
-    t.app().set_tool(Tool::Highlighter);
+    t.tool(Tool::Highlighter);
     let a = t.at(100.0, 300.0);
     touch(&mut t, egui::TouchPhase::Start, a, 0.3);
     t.mv(a);
@@ -840,7 +847,7 @@ fn spatial_index_keeps_picking_and_moving_correct_on_a_large_board() {
     t.h.step();
     t.click((f.x + 50.0, f.y + 40.0));
     assert!(t.app().sel.is_empty(), "plus rien à l'ancienne position");
-    t.app().set_view(View { x: 0.0, y: 0.0, zoom: 1.0 });
+    t.app().set_view(View { x: 300.0, y: 150.0, zoom: 1.0 }); // hors des cartes flottantes (titre, outils, panneau)
     t.h.step();
     // lasso sur une zone dense
     t.drag((125.0, 105.0), (480.0, 300.0)); // départ dans un interstice : lasso, pas déplacement
@@ -1016,7 +1023,7 @@ fn formula_survives_save_and_reload() {
 #[test]
 fn vote_tool_drops_one_dot_per_click() {
     let mut t = T::new();
-    t.app().set_tool(Tool::Vote);
+    t.tool(Tool::Vote);
     t.h.step();
     t.click((200.0, 200.0));
     t.click((300.0, 200.0));
@@ -1092,7 +1099,7 @@ fn code_block_is_colored_and_recolor_applies_to_edited_code() {
 fn pen_eraser_end_erases_whatever_the_active_tool() {
     let mut t = T::new();
     let id = t.add_rect(100.0, 100.0, 200.0, 120.0);
-    t.app().set_tool(Tool::Pen);
+    t.tool(Tool::Pen);
     t.h.step();
     // sans la gomme : le crayon trace, la forme reste
     t.drag((400.0, 400.0), (450.0, 450.0));
@@ -1336,4 +1343,70 @@ fn live_board_changes_and_images() {
     t.key_mod(Modifiers::COMMAND, Key::Z);
     assert_eq!(t.objects().len(), before);
     let _ = std::fs::remove_file(&live.file);
+}
+
+/* ---------------------------------------------------- cadre flottant et pointeur laser */
+
+#[test]
+fn laser_pointer_leaves_a_fading_trail_and_never_edits_the_board() {
+    let mut t = T::new();
+    t.add_rect(0.0, 0.0, 100.0, 60.0);
+    let rev = t.app().ed.revision();
+    t.tool(Tool::Laser);
+    t.drag((50.0, 200.0), (300.0, 260.0));
+    assert!(!t.app().laser.is_empty(), "la traînée est enregistrée");
+    assert_eq!(t.app().ed.revision(), rev, "le laser ne modifie jamais le tableau");
+    assert_eq!(t.app().tool, Tool::Laser, "l'outil reste actif");
+    // les points s'effacent avec le temps
+    t.app().laser.iter_mut().for_each(|(_, at)| *at -= std::time::Duration::from_secs(5));
+    t.h.step();
+    // seul le point sous le pointeur (fraîchement enregistré) peut subsister
+    assert!(t.app().laser.len() <= 1, "{}", t.app().laser.len());
+}
+
+#[test]
+fn style_panel_is_a_floating_card_shown_only_when_there_is_something_to_set() {
+    let mut t = T::new();
+    t.h.step();
+    let panel = |t: &mut T| t.h.ctx.memory(|m| m.area_rect(egui::Id::new("props")));
+    assert!(panel(&mut t).is_none() || t.app().sel.is_empty() && !crate::panel::visible(t.app()), "rien à régler : pas de panneau");
+    t.tool(Tool::Pen);
+    assert!(crate::panel::visible(t.app()));
+    let r = panel(&mut t).expect("panneau visible avec un outil de dessin");
+    assert!(r.left() >= 8.0 && r.width() < 260.0, "carte flottante étroite : {r:?}");
+    // le canevas occupe toute la fenêtre, les cartes flottent au-dessus
+    assert!(t.app().canvas_rect.width() >= 1299.0 && t.app().canvas_rect.min.x == 0.0);
+    t.tool(Tool::Select);
+    assert!(!crate::panel::visible(t.app()));
+}
+
+#[test]
+fn every_toolbar_tool_has_an_icon_and_every_icon_is_known() {
+    let ctx = egui::Context::default();
+    for name in crate::icons::names() {
+        assert!(crate::icons::texture(&ctx, name).is_some(), "{name}");
+    }
+    for name in [
+        "select",
+        "hand",
+        "pen",
+        "highlighter",
+        "eraser",
+        "rect",
+        "ellipse",
+        "diamond",
+        "triangle",
+        "line",
+        "arrow",
+        "text",
+        "sticky",
+        "table",
+        "vote",
+        "image",
+        "laser",
+        "lock",
+        "unlock",
+    ] {
+        assert!(crate::icons::texture(&ctx, name).is_some(), "icône d'outil manquante : {name}");
+    }
 }
