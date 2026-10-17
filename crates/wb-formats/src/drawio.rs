@@ -586,8 +586,10 @@ impl Builder<'_> {
             self.assets.insert(aid.clone(), Asset { mime, data: Arc::new(data) });
             let mut f = rect_of(&r);
             f.angle = angle;
-            let obj =
-                Object::new(Kind::Image(ImageObj { frame: f, asset: aid }), Style { width: 0.0, opacity: style_for(c, true).opacity, ..Style::default() });
+            let obj = Object::new(
+                Kind::Image(ImageObj { frame: f, asset: aid, latex: None }),
+                Style { width: 0.0, opacity: style_for(c, true).opacity, ..Style::default() },
+            );
             let id = obj.id.clone();
             out.push(obj);
             return Some(id);

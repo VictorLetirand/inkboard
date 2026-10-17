@@ -1937,6 +1937,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "latex-rust"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8094b939c8af51f9c7d08256ffa607b743e24d466d9a0ccc602dc748c911e54"
+dependencies = [
+ "ttf-parser",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4075,14 +4084,17 @@ name = "wb-app"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64 0.23.1",
  "eframe",
  "egui_kittest",
  "embed-resource",
  "image",
+ "raw-window-handle",
  "rfd",
  "serde_json",
  "wb-core",
  "wb-formats",
+ "wb-pen",
 ]
 
 [[package]]
@@ -4111,6 +4123,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "flate2",
+ "latex-rust",
  "percent-encoding",
  "quick-xml 0.41.0",
  "regex",
@@ -4120,6 +4133,13 @@ dependencies = [
  "svg2pdf",
  "thiserror 2.0.21",
  "wb-core",
+]
+
+[[package]]
+name = "wb-pen"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

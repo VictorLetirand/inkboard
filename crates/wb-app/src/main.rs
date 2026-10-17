@@ -21,6 +21,7 @@ fn main() -> eframe::Result {
     let mut bench_close = false;
     let mut edit_demo = false;
     let mut shortcuts_demo = false;
+    let mut formula_demo = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -32,6 +33,7 @@ fn main() -> eframe::Result {
             }
             "--edit-demo" => edit_demo = true,
             "--shortcuts-demo" => shortcuts_demo = true,
+            "--formula-demo" => formula_demo = true,
             other => open = Some(PathBuf::from(other)),
         }
     }
@@ -49,9 +51,19 @@ fn main() -> eframe::Result {
         "Tableau blanc",
         options,
         Box::new(move |cc| {
+            // gomme du stylet : winit/egui n'exposent pas l'extrémité gomme, on l'observe via l'API Pointer de Windows
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                if let Ok(h) = cc.window_handle()
+                    && let RawWindowHandle::Win32(w) = h.as_raw()
+                {
+                    wb_pen::install(w.hwnd);
+                }
+            }
             let mut a = app::App::new(cc, open.clone(), screenshot.clone());
             a.bench = bench.then(|| app::Bench { close_up: bench_close, ..Default::default() });
             a.edit_demo = edit_demo;
+            a.formula_demo = formula_demo;
             if shortcuts_demo {
                 a.dialog = Some(app::Dialog::Shortcuts { filter: String::new(), recording: Some(keymap::Action::ToolPen) });
                 let _ = a.keymap.add(keymap::Action::ToolEllipse, keymap::Shortcut::key(eframe::egui::Key::K));

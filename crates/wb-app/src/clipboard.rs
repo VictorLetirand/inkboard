@@ -63,7 +63,7 @@ impl App {
         let (fw, fh) = (w as f64, h as f64);
         let k = (480.0 / fw).min(360.0 / fh).min(1.0);
         let frame = Frame::new(at.x - fw * k / 2.0, at.y - fh * k / 2.0, fw * k, fh * k);
-        let id = self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid }), Style { width: 0.0, fill: None, ..Style::default() }));
+        let id = self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None }), Style { width: 0.0, fill: None, ..Style::default() }));
         self.sel = vec![id];
         self.tool = Tool::Select;
     }

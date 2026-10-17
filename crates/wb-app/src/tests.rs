@@ -947,15 +947,70 @@ fn code_block_is_a_dark_monospace_box_in_one_undo_step() {
 }
 
 #[test]
-fn formula_is_converted_to_unicode_text() {
+fn formula_is_composed_as_a_tinted_svg_image_that_keeps_its_source() {
     let mut t = T::new();
-    t.app().insert_formula(r"\alpha^2 + \frac{1}{2}");
+    t.app().insert_formula(r"\frac{a+b}{2}", None).unwrap();
     t.h.step();
-    let boxes = t.boxes();
-    assert_eq!(boxes[0].1.label.text.to_plain(), "α² + 1⁄2");
-    assert_eq!(boxes[0].1.geom, BoxGeom::Text);
-    t.app().insert_formula("   ");
-    assert_eq!(t.boxes().len(), 1, "une formule vide n'insère rien");
+    let o = t.objects().into_iter().next().unwrap();
+    let Kind::Image(i) = &o.kind else { panic!("une formule est une image") };
+    assert_eq!(i.latex.as_deref(), Some(r"\frac{a+b}{2}"));
+    assert!(i.frame.w > 20.0 && i.frame.h > 20.0);
+    let asset = t.app().ed.doc.assets.get(&i.asset).unwrap();
+    assert_eq!(asset.mime, "image/svg+xml");
+    // l'export SVG remplace le blanc par la couleur de trait (encre sombre sur fond clair)
+    let page = t.app().ed.page().clone();
+    let svg = wb_core::svg::export(&t.app().ed.doc, &page, None, &ApproxMeasurer, &Default::default()).unwrap();
+    assert!(!String::from_utf8_lossy(&base64_payload(&svg)).contains("#ffffff"), "formule non teintée à l'export");
+    // une source invalide ne crée rien
+    assert!(t.app().insert_formula(r"\notacommand", None).is_err());
+    assert!(t.app().insert_formula("  ", None).is_err());
+    assert_eq!(t.objects().len(), 1);
+}
+
+/// Première charge utile base64 d'une image `data:` d'un SVG exporté.
+fn base64_payload(svg: &str) -> Vec<u8> {
+    use base64::Engine;
+    let b64 = svg.split("base64,").nth(1).unwrap().split('"').next().unwrap();
+    base64::engine::general_purpose::STANDARD.decode(b64).unwrap()
+}
+
+#[test]
+fn editing_a_formula_keeps_its_center_and_scale() {
+    let mut t = T::new();
+    t.app().insert_formula("x^2", None).unwrap();
+    let id = t.objects()[0].id.clone();
+    // l'utilisateur agrandit la formule ×2
+    t.app().ed.update(&id, |o| {
+        if let Kind::Image(i) = &mut o.kind {
+            let c = i.frame.center();
+            i.frame = Frame::new(c.x - i.frame.w, c.y - i.frame.h, i.frame.w * 2.0, i.frame.h * 2.0);
+        }
+    });
+    let before = t.frame(&id);
+    assert!(t.app().edit_formula(&id), "une formule s'ouvre en modification");
+    t.app().insert_formula(r"\frac{x^2}{3}", Some(&id)).unwrap();
+    let after = t.frame(&id);
+    assert!(after.center().dist(before.center()) < 0.5, "centre conservé");
+    let plain = wb_formats::math::render("x^2", 36.0).unwrap();
+    assert!((before.h / plain.h - 2.0).abs() < 0.05, "agrandissement initial ×2");
+    let new = wb_formats::math::render(r"\frac{x^2}{3}", 36.0).unwrap();
+    assert!((after.h / new.h - 2.0).abs() < 0.05, "échelle conservée : {} / {}", after.h, new.h);
+    let Kind::Image(i) = &t.app().ed.page().get(&id).unwrap().kind else { unreachable!() };
+    assert_eq!(i.latex.as_deref(), Some(r"\frac{x^2}{3}"));
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    let Kind::Image(i) = &t.app().ed.page().get(&id).unwrap().kind else { unreachable!() };
+    assert_eq!(i.latex.as_deref(), Some("x^2"), "annulation d'une modification en une étape");
+}
+
+#[test]
+fn formula_survives_save_and_reload() {
+    let mut t = T::new();
+    t.app().insert_formula(r"\sqrt{2}", None).unwrap();
+    let json = wb_core::serial::to_json(&t.app().ed.doc, false);
+    let back = wb_core::serial::from_json(&json).unwrap();
+    let Kind::Image(i) = &back.pages[0].objects[0].kind else { panic!() };
+    assert_eq!(i.latex.as_deref(), Some(r"\sqrt{2}"));
+    assert!(back.assets.contains_key(&i.asset));
 }
 
 #[test]
@@ -1029,4 +1084,22 @@ fn code_block_is_colored_and_recolor_applies_to_edited_code() {
     t.app().recolor_code(&id);
     assert!(t.boxes()[0].1.label.text.0.iter().any(|s| s.style.color.is_some()));
     assert_eq!(t.boxes()[0].1.label.text.to_plain(), "let x = 1;");
+}
+
+/* ------------------------------------------------------------ gomme du stylet */
+
+#[test]
+fn pen_eraser_end_erases_whatever_the_active_tool() {
+    let mut t = T::new();
+    let id = t.add_rect(100.0, 100.0, 200.0, 120.0);
+    t.app().set_tool(Tool::Pen);
+    t.h.step();
+    // sans la gomme : le crayon trace, la forme reste
+    t.drag((400.0, 400.0), (450.0, 450.0));
+    assert!(t.app().ed.page().get(&id).is_some());
+    // extrémité gomme détectée : le geste efface la forme sous le stylet
+    t.app().eraser_probe = || true;
+    t.drag((120.0, 160.0), (280.0, 160.0));
+    assert!(t.app().ed.page().get(&id).is_none(), "la forme est effacée");
+    assert_eq!(t.app().tool, Tool::Pen, "l'outil actif n'a pas changé");
 }

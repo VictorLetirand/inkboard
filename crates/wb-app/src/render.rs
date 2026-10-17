@@ -37,6 +37,22 @@ pub fn col(c: Color, dark: bool, opacity: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, (opacity.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
+/// Définition de rastérisation des formules (SVG) : les formules restent nettes jusqu'à un fort zoom.
+const FORMULA_SCALE: f32 = 4.0;
+
+/// Image décodée d'une ressource ; les SVG (formules) sont rastérisés.
+pub fn decode_asset(asset: &Asset) -> Option<egui::ColorImage> {
+    let png;
+    let bytes: &[u8] = if asset.mime == "image/svg+xml" {
+        png = wb_formats::raster::svg_to_png(std::str::from_utf8(&asset.data).ok()?, FORMULA_SCALE).ok()?;
+        &png
+    } else {
+        &asset.data
+    };
+    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    Some(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()))
+}
+
 /// Textures des images du document, décodées à la demande.
 #[derive(Default)]
 pub struct TextureCache {
@@ -48,9 +64,8 @@ impl TextureCache {
         self.map
             .entry(id.clone())
             .or_insert_with(|| {
-                let img = image::load_from_memory(&asset.data).ok()?.to_rgba8();
-                let size = [img.width() as usize, img.height() as usize];
-                Some(ctx.load_texture(id.as_str(), egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR))
+                let img = decode_asset(asset)?;
+                Some(ctx.load_texture(id.as_str(), img, egui::TextureOptions::LINEAR))
             })
             .as_ref()
     }
@@ -213,7 +228,7 @@ impl Renderer<'_> {
             Kind::Box(b) => self.boxed(o, b, skip_text, op),
             Kind::Pen(p) => self.pen(o, p, op),
             Kind::Connector(c) => self.connector(o, c, op, get),
-            Kind::Image(i) => self.image(i, op),
+            Kind::Image(i) => self.image(i, if i.latex.is_some() { col(o.style.stroke, self.dark, op) } else { Color32::from_white_alpha((op * 255.0) as u8) }),
             Kind::Table(t) => self.table(o, t, op),
         }
     }
@@ -399,13 +414,12 @@ impl Renderer<'_> {
         }
     }
 
-    fn image(&mut self, i: &ImageObj, op: f32) {
+    fn image(&mut self, i: &ImageObj, tint: Color32) {
         let Some(asset) = self.doc.assets.get(&i.asset) else { return };
         let ctx = self.painter.ctx().clone();
         let corners: Vec<Pos2> = i.frame.corners().iter().map(|p| self.cam.s(*p)).collect();
         match self.textures.get(&ctx, &i.asset, asset) {
             Some(tex) => {
-                let tint = Color32::from_white_alpha((op * 255.0) as u8);
                 let uvs = [pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0), pos2(0.0, 1.0)];
                 let mut mesh = Mesh::with_texture(tex.id());
                 for (p, uv) in corners.iter().zip(uvs) {

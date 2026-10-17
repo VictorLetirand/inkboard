@@ -1,0 +1,17 @@
+[package]
+name = "wb-pen"
+description = "Détection de la gomme du stylet (extrémité « gomme » ou bouton) via l'API Pointer de Windows, que winit/egui n'exposent pas."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+# Seul crate du projet qui contient du code `unsafe` (appels Win32) ; les autres l'interdisent (`unsafe_code = "forbid"`).
+[lints.rust]
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

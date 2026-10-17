@@ -306,7 +306,8 @@ impl App {
     }
 
     fn press_tool(&mut self, cam: &Cam, screen: Pos2, w: Pt, shift: bool, alt: bool) {
-        let tool = self.tool;
+        // l'extrémité gomme du stylet efface, quel que soit l'outil actif (sauf la main)
+        let tool = if self.tool != Tool::Hand && (self.eraser_probe)() { Tool::Eraser } else { self.tool };
         match tool {
             Tool::Select => self.press_select(cam, screen, w, shift, alt),
             Tool::Hand => self.drag = Some(Drag::Pan { from: screen, view: self.ed.page().view }),
@@ -684,7 +685,9 @@ impl App {
             let aid = self.ed.doc.add_asset(mime, bytes);
             let off = 24.0 * i as f64;
             let frame = Frame::new(at.x - w * k / 2.0 + off, at.y - h * k / 2.0 + off, w * k, h * k);
-            ids.push(self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid }), Style { width: 0.0, fill: None, ..Style::default() })));
+            ids.push(
+                self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None }), Style { width: 0.0, fill: None, ..Style::default() })),
+            );
         }
         if !ids.is_empty() {
             self.sel = ids;

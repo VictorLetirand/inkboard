@@ -235,7 +235,11 @@ pub fn top_bar(app: &mut App, ctx: &egui::Context) {
                     ui.close();
                 }
                 if ui.button("Formule (LaTeX)…").clicked() {
-                    app.dialog = Some(Dialog::Formula { src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into() });
+                    app.dialog = Some(Dialog::Formula {
+                        src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into(),
+                        editing: None,
+                        preview: Default::default(),
+                    });
                     ui.close();
                 }
                 if ui.button("Pastille de vote").clicked() {
@@ -331,6 +335,13 @@ pub fn selection_menu(app: &mut App, ui: &mut egui::Ui) {
             _ => None,
         };
         app.start_editing(id, cell);
+        ui.close();
+    }
+    if let [id] = sel.as_slice()
+        && app.ed.page().get(id).is_some_and(|o| matches!(&o.kind, Kind::Image(i) if i.latex.is_some()))
+        && ui.button("Modifier la formule…").clicked()
+    {
+        app.edit_formula(id);
         ui.close();
     }
     if let [id] = sel.as_slice()
@@ -927,24 +938,52 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
                 keep = Some(Dialog::Mermaid { text, new_board, error });
             }
         }
-        Dialog::Formula { mut src } => {
+        Dialog::Formula { mut src, editing, mut preview } => {
+            if preview.src.as_deref() != Some(src.as_str()) {
+                // recomposition seulement quand le source change
+                match wb_formats::math::render(&src, 36.0) {
+                    Ok(f) => {
+                        let asset = Asset { mime: "image/svg+xml".into(), data: f.svg.into_bytes().into() };
+                        preview.tex = crate::render::decode_asset(&asset).map(|img| ctx.load_texture("formula_preview", img, egui::TextureOptions::LINEAR));
+                        preview.error = None;
+                    }
+                    Err(e) => {
+                        preview.tex = None;
+                        preview.error = Some(e.to_string());
+                    }
+                }
+                preview.src = Some(src.clone());
+            }
             let mut open = true;
-            let mut insert = false;
-            egui::Window::new("Insérer une formule").fade_in(false).open(&mut open).collapsible(false).default_width(420.0).show(ctx, |ui| {
-                ui.label("Source LaTeX. L'aperçu est une approximation en Unicode (lettres grecques, exposants, fractions simples).");
+            let mut accepted = false;
+            let title = if editing.is_some() { "Modifier la formule" } else { "Insérer une formule" };
+            egui::Window::new(title).fade_in(false).open(&mut open).collapsible(false).default_width(460.0).show(ctx, |ui| {
+                ui.label("Source LaTeX (mode mathématique) : \\frac{a}{b}, x^2, \\sqrt{x}, \\sum, \\int, \\begin{pmatrix}…");
                 ui.add(egui::TextEdit::multiline(&mut src).code_editor().desired_rows(3).desired_width(f32::INFINITY));
                 ui.separator();
-                ui.label(egui::RichText::new(wb_core::latex::to_unicode(&src)).size(24.0));
-                if ui.button("Insérer").clicked() {
-                    insert = true;
+                match (&preview.tex, &preview.error) {
+                    (Some(tex), _) => {
+                        let s = tex.size_vec2() / 4.0;
+                        let k = (ui.available_width() / s.x).min(1.0);
+                        ui.add(egui::Image::new((tex.id(), s * k)).tint(ui.visuals().text_color()));
+                    }
+                    (None, Some(e)) => {
+                        ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), e);
+                    }
+                    _ => {}
+                }
+                if ui.add_enabled(preview.tex.is_some(), egui::Button::new(if editing.is_some() { "Appliquer" } else { "Insérer" })).clicked() {
+                    accepted = true;
                 }
             });
-            if insert {
-                app.insert_formula(&src);
-                open = false;
+            if accepted {
+                match app.insert_formula(&src, editing.as_ref()) {
+                    Ok(()) => open = false,
+                    Err(e) => preview.error = Some(e),
+                }
             }
             if open {
-                keep = Some(Dialog::Formula { src });
+                keep = Some(Dialog::Formula { src, editing, preview });
             }
         }
         Dialog::Shortcuts { filter, recording } => {

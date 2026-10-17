@@ -211,6 +211,9 @@ impl BoxObj {
 pub struct ImageObj {
     pub frame: Frame,
     pub asset: AssetId,
+    /// Source LaTeX quand l'image est une formule composée (l'image est alors un SVG blanc teinté par la couleur de trait).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latex: Option<String>,
 }
 
 /// Trait à main levée (points en coordonnées monde).

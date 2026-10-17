@@ -513,7 +513,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                 let aid = Id::new();
                 doc.assets.insert(aid.clone(), Asset { mime, data: Arc::new(bytes) });
                 let mut o = Object::new(
-                    Kind::Image(ImageObj { frame: Frame { x, y, w, h, angle }, asset: aid }),
+                    Kind::Image(ImageObj { frame: Frame { x, y, w, h, angle }, asset: aid, latex: None }),
                     Style { width: 0.0, opacity: style_of(e, false).opacity, ..Style::default() },
                 );
                 o.id = ids[id].clone();

@@ -336,6 +336,15 @@ impl Ctx<'_> {
             Kind::Image(i) => {
                 let Some(a) = self.doc.assets.get(&i.asset) else { return String::new() };
                 let f = i.frame;
+                // formule : SVG blanc qu'on teinte avec la couleur de trait de l'objet
+                let tinted;
+                let data: &[u8] = if i.latex.is_some() && a.mime == "image/svg+xml" {
+                    let (r, g, b) = o.style.stroke.resolve(self.dark);
+                    tinted = String::from_utf8_lossy(a.data.as_slice()).replace("#ffffff", &format!("#{r:02x}{g:02x}{b:02x}")).into_bytes();
+                    &tinted
+                } else {
+                    a.data.as_slice()
+                };
                 let c = f.center();
                 let rot = if f.angle != 0.0 { format!(" rotate({})", n(f.angle.to_degrees())) } else { String::new() };
                 let op = if o.style.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(o.style.opacity))) } else { String::new() };
@@ -348,7 +357,7 @@ impl Ctx<'_> {
                     n(f.w),
                     n(f.h),
                     esc(&a.mime),
-                    STANDARD.encode(a.data.as_slice())
+                    STANDARD.encode(data)
                 )
             }
         }

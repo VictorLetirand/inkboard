@@ -66,6 +66,9 @@ fn texts_mut(o: &mut Object) -> Vec<&mut RichText> {
 
 impl App {
     pub fn start_editing(&mut self, id: &Id, cell: Option<(usize, usize)>) {
+        if self.edit_formula(id) {
+            return;
+        }
         let Some(o) = self.ed.page().get(id) else { return };
         let cell = matches!(o.kind, Kind::Table(_)).then(|| cell.unwrap_or((0, 0)));
         let Some(rich) = rich_of(o, cell) else { return };

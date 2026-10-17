@@ -44,7 +44,7 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
 - `ui.rs` : barres, panneau de style, calques, dialogues (dont réglage des raccourcis). `app.rs` : état, fichiers, sauvegarde automatique.
 - `clipboard.rs` : presse-papiers (objets internes, images et texte du système). `insert.rs` : bloc de code, formule, pastille de vote.
   Mode présentation (`App::presenting`, `present_overlay`) et minuteur dans `app.rs` / `ui.rs`.
-- `tests.rs` : 64 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
+- `tests.rs` : 68 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
 
 ## Modules ajoutés au noyau (`wb-core`)
 
@@ -52,7 +52,13 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
 - `route.rs` : routage orthogonal A* sur la grille formée par les bords des obstacles (pénalité de coude) ; `connector.rs` l'utilise pour les
   connecteurs coudés (`avoid_obstacles`) uniquement quand le chemin simple traverse une forme. Désactivé au-delà de 5 000 objets.
 - `pen.rs` : lissage des traits, largeur selon la pression, contour polygonal du trait.
-- `latex.rs` : conversion LaTeX → Unicode (approximation, pas un moteur de composition).
+- `highlight.rs` : coloration syntaxique générique des blocs de code (`RichText` coloré).
+
+`wb-formats::math` compose les formules LaTeX en SVG (crate `latex-rust`, police STIX Two Math embarquée). Une formule est un `ImageObj` dont l'asset est ce SVG
+**dessiné en blanc** et dont `latex` conserve le source : l'écran teinte la texture avec la couleur de trait, l'export SVG remplace le blanc par cette couleur.
+
+`wb-pen` (Windows) installe un *subclass* de fenêtre qui lit les `WM_POINTER*` sans les consommer et expose `eraser_active()` ; l'application remplace alors l'outil par la gomme
+pour le geste (`App::eraser_probe`, substituable dans les tests). C'est le seul crate qui autorise `unsafe`.
 
 ### Pourquoi egui ?
 
@@ -65,8 +71,8 @@ accessibilité limitée. Si le rendu devait dépasser egui
 
 | Crate | Tests | Ce qui est couvert |
 |---|---|---|
-| `wb-core` | 102 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, LaTeX |
-| `wb-formats` | 38 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF |
-| `wb-app` | 64 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code, formule, vote, présentation, minuteur, presse-papiers, stylet |
+| `wb-core` | 101 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
+| `wb-formats` | 45 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
+| `wb-app` | 68 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
 
 En plus : l'export draw.io a été ouvert dans le visualiseur officiel diagrams.net (formes, flèches liées, pointillés, rotation).

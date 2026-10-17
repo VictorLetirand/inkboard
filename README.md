@@ -11,7 +11,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 ```bash
 cargo run --release -p wb-app                 # l'application
 cargo run --release -p wb-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 211 tests
+cargo test --workspace                        # 216 tests
 powershell -File scripts/package.ps1          # archive portable Windows (dist/)
 ```
 
@@ -29,6 +29,7 @@ cargo run --release -p wb-cli -- info schema.drawio
 |---|---|
 | [`wb-core`](crates/wb-core) | Modèle (pages, calques, objets), géométrie, **connecteurs liés**, historique, export SVG, mise en page automatique. Aucune dépendance à une interface. |
 | [`wb-formats`](crates/wb-formats) | Import/export draw.io, Excalidraw, JSON Canvas ; import Mermaid ; ancien format du prototype ; rendu PNG. |
+| [`wb-pen`](crates/wb-pen) | Seul crate contenant du `unsafe` : lecture de l'état de la gomme du stylet (messages `WM_POINTER*` de Windows). |
 | [`wb-cli`](crates/wb-cli) | `wb convert`, `wb info`, `wb bench`. |
 | [`wb-app`](crates/wb-app) | Application de bureau (egui) : canvas, outils, panneau de style, pages, calques, texte riche, raccourcis personnalisables, dialogues. |
 
@@ -36,9 +37,9 @@ cargo run --release -p wb-cli -- info schema.drawio
 
 - **Connecteurs liés** (droits, coudés, courbes) qui suivent les formes ; les coudés **contournent les formes** rencontrées ; poignées de
   **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
-- **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw). La gomme au bouton du stylet n'est pas exposée par egui.
+- **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `wb-pen`).
 - **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
-- **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), formule LaTeX (aperçu Unicode approximatif : lettres grecques, exposants, fractions simples),
+- **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
 - **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.

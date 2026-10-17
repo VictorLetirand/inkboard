@@ -12,7 +12,6 @@ pub mod geom;
 pub mod highlight;
 pub mod history;
 pub mod hit;
-pub mod latex;
 pub mod layout;
 pub mod model;
 pub mod pen;

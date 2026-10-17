@@ -12,10 +12,33 @@ use wb_core::editor::Order;
 use wb_core::*;
 
 pub enum Dialog {
-    Mermaid { text: String, new_board: bool, error: Option<String> },
-    RenamePage { id: Id, name: String },
-    Shortcuts { filter: String, recording: Option<Action> },
-    Formula { src: String },
+    Mermaid {
+        text: String,
+        new_board: bool,
+        error: Option<String>,
+    },
+    RenamePage {
+        id: Id,
+        name: String,
+    },
+    Shortcuts {
+        filter: String,
+        recording: Option<Action>,
+    },
+    /// Formule LaTeX : insertion, ou modification de l'objet `editing`.
+    Formula {
+        src: String,
+        editing: Option<Id>,
+        preview: FormulaPreview,
+    },
+}
+
+/// Aperçu composé de la formule en cours de saisie (recalculé quand le source change).
+#[derive(Default)]
+pub struct FormulaPreview {
+    pub src: Option<String>,
+    pub tex: Option<egui::TextureHandle>,
+    pub error: Option<String>,
 }
 
 /// Mesure de performance (`--bench`) : temps de construction d'une image, en millisecondes.
@@ -59,11 +82,15 @@ pub struct App {
     pub pen_force: Option<f32>,
     /// Lecture d'une image du presse-papiers système (remplaçable dans les tests).
     pub system_image: fn() -> Option<RawImage>,
+    /// Le stylet est-il utilisé côté gomme ? (extrémité gomme, via `wb-pen`) ; remplaçable dans les tests.
+    pub eraser_probe: fn() -> bool,
     /// Point monde du dernier clic droit (menu contextuel des tableaux).
     pub ctx_pos: Pt,
     pub keymap_path: Option<PathBuf>,
     pub ui_dark: bool,
     pub edit_demo: bool,
+    /// Démonstration pour les captures : insère quelques formules composées.
+    pub formula_demo: bool,
     pub ed: Editor,
     pub sel: Vec<Id>,
     pub tool: Tool,
@@ -127,10 +154,12 @@ impl App {
             keymap: Keymap::default(),
             pen_force: None,
             system_image: crate::clipboard::system_image,
+            eraser_probe: wb_pen::eraser_active,
             ctx_pos: Pt::ZERO,
             keymap_path: None,
             ui_dark: false,
             edit_demo: false,
+            formula_demo: false,
             ed: Editor::new(Document::default()),
             sel: Vec::new(),
             tool: Tool::Select,
@@ -729,6 +758,23 @@ impl App {
     fn screenshot_step(&mut self, ctx: &egui::Context) {
         let Some(path) = self.screenshot.clone() else { return };
         self.frames += 1;
+        if self.formula_demo && self.frames == 3 {
+            let demo = [
+                r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}",
+                r"\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}",
+                r"\begin{pmatrix} a & b \\ c & d \end{pmatrix}^{-1} = \frac{1}{ad-bc}\begin{pmatrix} d & -b \\ -c & a \end{pmatrix}",
+            ];
+            for (i, f) in demo.iter().enumerate() {
+                let before = self.ed.page().objects.len();
+                let _ = self.insert_formula(f, None);
+                if self.ed.page().objects.len() > before {
+                    let id = self.ed.page().objects[before].id.clone();
+                    self.ed.translate(&[id], Pt::new(0.0, (i as f64 - 1.0) * 110.0));
+                }
+            }
+            self.sel.clear();
+            self.fit_pending = true;
+        }
         if self.edit_demo && self.frames == 3 {
             // démonstration pour les captures : ouvre l'édition du premier texte et met quelques mots en forme
             let first = self.ed.page().objects.iter().find(|o| matches!(&o.kind, Kind::Box(b) if !b.label.text.is_empty())).map(|o| o.id.clone());

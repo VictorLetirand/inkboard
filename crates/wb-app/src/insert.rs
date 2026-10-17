@@ -1,9 +1,11 @@
 //! Insertion d'éléments préfabriqués : bloc de code, formule (aperçu Unicode), pastille de vote.
 
-use crate::app::App;
+use crate::app::{App, Dialog, FormulaPreview};
 use crate::tools::Tool;
 use wb_core::*;
 
+/// Corps du texte d'une formule à l'insertion (unités du tableau).
+const FORMULA_SIZE: f64 = 36.0;
 const CODE_SAMPLE: &str = "fn main() {\n    println!(\"Bonjour\");\n}";
 
 impl App {
@@ -42,15 +44,42 @@ impl App {
         });
     }
 
-    /// Formule : le source LaTeX est converti en Unicode (approximation) dans une zone de texte à police serif.
-    pub fn insert_formula(&mut self, latex: &str) {
-        let text = wb_core::latex::to_unicode(latex);
-        if text.trim().is_empty() {
-            return;
+    /// Insère une formule composée (SVG blanc teinté par la couleur de trait, source conservée) ou, avec `editing`, remplace celle d'un objet existant
+    /// en gardant son centre, son angle et son échelle.
+    pub fn insert_formula(&mut self, latex: &str, editing: Option<&Id>) -> Result<(), String> {
+        let f = wb_formats::math::render(latex, FORMULA_SIZE).map_err(|e| e.to_string())?;
+        let aid = self.ed.doc.add_asset("image/svg+xml", f.svg.into_bytes());
+        let src = latex.to_owned();
+        if let Some(id) = editing {
+            let old_h = match self.ed.page().get(id).map(|o| &o.kind) {
+                Some(Kind::Image(i)) => i.latex.as_deref().and_then(|l| wb_formats::math::render(l, FORMULA_SIZE).ok()).map(|f| f.h / i.frame.h.max(1.0)),
+                _ => None,
+            };
+            let k = old_h.map_or(1.0, |r| 1.0 / r);
+            self.ed.update(id, |o| {
+                if let Kind::Image(i) = &mut o.kind {
+                    let c = i.frame.center();
+                    i.frame = Frame { x: c.x - f.w * k / 2.0, y: c.y - f.h * k / 2.0, w: f.w * k, h: f.h * k, angle: i.frame.angle };
+                    i.asset = aid;
+                    i.latex = Some(src);
+                }
+            });
+            return Ok(());
         }
-        let style = Style { width: 0.0, fill: None, ..self.style.clone() };
-        let label = Label { text: RichText::plain(text), family: FontFamily::Serif, size: 32.0, align: Align::Center };
-        self.place_box(Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), style, label));
+        let at = self.view_center();
+        let frame = Frame::new(at.x - f.w / 2.0, at.y - f.h / 2.0, f.w, f.h);
+        let style = Style { stroke: self.style.stroke, width: 0.0, fill: None, ..Style::default() };
+        let id = self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: Some(src) }), style));
+        self.sel = vec![id];
+        self.tool = Tool::Select;
+        Ok(())
+    }
+
+    /// Ouvre la fenêtre de modification de la formule `id` (sans effet si ce n'est pas une formule).
+    pub fn edit_formula(&mut self, id: &Id) -> bool {
+        let Some(Kind::Image(ImageObj { latex: Some(src), .. })) = self.ed.page().get(id).map(|o| &o.kind) else { return false };
+        self.dialog = Some(Dialog::Formula { src: src.clone(), editing: Some(id.clone()), preview: FormulaPreview::default() });
+        true
     }
 
     /// Pastille de vote numérotée : petit disque coloré, à poser sur les éléments à départager.

@@ -18,9 +18,9 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Colorer / surligner des mots d'un paragraphe | Excalidraw | ✔ sélection de mots, gras/italique/souligné/barré, couleur, surlignage (jalon 2) |
 | Raccourcis personnalisables | Excalidraw | ✔ 40 commandes, plusieurs raccourcis, fichier JSON, conflits gérés (jalon 2) |
 | Stylet : pression | Excalidraw | ✔ largeur variable (à valider sur du matériel réel) |
-| Stylet : gomme au bouton | Excalidraw | ✘ non exposée par egui |
+| Stylet : gomme (extrémité) | Excalidraw | ◐ implémenté via l'API Pointer de Windows ; **non validé sur du matériel réel** |
 | Blocs de code | Excalidraw | ✔ coloration syntaxique minimale (commentaires, chaînes, nombres, mots-clés ; menu « Colorer le code ») |
-| LaTeX | Excalidraw | ◐ aperçu Unicode approximatif (pas de composition) |
+| LaTeX | Excalidraw | ✔ composition TeX (STIX Two Math), formule modifiable, couleur suivie |
 | Présentation, minuteur, vote | Excalidraw | ✔ plein écran page par page, minuteur, pastilles |
 | Connecteurs qui évitent les formes | draw.io | ✔ routage A*, points de passage |
 | Presse-papiers (images, texte) | tous | ✔ |
@@ -31,8 +31,8 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 - **`wb-mcp`** : serveur MCP en Rust sur `wb-core` (créer/modifier des objets, importer Mermaid, exporter) ; niveau A sur fichiers,
   niveau B en direct avec l'application ouverte. *Volontairement repoussé.*
 - Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
-- Vraie composition LaTeX ; coloration par langage (la coloration actuelle est générique).
-- Gomme au bouton du stylet (dépend d'egui/winit) ; validation de la pression sur du matériel réel.
+- Coloration par langage (la coloration actuelle est générique) ; texte (`\text`) et environnements avancés de la bibliothèque de composition au-delà de ses capacités.
+- Validation sur du matériel réel de la pression et de la gomme du stylet ; gomme sous macOS/Linux (non gérée).
 - Alignement par ligne dans le champ de saisie pendant l'édition d'un texte centré multiligne.
 - Version WASM du moteur (même code) si un usage web est souhaité.
 
@@ -44,4 +44,4 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
   l'export draw.io vérifié dans le visualiseur officiel ; des fichiers Excalidraw et Obsidian Canvas écrits comme les vrais outils (`wb-formats/tests/realistic.rs`) s'importent correctement, mais aucun fichier réel d'utilisateur n'a été testé.
 - Le workflow CI (`.github/workflows/ci.yml`) n'a jamais été exécuté.
 - Le routage coudé avec contournement est désactivé au-delà de 5 000 objets (coût linéaire par connecteur).
-- La formule LaTeX est figée en texte Unicode : le source n'est pas conservé.
+- Les formules dépendent du crate `latex-rust` 2.1.1 (récent, peu éprouvé ; la 3.x exige Rust 1.99) : une commande non gérée est signalée dans la fenêtre de saisie. Une formule est rastérisée à l'écran (×4) mais reste vectorielle dans les exports SVG et PDF.

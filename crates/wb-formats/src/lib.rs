@@ -13,6 +13,7 @@ pub mod drawio;
 pub mod excalidraw;
 pub mod jsoncanvas;
 pub mod legacy;
+pub mod math;
 pub mod mermaid;
 pub mod raster;
 mod xml;
@@ -129,7 +130,8 @@ pub(crate) fn sample_document() -> wb_core::Document {
     let free = Object::new(Kind::Connector(Connector::new(End::bound(c.id.clone()), End::free(Pt::new(300.0, 480.0)))), Style::default());
     let pen = Object::new_pen(vec![Pt::new(100.0, 450.0), Pt::new(150.0, 470.0), Pt::new(200.0, 440.0), Pt::new(260.0, 480.0)], false, Style::default());
     let aid = d.add_asset("image/png", vec![137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
-    let img = Object::new(Kind::Image(ImageObj { frame: Frame::new(650.0, 300.0, 80.0, 60.0), asset: aid }), Style { width: 0.0, ..Default::default() });
+    let img =
+        Object::new(Kind::Image(ImageObj { frame: Frame::new(650.0, 300.0, 80.0, 60.0), asset: aid, latex: None }), Style { width: 0.0, ..Default::default() });
     d.pages[0].objects.extend([a, b, c, t, n, x, link, free, pen, img]);
     d
 }
