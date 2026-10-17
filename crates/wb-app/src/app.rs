@@ -84,6 +84,9 @@ pub struct App {
     pub system_image: fn() -> Option<RawImage>,
     /// Le stylet est-il utilisé côté gomme ? (extrémité gomme, via `wb-pen`) ; remplaçable dans les tests.
     pub eraser_probe: fn() -> bool,
+    /// Date de modification du fichier ouvert lors de la dernière lecture ou écriture (voir `watch.rs`).
+    pub disk_mtime: Option<std::time::SystemTime>,
+    pub last_watch: Instant,
     /// Point monde du dernier clic droit (menu contextuel des tableaux).
     pub ctx_pos: Pt,
     pub keymap_path: Option<PathBuf>,
@@ -155,6 +158,8 @@ impl App {
             pen_force: None,
             system_image: crate::clipboard::system_image,
             eraser_probe: wb_pen::eraser_active,
+            disk_mtime: None,
+            last_watch: Instant::now(),
             ctx_pos: Pt::ZERO,
             keymap_path: None,
             ui_dark: false,
@@ -306,6 +311,7 @@ impl App {
                 self.textures.clear();
                 self.fit_pending = true;
                 self.path = native.then(|| path.to_path_buf());
+                self.disk_mtime = crate::watch::mtime(path);
                 self.saved_rev = self.ed.revision();
                 let note = imp.report.summary();
                 self.toast(&if note.is_empty() { format!("« {name} » ouvert") } else { format!("« {name} » ouvert — {note}") });
@@ -339,11 +345,12 @@ impl App {
         }
     }
 
-    fn save_to(&mut self, p: &Path) {
+    pub fn save_to(&mut self, p: &Path) {
         self.ed.doc.prune_assets();
         match wb_core::serial::save(&self.ed.doc, p) {
             Ok(()) => {
                 self.path = Some(p.to_path_buf());
+                self.disk_mtime = crate::watch::mtime(p);
                 self.saved_rev = self.ed.revision();
                 self.toast("Enregistré");
             }
@@ -820,6 +827,7 @@ impl eframe::App for App {
             self.ui_dark = dark;
         }
         self.apply_present_request(ctx);
+        self.watch_file();
         self.shortcuts(ctx);
         if self.presenting {
             ui::present_overlay(self, ctx);

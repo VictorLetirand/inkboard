@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/wb-core", "crates/wb-formats", "crates/wb-cli", "crates/wb-app", "crates/wb-pen"]
+members = ["crates/wb-core", "crates/wb-formats", "crates/wb-cli", "crates/wb-app", "crates/wb-pen", "crates/wb-mcp"]
 
 [workspace.package]
 version = "0.1.0"

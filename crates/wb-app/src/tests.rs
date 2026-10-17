@@ -1103,3 +1103,50 @@ fn pen_eraser_end_erases_whatever_the_active_tool() {
     assert!(t.app().ed.page().get(&id).is_none(), "la forme est effacée");
     assert_eq!(t.app().tool, Tool::Pen, "l'outil actif n'a pas changé");
 }
+
+/* ------------------------------------------------ fichier modifié par un autre programme */
+
+fn external_edit(path: &std::path::Path, text: &str) {
+    let mut doc = wb_core::serial::load(path).unwrap();
+    doc.pages[0].objects.push(Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 100.0, 60.0), Style::default(), Label::new(text, 20.0, Align::Center)));
+    wb_core::serial::save(&doc, path).unwrap();
+    // l'horloge du système de fichiers peut être grossière : on force une date différente
+    let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+}
+
+fn temp_board(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("wb-watch-{tag}-{}.tableau.json", std::process::id()))
+}
+
+#[test]
+fn open_file_reloads_when_another_program_changes_it() {
+    let mut t = T::new();
+    let path = temp_board("reload");
+    t.add_rect(0.0, 0.0, 50.0, 50.0);
+    t.app().save_to(&path);
+    t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    t.h.step();
+    assert_eq!(t.objects().len(), 1, "pas de rechargement tant que rien n'a changé");
+    external_edit(&path, "Ajouté par un agent");
+    t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    t.h.step();
+    assert_eq!(t.objects().len(), 2, "le tableau est rechargé");
+    assert!(!t.app().dirty());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn unsaved_local_changes_are_not_overwritten_by_an_external_change() {
+    let mut t = T::new();
+    let path = temp_board("dirty");
+    t.add_rect(0.0, 0.0, 50.0, 50.0);
+    t.app().save_to(&path);
+    t.add_rect(200.0, 0.0, 50.0, 50.0); // modification locale non enregistrée
+    external_edit(&path, "Externe");
+    t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    t.h.step();
+    assert_eq!(t.objects().len(), 2, "les 2 formes locales sont conservées");
+    assert!(t.app().dirty());
+    let _ = std::fs::remove_file(&path);
+}

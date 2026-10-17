@@ -6,7 +6,7 @@
 powershell -File scripts/package.ps1
 ```
 
-Compile en release l'application (`tableau-blanc.exe`, icône incluse) et la CLI (`wb.exe`), puis produit
+Compile en release l'application (`tableau-blanc.exe`, icône incluse) la CLI (`wb.exe`) et le serveur MCP (`wb-mcp.exe`), puis produit
 `dist/tableau-blanc-<version>-windows-x64.zip` et son empreinte SHA-256. L'archive contient aussi le README et les scripts ci-dessous.
 
 ## Installation par utilisateur (sans droits administrateur)

@@ -9,6 +9,7 @@ mod render;
 mod rich_edit;
 mod tools;
 mod ui;
+mod watch;
 
 use eframe::egui;
 use std::path::PathBuf;

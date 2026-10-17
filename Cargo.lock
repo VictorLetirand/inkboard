@@ -4136,6 +4136,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wb-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wb-core",
+ "wb-formats",
+]
+
+[[package]]
 name = "wb-pen"
 version = "0.1.0"
 dependencies = [

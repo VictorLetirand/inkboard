@@ -3,7 +3,7 @@
 Tableau blanc infini, **100 % hors ligne**, écrit en Rust. Il remplace l'application de bureau Microsoft Whiteboard et vise
 les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, draw.io, Whiteboard).
 
-> État : **application native complète** (moteur, formats d'échange, texte riche, raccourcis, stylet, grands tableaux, présentation) ; le serveur MCP pour agents est volontairement repoussé. Le prototype web d'origine est conservé dans
+> État : **application native complète** (moteur, formats d'échange, texte riche, raccourcis, stylet, grands tableaux, présentation)  et **serveur MCP** pour piloter le tableau depuis un agent (niveau fichiers). Le prototype web d'origine est conservé dans
 > [`prototype-web/`](prototype-web/) et reste utilisable ; ses fichiers `.tableau.json` s'importent dans la version Rust.
 
 ## Démarrer
@@ -11,7 +11,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 ```bash
 cargo run --release -p wb-app                 # l'application
 cargo run --release -p wb-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 216 tests
+cargo test --workspace                        # 222 tests
 powershell -File scripts/package.ps1          # archive portable Windows (dist/)
 ```
 
@@ -29,6 +29,7 @@ cargo run --release -p wb-cli -- info schema.drawio
 |---|---|
 | [`wb-core`](crates/wb-core) | Modèle (pages, calques, objets), géométrie, **connecteurs liés**, historique, export SVG, mise en page automatique. Aucune dépendance à une interface. |
 | [`wb-formats`](crates/wb-formats) | Import/export draw.io, Excalidraw, JSON Canvas ; import Mermaid ; ancien format du prototype ; rendu PNG. |
+| [`wb-mcp`](crates/wb-mcp) | Serveur MCP (stdio) : un agent crée/modifie des tableaux, importe du Mermaid, exporte. Voir [docs/MCP.md](docs/MCP.md). |
 | [`wb-pen`](crates/wb-pen) | Seul crate contenant du `unsafe` : lecture de l'état de la gomme du stylet (messages `WM_POINTER*` de Windows). |
 | [`wb-cli`](crates/wb-cli) | `wb convert`, `wb info`, `wb bench`. |
 | [`wb-app`](crates/wb-app) | Application de bureau (egui) : canvas, outils, panneau de style, pages, calques, texte riche, raccourcis personnalisables, dialogues. |
@@ -43,6 +44,7 @@ cargo run --release -p wb-cli -- info schema.drawio
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
 - **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.
+- **Agents (MCP)** : `wb-mcp --root <dossier>` expose 13 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). L'application recharge seule le fichier ouvert quand un agent le modifie.
 - **Distribution** : icône, archive portable et installation par utilisateur (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
 
 ## Texte riche et raccourcis
