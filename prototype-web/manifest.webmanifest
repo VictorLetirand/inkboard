@@ -1,0 +1,10 @@
+{
+  "name": "Tableau blanc",
+  "short_name": "Tableau blanc",
+  "description": "Tableau blanc infini, 100 % hors ligne",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

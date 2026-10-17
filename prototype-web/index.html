@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Tableau blanc</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#ffffff">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="cv"></canvas>
+<textarea id="editor" spellcheck="false" hidden></textarea>
+
+<header id="topbar">
+  <div id="menuWrap">
+    <button class="btn" id="menuBtn" title="Menu"></button>
+    <div class="menu" id="menu" hidden></div>
+  </div>
+  <input id="boardName" type="text" maxlength="80" spellcheck="false" title="Nom du tableau">
+  <span id="saveState"></span>
+</header>
+
+<nav id="toolbar"></nav>
+<aside id="panel" hidden></aside>
+
+<div id="bottomLeft" class="bar">
+  <button class="btn" id="undoBtn" title="Annuler (Ctrl+Z)"></button>
+  <button class="btn" id="redoBtn" title="Rétablir (Ctrl+Y)"></button>
+  <span class="sep"></span>
+  <button class="btn" id="zoomOut" title="Zoom arrière (Ctrl+-)"></button>
+  <button class="btn txt" id="zoomPct" title="Revenir à 100 % (Ctrl+0)">100 %</button>
+  <button class="btn" id="zoomIn" title="Zoom avant (Ctrl++)"></button>
+  <button class="btn" id="zoomFit" title="Tout afficher (Ctrl+1)"></button>
+</div>
+<div id="bottomRight" class="bar">
+  <button class="btn" id="helpBtn" title="Raccourcis clavier (?)"></button>
+</div>
+
+<div class="menu" id="ctx" hidden></div>
+<div id="modal" hidden><div id="modalBox"></div></div>
+<div id="toast" hidden></div>
+<div id="dropHint" hidden>Déposez vos images ou un fichier de tableau</div>
+
+<input type="file" id="fileImg" accept="image/*" multiple hidden>
+<input type="file" id="fileOpen" accept=".json,.whiteboard,.drawio,.xml,.excalidraw,.canvas,.mmd,.mermaid,application/json" hidden>
+
+<script src="js/core.js"></script>
+<script src="js/interact.js"></script>
+<script src="js/formats.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
