@@ -11,7 +11,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 ```bash
 cargo run --release -p wb-app                 # l'application
 cargo run --release -p wb-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 225 tests
+cargo test --workspace                        # 235 tests
 powershell -File scripts/package.ps1          # archive portable Windows (dist/)
 ```
 
@@ -38,13 +38,13 @@ cargo run --release -p wb-cli -- info schema.drawio
 
 - **Connecteurs liés** (droits, coudés, courbes) qui suivent les formes ; les coudés **contournent les formes** rencontrées ; poignées de
   **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
-- **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `wb-pen`).
+- **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `wb-pen`). **À valider avec un vrai stylet** : `tableau-blanc --pen-test` affiche un diagnostic et produit un rapport ([docs/STYLET.md](docs/STYLET.md)).
 - **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
 - **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
 - **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.
-- **Agents (MCP)** : `wb-mcp --root <dossier>` expose 14 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). **Mode direct** : application ouverte, l'agent agit sur le tableau affiché (une étape d'annulation par appel, il voit votre sélection) ; sinon il modifie le fichier et l'application le recharge seule.
+- **Agents (MCP)** : `wb-mcp --root <dossier>` expose 16 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). **Ressources MCP** (tableau affiché, fichiers) avec notifications d'abonnement, outil `board_changes` (ce que vous avez modifié depuis le dernier regard de l'agent), insertion d'images. **Mode direct** : application ouverte, l'agent agit sur le tableau affiché (une étape d'annulation par appel, il voit votre sélection) ; sinon il modifie le fichier et l'application le recharge seule.
 - **Distribution** : icône, archive portable et installation par utilisateur (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
 
 ## Texte riche et raccourcis

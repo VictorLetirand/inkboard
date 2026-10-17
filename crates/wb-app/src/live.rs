@@ -129,6 +129,14 @@ impl App {
     }
 
     fn run_live(&mut self, tool: &str, args: &Value) -> Reply {
+        if tool == "__status" {
+            // sondage de wb-mcp pour les notifications de ressources : change quand le tableau ou la sélection change
+            return Reply::Ok(json!({
+                "revision": self.ed.revision(),
+                "path": self.path.as_ref().map(|p| p.display().to_string()),
+                "selection": self.sel.iter().map(|i| i.0.clone()).collect::<Vec<_>>(),
+            }));
+        }
         if let Some(p) = args.get("path").and_then(Value::as_str)
             && !self.path.as_deref().is_some_and(|mine| same_file(mine, Path::new(p)))
         {
@@ -145,7 +153,8 @@ impl App {
             };
         }
         let was_empty = self.ed.page().objects.is_empty();
-        let result = self.ed.transact(|ed| wb_mcp::tools::apply(ed, tool, args));
+        let tracker = &mut self.tracker;
+        let result = self.ed.transact(|ed| wb_mcp::tools::apply_tracked(ed, tool, args, tracker));
         match result {
             Ok(mut v) => {
                 // la sélection de l'utilisateur suit ce que l'agent vient de créer
@@ -161,7 +170,7 @@ impl App {
                 if was_empty && !self.ed.page().objects.is_empty() {
                     self.fit_pending = true;
                 }
-                if tool == "describe_board" {
+                if tool == "describe_board" || tool == "board_changes" {
                     v["live"] = json!(true);
                     v["selection"] = json!(self.sel.iter().map(|i| i.0.clone()).collect::<Vec<_>>());
                 } else {

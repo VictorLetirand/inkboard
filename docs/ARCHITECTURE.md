@@ -44,7 +44,7 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
 - `ui.rs` : barres, panneau de style, calques, dialogues (dont réglage des raccourcis). `app.rs` : état, fichiers, sauvegarde automatique.
 - `clipboard.rs` : presse-papiers (objets internes, images et texte du système). `insert.rs` : bloc de code, formule, pastille de vote.
   Mode présentation (`App::presenting`, `present_overlay`) et minuteur dans `app.rs` / `ui.rs`.
-- `tests.rs` : 73 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
+- `tests.rs` : 75 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
 
 ## Modules ajoutés au noyau (`wb-core`)
 
@@ -60,7 +60,9 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
 `wb-mcp` : serveur MCP (JSON-RPC sur stdio, écrit à la main) au-dessus de `wb-core`/`wb-formats` ; chaque outil est une fonction `apply(&mut Editor, nom, args)` ; le mode fichier ouvre le fichier, l'applique et réenregistre atomiquement, le mode direct la fait exécuter par l'application (`wb-app::live` : serveur local 127.0.0.1 + jeton, exécution sur le fil d'interface dans une transaction).
 `wb-app::watch` recharge le fichier ouvert quand un autre programme le modifie (sauf modifications locales non enregistrées). Détails : [MCP.md](MCP.md).
 
-`wb-pen` (Windows) installe un *subclass* de fenêtre qui lit les `WM_POINTER*` sans les consommer et expose `eraser_active()` ; l'application remplace alors l'outil par la gomme
+`wb-mcp::resources` : ressources MCP et fil de surveillance (sondage 600 ms → `notifications/resources/updated`) ; `tools::apply_tracked` : suivi des changements de l'utilisateur (empreinte par objet, les modifications de l'agent sont absorbées dans la référence).
+
+`wb-pen` (Windows) installe un *subclass* de fenêtre qui lit les `WM_POINTER*` sans les consommer et expose `eraser_active()` et `last_sample()` (pression, indicateurs, inclinaison ; utilisés par le diagnostic `--pen-test`, `wb-app::pen_test`) ; l'application remplace alors l'outil par la gomme
 pour le geste (`App::eraser_probe`, substituable dans les tests). C'est le seul crate qui autorise `unsafe`.
 
 ### Pourquoi egui ?
@@ -76,7 +78,7 @@ accessibilité limitée. Si le rendu devait dépasser egui
 |---|---|---|
 | `wb-core` | 101 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
 | `wb-formats` | 45 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
-| `wb-mcp` | 4 | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports) ; le mode direct est testé dans `wb-app` (3 tests : édition annulable, ciblage du fichier ouvert, jeton) |
-| `wb-app` | 73 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
+| `wb-mcp` | 8 | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports) ; le mode direct, les ressources/notifications et `board_changes` en direct sont testés dans `wb-app` (5 tests : édition annulable, ciblage du fichier ouvert, jeton, ressources et notifications, changements et images) |
+| `wb-app` | 78 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
 
 En plus : l'export draw.io a été ouvert dans le visualiseur officiel diagrams.net (formes, flèches liées, pointillés, rotation).

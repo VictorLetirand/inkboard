@@ -1258,3 +1258,82 @@ fn live_server_rejects_a_wrong_token_and_cleans_up_its_discovery_file() {
     t.app().live = None;
     assert!(!live.file.exists());
 }
+
+/// Envoie une requête JSON-RPC quelconque au serveur MCP (autre thread) pendant que l'interface tourne.
+fn mcp_rpc(t: &mut T, live: &Live, method: &str, params: serde_json::Value) -> serde_json::Value {
+    let srv = live.srv.clone();
+    let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+    let th = std::thread::spawn(move || srv.handle(&msg).unwrap());
+    let start = std::time::Instant::now();
+    while !th.is_finished() {
+        assert!(start.elapsed() < std::time::Duration::from_secs(10), "pas de réponse");
+        t.h.step();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    th.join().unwrap()
+}
+
+#[test]
+fn live_board_is_a_resource_and_subscribers_are_notified_when_the_user_edits() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "res");
+    let list = mcp_rpc(&mut t, &live, "resources/list", serde_json::json!({}));
+    let uris: Vec<&str> = list["result"]["resources"].as_array().unwrap().iter().map(|r| r["uri"].as_str().unwrap()).collect();
+    assert!(uris.contains(&wb_mcp::resources::LIVE_URI), "{list}");
+    t.add_rect(0.0, 0.0, 80.0, 50.0);
+    let read = mcp_rpc(&mut t, &live, "resources/read", serde_json::json!({"uri": wb_mcp::resources::LIVE_URI}));
+    let body: serde_json::Value = serde_json::from_str(read["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(body["live"], true);
+    assert_eq!(body["page"]["objects"].as_array().unwrap().len(), 1);
+    // abonnement + fil de surveillance
+    mcp_rpc(&mut t, &live, "resources/subscribe", serde_json::json!({"uri": wb_mcp::resources::LIVE_URI}));
+    let (tx, rx) = std::sync::mpsc::channel();
+    live.srv.spawn_watcher(tx);
+    let wait = |t: &mut T, secs: u64| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        while std::time::Instant::now() < end {
+            t.h.step();
+            if let Ok(v) = rx.try_recv() {
+                return Some(v);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        None
+    };
+    assert!(wait(&mut t, 2).is_none(), "rien ne change : pas de notification");
+    t.add_rect(200.0, 0.0, 80.0, 50.0); // l'utilisateur dessine
+    let n = wait(&mut t, 5).expect("notification après la modification de l'utilisateur");
+    assert_eq!(n["method"], "notifications/resources/updated");
+    assert_eq!(n["params"]["uri"], wb_mcp::resources::LIVE_URI);
+    let _ = std::fs::remove_file(&live.file);
+}
+
+#[test]
+fn live_board_changes_and_images() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "chg");
+    let (err, r) = mcp_call(&mut t, &live, "board_changes", serde_json::json!({}));
+    assert!(!err && r["baseline"] == true, "{r}");
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Agent"}));
+    assert!(!err, "{r}");
+    t.add_rect(300.0, 300.0, 60.0, 40.0); // l'utilisateur ajoute une forme
+    let (err, ch) = mcp_call(&mut t, &live, "board_changes", serde_json::json!({}));
+    assert!(!err);
+    assert_eq!(ch["added"].as_array().unwrap().len(), 1, "seule la forme de l'utilisateur est signalée : {ch}");
+    assert_eq!(ch["selection"].as_array().map(Vec::len), Some(t.app().sel.len()));
+    // le premier objet supprimé par l'utilisateur est signalé
+    let victim = t.objects()[0].id.clone();
+    t.app().ed.remove(std::slice::from_ref(&victim));
+    let (_, ch) = mcp_call(&mut t, &live, "board_changes", serde_json::json!({}));
+    assert_eq!(ch["removed"], serde_json::json!([victim.0]), "{ch}");
+    // image à partir de données base64 : insérée en direct, annulable
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+    let before = t.objects().len();
+    let (err, r) = mcp_call(&mut t, &live, "add_image", serde_json::json!({"data_base64": png, "w": 100}));
+    assert!(!err, "{r}");
+    assert_eq!(t.objects().len(), before + 1);
+    assert!(matches!(t.objects().last().unwrap().kind, Kind::Image(_)));
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert_eq!(t.objects().len(), before);
+    let _ = std::fs::remove_file(&live.file);
+}

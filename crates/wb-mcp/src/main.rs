@@ -28,8 +28,18 @@ fn main() {
             other => return eprintln!("argument inconnu : {other}"),
         }
     }
+    // toutes les sorties (réponses et notifications) passent par un seul fil d'écriture ; `Null` le termine
+    let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
+    let writer = std::thread::spawn(move || {
+        let mut out = std::io::stdout().lock();
+        for v in rx {
+            if v.is_null() || writeln!(out, "{v}").is_err() || out.flush().is_err() {
+                break;
+            }
+        }
+    });
+    server.spawn_watcher(tx.clone());
     let stdin = std::io::stdin();
-    let mut out = std::io::stdout().lock();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -40,9 +50,11 @@ fn main() {
             Err(e) => Some(serde_json::json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("JSON invalide : {e}")}})),
         };
         if let Some(r) = reply
-            && (writeln!(out, "{r}").is_err() || out.flush().is_err())
+            && tx.send(r).is_err()
         {
             break;
         }
     }
+    let _ = tx.send(serde_json::Value::Null);
+    let _ = writer.join();
 }

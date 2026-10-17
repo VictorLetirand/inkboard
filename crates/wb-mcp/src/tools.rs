@@ -43,6 +43,10 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(json!({}), &[])}),
         json!({"name": "describe_board", "description": "Liste les pages et les objets d'un tableau (id, type, texte, position, liens des connecteurs). En mode direct, indique aussi la sélection de l'utilisateur (`selection`). Accepte aussi les fichiers draw.io, Excalidraw, JSON Canvas et Mermaid en lecture.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop()}), &[])}),
+        json!({"name": "board_changes", "description": "Signale ce que l'UTILISATEUR a modifié dans le tableau depuis votre dernier regard (describe_board ou board_changes) : objets ajoutés, modifiés, supprimés. Vos propres modifications ne sont pas signalées. Le premier appel enregistre une référence.",
+            "inputSchema": obj(json!({"path": path_prop()}), &[])}),
+        json!({"name": "add_image", "description": "Ajoute une image (PNG, JPEG, GIF, WebP ou SVG, 15 Mio au plus) à partir d'un fichier (`source`, sous la racine autorisée) ou de données base64 (`data_base64`). La taille naturelle est réduite à 600 au plus ; w et/ou h la remplacent.",
+            "inputSchema": obj(pos_props(json!({"source": {"type": "string", "description": "Chemin du fichier image."}, "data_base64": {"type": "string"}, "w": {"type": "number"}, "h": {"type": "number"}})), &[])}),
         json!({"name": "add_shape", "description": "Ajoute une forme avec du texte (rect, ellipse, diamond, triangle, sticky = note adhésive, text = texte libre). Renvoie l'id.",
             "inputSchema": obj(pos_props(json!({
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
@@ -153,11 +157,13 @@ fn find<'a>(ed: &'a Editor, id: &str) -> Res<&'a Object> {
 /* ----------------------------------------------------------------- appel */
 
 /// Outils qui ne modifient pas le tableau (le fichier n'est pas réécrit).
-const READ_ONLY: [&str; 2] = ["describe_board", "export"];
+const READ_ONLY: [&str; 3] = ["describe_board", "export", "board_changes"];
 
 /// Outils qui s'appliquent à un tableau ouvert (fichier ou application) ; `create_board` ne crée que des fichiers.
-const EDITOR_TOOLS: [&str; 12] = [
+const EDITOR_TOOLS: [&str; 14] = [
     "describe_board",
+    "board_changes",
+    "add_image",
     "add_shape",
     "add_connector",
     "add_table",
@@ -184,6 +190,8 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     }
     match name {
         "describe_board" => describe(ed, a),
+        "board_changes" => Err("board_changes n'a de sens qu'avec le suivi des changements (apply_tracked)".into()),
+        "add_image" => add_image(ed, a),
         "add_shape" => add_shape(ed, a),
         "add_connector" => add_connector(ed, a),
         "add_table" => add_table(ed, a),
@@ -232,6 +240,20 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
             a[key] = json!(abs.display().to_string());
         }
     }
+    if name == "add_image"
+        && let Some(src) = os(&a, "source").map(str::to_owned)
+    {
+        // le fichier est lu ici (confiné à la racine) ; seules les données sont transmises à l'application
+        let abs = resolve(srv, &src)?;
+        let meta = std::fs::metadata(&abs).map_err(|e| format!("lecture de {} : {e}", abs.display()))?;
+        if meta.len() as usize > IMAGE_MAX_BYTES {
+            return Err(format!("image trop volumineuse ({} Mio, maximum {})", meta.len() >> 20, IMAGE_MAX_BYTES >> 20));
+        }
+        use base64::Engine;
+        let bytes = std::fs::read(&abs).map_err(|e| format!("lecture de {} : {e}", abs.display()))?;
+        a["data_base64"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+        a.as_object_mut().map(|m| m.remove("source"));
+    }
     if name != "create_board" {
         match crate::live::forward(srv, name, &a) {
             crate::live::Forward::Done(r) => return r.map(|v| v.to_string()),
@@ -253,7 +275,12 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
         );
     };
     let mut ed = Editor::new(load(&path)?);
-    let r = apply(&mut ed, name, &a)?;
+    let mut tracker = srv.trackers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&path);
+    let r = apply_tracked(&mut ed, name, &a, &mut tracker);
+    if let Some(t) = tracker {
+        srv.trackers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(path.clone(), t);
+    }
+    let r = r?;
     if !READ_ONLY.contains(&name) && name != "save_board" {
         save(&ed.doc, &path)?;
     }
@@ -297,52 +324,214 @@ fn end_json(e: &connector::End) -> Value {
     }
 }
 
+/// Résumé JSON d'un objet (id, type, position, texte, liens).
+pub fn summary(o: &Object) -> Value {
+    let mut v = json!({"id": o.id.0, "type": kind_name(o)});
+    let m = v.as_object_mut().expect("objet");
+    if let Some(f) = o.frame() {
+        m.insert("x".into(), json!(f.x.round()));
+        m.insert("y".into(), json!(f.y.round()));
+        m.insert("w".into(), json!(f.w.round()));
+        m.insert("h".into(), json!(f.h.round()));
+    }
+    match &o.kind {
+        Kind::Box(b) => {
+            m.insert("text".into(), json!(b.label.text.to_plain()));
+        }
+        Kind::Connector(c) => {
+            m.insert("from".into(), end_json(&c.start));
+            m.insert("to".into(), end_json(&c.end));
+            if let Some(l) = &c.label {
+                m.insert("label".into(), json!(l.text.to_plain()));
+            }
+        }
+        Kind::Table(t) => {
+            m.insert("rows".into(), json!(t.rows()));
+            m.insert("cols".into(), json!(t.cols()));
+            let r = t.rect();
+            m.insert("x".into(), json!(r.x.round()));
+            m.insert("y".into(), json!(r.y.round()));
+            m.insert("w".into(), json!(r.w.round()));
+            m.insert("h".into(), json!(r.h.round()));
+        }
+        Kind::Image(i) => {
+            if let Some(l) = &i.latex {
+                m.insert("latex".into(), json!(l));
+            }
+        }
+        Kind::Pen(_) => {}
+    }
+    v
+}
+
 fn describe(ed: &mut Editor, _a: &Value) -> Res<Value> {
     let page = ed.page();
-    let objects: Vec<Value> = page
-        .objects
-        .iter()
-        .map(|o| {
-            let mut v = json!({"id": o.id.0, "type": kind_name(o)});
-            let m = v.as_object_mut().expect("objet");
-            if let Some(f) = o.frame() {
-                m.insert("x".into(), json!(f.x.round()));
-                m.insert("y".into(), json!(f.y.round()));
-                m.insert("w".into(), json!(f.w.round()));
-                m.insert("h".into(), json!(f.h.round()));
-            }
-            match &o.kind {
-                Kind::Box(b) => {
-                    m.insert("text".into(), json!(b.label.text.to_plain()));
-                }
-                Kind::Connector(c) => {
-                    m.insert("from".into(), end_json(&c.start));
-                    m.insert("to".into(), end_json(&c.end));
-                    if let Some(l) = &c.label {
-                        m.insert("label".into(), json!(l.text.to_plain()));
-                    }
-                }
-                Kind::Table(t) => {
-                    m.insert("rows".into(), json!(t.rows()));
-                    m.insert("cols".into(), json!(t.cols()));
-                    let (x, y, w, h) = (t.rect().x, t.rect().y, t.rect().w, t.rect().h);
-                    m.insert("x".into(), json!(x.round()));
-                    m.insert("y".into(), json!(y.round()));
-                    m.insert("w".into(), json!(w.round()));
-                    m.insert("h".into(), json!(h.round()));
-                }
-                Kind::Image(i) => {
-                    if let Some(l) = &i.latex {
-                        m.insert("latex".into(), json!(l));
-                    }
-                }
-                Kind::Pen(_) => {}
-            }
-            v
-        })
-        .collect();
+    let objects: Vec<Value> = page.objects.iter().map(summary).collect();
     let pages: Vec<Value> = ed.doc.pages.iter().enumerate().map(|(i, p)| json!({"number": i + 1, "name": p.name, "objects": p.objects.len()})).collect();
     Ok(json!({"name": ed.doc.name, "pages": pages, "page": {"name": page.name, "objects": objects}}))
+}
+
+/* ------------------------------------------------- changements faits par l'utilisateur */
+
+/// Empreinte du contenu d'un tableau : une valeur par objet, pour détecter ce qui a été ajouté, supprimé ou modifié.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Snapshot {
+    objects: std::collections::HashMap<String, u64>,
+    pages: Vec<(String, String)>,
+}
+
+/// Au-delà, le suivi des changements est désactivé (le coût est linéaire à chaque appel d'outil).
+const TRACK_MAX_OBJECTS: usize = 20_000;
+
+impl Snapshot {
+    pub fn of(ed: &Editor) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut objects = std::collections::HashMap::new();
+        for p in &ed.doc.pages {
+            for o in &p.objects {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                serde_json::to_string(o).unwrap_or_default().hash(&mut h);
+                objects.insert(o.id.0.clone(), h.finish());
+            }
+        }
+        Snapshot { objects, pages: ed.doc.pages.iter().map(|p| (p.id.0.clone(), p.name.clone())).collect() }
+    }
+
+    fn too_big(ed: &Editor) -> bool {
+        ed.doc.pages.iter().map(|p| p.objects.len()).sum::<usize>() > TRACK_MAX_OBJECTS
+    }
+}
+
+fn find_anywhere<'a>(ed: &'a Editor, id: &str) -> Option<&'a Object> {
+    ed.doc.pages.iter().find_map(|p| p.objects.iter().find(|o| o.id.0 == id))
+}
+
+/// Différences entre la référence `old` et l'état courant.
+fn diff(old: &Snapshot, ed: &Editor) -> Value {
+    let now = Snapshot::of(ed);
+    let (mut added, mut modified, mut removed) = (Vec::new(), Vec::new(), Vec::new());
+    for (id, h) in &now.objects {
+        match old.objects.get(id) {
+            None => added.push(id.clone()),
+            Some(o) if o != h => modified.push(id.clone()),
+            _ => {}
+        }
+    }
+    removed.extend(old.objects.keys().filter(|id| !now.objects.contains_key(*id)).cloned());
+    for v in [&mut added, &mut modified, &mut removed] {
+        v.sort();
+    }
+    let sum = |ids: &[String]| -> Vec<Value> { ids.iter().filter_map(|id| find_anywhere(ed, id)).map(summary).collect() };
+    json!({
+        "added": sum(&added), "modified": sum(&modified), "removed": removed,
+        "pages_changed": old.pages != now.pages,
+        "unchanged": added.is_empty() && modified.is_empty() && removed.is_empty() && old.pages == now.pages,
+    })
+}
+
+/// Intègre à la référence les seules modifications faites par l'agent (`before` → `after`), pour que celles de l'utilisateur restent à signaler.
+fn absorb(reference: &mut Snapshot, before: &Snapshot, after: &Snapshot) {
+    for (id, h) in &after.objects {
+        if before.objects.get(id) != Some(h) {
+            reference.objects.insert(id.clone(), *h);
+        }
+    }
+    for id in before.objects.keys().filter(|id| !after.objects.contains_key(*id)) {
+        reference.objects.remove(id);
+    }
+    if before.pages != after.pages {
+        reference.pages = after.pages.clone();
+    }
+}
+
+/// Comme [`apply`], en suivant les changements : `board_changes` rapporte ce que l'utilisateur a modifié depuis le dernier regard de l'agent
+/// (appel de `describe_board` ou de `board_changes`) ; les modifications de l'agent lui-même ne sont pas rapportées.
+pub fn apply_tracked(ed: &mut Editor, name: &str, a: &Value, tracker: &mut Option<Snapshot>) -> Res<Value> {
+    if Snapshot::too_big(ed) {
+        return if name == "board_changes" { Err("tableau trop volumineux pour le suivi des changements".into()) } else { apply(ed, name, a) };
+    }
+    if name == "board_changes" {
+        let out = match tracker {
+            None => {
+                json!({"baseline": true, "message": "Référence enregistrée : les prochains appels signaleront les modifications faites ensuite par l'utilisateur."})
+            }
+            Some(old) => diff(old, ed),
+        };
+        *tracker = Some(Snapshot::of(ed));
+        return Ok(out);
+    }
+    let before = Snapshot::of(ed);
+    let r = apply(ed, name, a)?;
+    let after = Snapshot::of(ed);
+    // première observation ou regard complet : l'état courant devient la référence ; sinon seules les modifications de l'agent sont absorbées
+    match tracker.as_mut() {
+        Some(t) if name != "describe_board" => absorb(t, &before, &after),
+        _ => *tracker = Some(after),
+    }
+    Ok(r)
+}
+
+/* ------------------------------------------------------------------ images */
+
+/// Taille maximale d'une image insérée.
+const IMAGE_MAX_BYTES: usize = 15 << 20;
+
+/// Type d'image reconnu d'après les premiers octets (le type annoncé par l'appelant n'est jamais cru).
+fn sniff_image(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+        Some("image/png")
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if data.starts_with(b"GIF8") {
+        Some("image/gif")
+    } else if data.len() > 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if std::str::from_utf8(&data[..data.len().min(2048)]).is_ok_and(|t| t.contains("<svg")) {
+        Some("image/svg+xml")
+    } else {
+        None
+    }
+}
+
+/// Dimensions naturelles d'une image (pixels, ou unités du `viewBox` pour un SVG).
+fn image_size(mime: &str, data: &[u8]) -> Option<(f64, f64)> {
+    if mime == "image/svg+xml" {
+        let t = std::str::from_utf8(data).ok()?;
+        let vb = t.split("viewBox=\"").nth(1)?.split('"').next()?;
+        let v: Vec<f64> = vb.split([' ', ',']).filter_map(|x| x.parse().ok()).collect();
+        return (v.len() == 4 && v[2] > 0.0 && v[3] > 0.0).then(|| (v[2], v[3]));
+    }
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().ok()?.into_dimensions().ok()?;
+    Some((f64::from(w), f64::from(h)))
+}
+
+fn add_image(ed: &mut Editor, a: &Value) -> Res<Value> {
+    use base64::Engine;
+    let b64 = s(a, "data_base64").map_err(|_| "paramètre « source » (fichier image) ou « data_base64 » manquant".to_owned())?;
+    let data = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| format!("base64 invalide : {e}"))?;
+    if data.len() > IMAGE_MAX_BYTES {
+        return Err(format!("image trop volumineuse ({} Mio, maximum {})", data.len() >> 20, IMAGE_MAX_BYTES >> 20));
+    }
+    let mime = sniff_image(&data).ok_or("format d'image non reconnu (PNG, JPEG, GIF, WebP ou SVG)")?;
+    let (nw, nh) = image_size(mime, &data).ok_or("image illisible (dimensions introuvables)")?;
+    // taille d'affichage : demandée (le rapport est conservé si une seule dimension est donnée), sinon naturelle réduite à 600 au plus
+    let (w, h) = match (of(a, "w"), of(a, "h")) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, w * nh / nw),
+        (None, Some(h)) => (h * nw / nh, h),
+        (None, None) => {
+            let k = (600.0 / nw.max(nh)).min(1.0);
+            (nw * k, nh * k)
+        }
+    };
+    if w < 1.0 || h < 1.0 || w > 20_000.0 || h > 20_000.0 {
+        return Err("taille d'affichage invalide (entre 1 et 20 000)".into());
+    }
+    let aid = ed.doc.add_asset(mime, data);
+    let at = origin(ed, a);
+    let img = ImageObj { frame: Frame::new(at.x, at.y, w, h), asset: aid, latex: None };
+    let id = ed.insert(Object::new(Kind::Image(img), Style { width: 0.0, fill: None, ..Style::default() }));
+    Ok(json!({"id": id.0, "w": w.round(), "h": h.round(), "type": mime}))
 }
 
 fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {

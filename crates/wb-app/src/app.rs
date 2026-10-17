@@ -84,8 +84,12 @@ pub struct App {
     pub system_image: fn() -> Option<RawImage>,
     /// Le stylet est-il utilisé côté gomme ? (extrémité gomme, via `wb-pen`) ; remplaçable dans les tests.
     pub eraser_probe: fn() -> bool,
+    /// Diagnostic du stylet (`--pen-test`).
+    pub pen_test: Option<crate::pen_test::PenReport>,
     /// Serveur local du mode direct de `wb-mcp` (absent dans les tests et les captures).
     pub live: Option<crate::live::LiveServer>,
+    /// Référence des changements pour l'outil `board_changes` (ce que l'utilisateur a modifié depuis le dernier regard de l'agent).
+    pub tracker: Option<wb_mcp::tools::Snapshot>,
     /// Date de modification du fichier ouvert lors de la dernière lecture ou écriture (voir `watch.rs`).
     pub disk_mtime: Option<std::time::SystemTime>,
     pub last_watch: Instant,
@@ -160,7 +164,9 @@ impl App {
             pen_force: None,
             system_image: crate::clipboard::system_image,
             eraser_probe: wb_pen::eraser_active,
+            pen_test: None,
             live: None,
+            tracker: None,
             disk_mtime: None,
             last_watch: Instant::now(),
             ctx_pos: Pt::ZERO,
@@ -843,6 +849,10 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| crate::tools::canvas(self, ui));
         ui::dialogs(self, ctx);
+        if let Some(r) = self.pen_test.as_mut() {
+            r.feed(wb_pen::last_sample(), self.pen_force);
+            crate::pen_test::panel(r, ctx, self.pen_force);
+        }
         ui::toast(self, ctx);
         let title = self.title();
         if title != self.last_title {

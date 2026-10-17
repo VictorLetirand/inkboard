@@ -6,6 +6,7 @@ mod fonts;
 mod insert;
 mod keymap;
 mod live;
+mod pen_test;
 mod render;
 mod rich_edit;
 mod tools;
@@ -24,6 +25,7 @@ fn main() -> eframe::Result {
     let mut edit_demo = false;
     let mut shortcuts_demo = false;
     let mut formula_demo = false;
+    let mut pen_test = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -36,6 +38,7 @@ fn main() -> eframe::Result {
             "--edit-demo" => edit_demo = true,
             "--shortcuts-demo" => shortcuts_demo = true,
             "--formula-demo" => formula_demo = true,
+            "--pen-test" => pen_test = true,
             other => open = Some(PathBuf::from(other)),
         }
     }
@@ -70,6 +73,7 @@ fn main() -> eframe::Result {
             a.bench = bench.then(|| app::Bench { close_up: bench_close, ..Default::default() });
             a.edit_demo = edit_demo;
             a.formula_demo = formula_demo;
+            a.pen_test = pen_test.then(pen_test::PenReport::default);
             if shortcuts_demo {
                 a.dialog = Some(app::Dialog::Shortcuts { filter: String::new(), recording: Some(keymap::Action::ToolPen) });
                 let _ = a.keymap.add(keymap::Action::ToolEllipse, keymap::Shortcut::key(eframe::egui::Key::K));

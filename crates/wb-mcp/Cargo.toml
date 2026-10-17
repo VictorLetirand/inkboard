@@ -15,6 +15,8 @@ name = "wb-mcp"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.23.1"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 serde_json = "1.0.154"
 wb-core = { path = "../wb-core" }
 wb-formats = { path = "../wb-formats" }

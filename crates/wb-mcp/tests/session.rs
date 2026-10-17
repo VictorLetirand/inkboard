@@ -3,12 +3,16 @@
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{Receiver, channel};
+use std::time::{Duration, Instant};
 
 struct Client {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    lines: Receiver<Value>,
+    /// Messages reçus pendant qu'on attendait une réponse (notifications du serveur).
+    pending: Vec<Value>,
     next: u64,
 }
 
@@ -25,7 +29,17 @@ impl Client {
             .expect("lancement de wb-mcp");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Self { child, stdin, stdout, next: 1 }
+        // un fil lit les lignes pour pouvoir attendre avec un délai
+        let (tx, lines) = channel();
+        std::thread::spawn(move || {
+            for l in stdout.lines().map_while(Result::ok) {
+                let v: Value = serde_json::from_str(&l).unwrap_or_else(|e| panic!("sortie invalide ({e}) : {l}"));
+                if tx.send(v).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { child, stdin, lines, pending: Vec::new(), next: 1 }
     }
 
     fn send(&mut self, v: &Value) {
@@ -37,11 +51,30 @@ impl Client {
         let id = self.next;
         self.next += 1;
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
-        let mut line = String::new();
-        self.stdout.read_line(&mut line).unwrap();
-        let v: Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("réponse invalide ({e}) : {line}"));
-        assert_eq!(v["id"], json!(id), "{v}");
-        v
+        loop {
+            let v = self.lines.recv_timeout(Duration::from_secs(20)).expect("réponse attendue");
+            if v["id"] == json!(id) {
+                return v;
+            }
+            self.pending.push(v);
+        }
+    }
+
+    /// Attend une notification `method` (portant `uri` si donnée).
+    fn wait_notification(&mut self, method: &str, uri: Option<&str>, timeout: Duration) -> Option<Value> {
+        let matches = |v: &Value| v["method"] == json!(method) && uri.is_none_or(|u| v["params"]["uri"] == json!(u));
+        if let Some(i) = self.pending.iter().position(matches) {
+            return Some(self.pending.remove(i));
+        }
+        let end = Instant::now() + timeout;
+        while let Some(left) = end.checked_duration_since(Instant::now()) {
+            match self.lines.recv_timeout(left) {
+                Ok(v) if matches(&v) => return Some(v),
+                Ok(v) => self.pending.push(v),
+                Err(_) => break,
+            }
+        }
+        None
     }
 
     /// Appelle un outil ; renvoie le JSON du résultat ou le message d'erreur.
@@ -175,4 +208,164 @@ fn table_columns_grow_to_fit_long_text() {
     let d = c.tool("describe_board", json!({"path": p})).unwrap();
     let w = d["page"]["objects"][0]["w"].as_f64().unwrap();
     assert!(w > 140.0 + 300.0, "largeur du tableau : {w}");
+}
+
+/// PNG 1×1 (rouge).
+const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+
+#[test]
+fn images_are_added_from_files_or_base64_and_validated() {
+    use std::io::Write as _;
+    let dir = temp_dir("img");
+    let mut c = Client::start(&dir);
+    let p = dir.join("i.tableau.json");
+    let p = p.to_str().unwrap();
+    c.tool("create_board", json!({"path": p})).unwrap();
+    // depuis un fichier de la racine : taille naturelle conservée (petite image)
+    let png = base64_decode(PNG_1X1);
+    std::fs::write(dir.join("rouge.png"), &png).unwrap();
+    let r = c.tool("add_image", json!({"path": p, "source": "rouge.png"})).unwrap();
+    assert_eq!(r["type"], "image/png");
+    assert_eq!((r["w"].as_f64().unwrap(), r["h"].as_f64().unwrap()), (1.0, 1.0));
+    // taille demandée : une dimension suffit, le rapport est conservé
+    let r = c.tool("add_image", json!({"path": p, "data_base64": PNG_1X1, "w": 120})).unwrap();
+    assert_eq!((r["w"].as_f64().unwrap(), r["h"].as_f64().unwrap()), (120.0, 120.0));
+    // SVG
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><rect width="200" height="100" fill="red"/></svg>"#;
+    let mut f = std::fs::File::create(dir.join("a.svg")).unwrap();
+    f.write_all(svg.as_bytes()).unwrap();
+    let r = c.tool("add_image", json!({"path": p, "source": "a.svg"})).unwrap();
+    assert_eq!((r["w"].as_f64().unwrap(), r["h"].as_f64().unwrap(), r["type"].as_str().unwrap()), (200.0, 100.0, "image/svg+xml"));
+    let d = c.tool("describe_board", json!({"path": p})).unwrap();
+    assert_eq!(d["page"]["objects"].as_array().unwrap().iter().filter(|o| o["type"] == "image").count(), 3);
+    // refus : format inconnu, hors racine, base64 invalide
+    std::fs::write(dir.join("faux.png"), b"ceci n'est pas une image").unwrap();
+    assert!(c.tool("add_image", json!({"path": p, "source": "faux.png"})).unwrap_err().contains("non reconnu"));
+    let outside = temp_dir("img-out");
+    std::fs::write(outside.join("x.png"), &png).unwrap();
+    assert!(c.tool("add_image", json!({"path": p, "source": outside.join("x.png").to_str().unwrap()})).unwrap_err().contains("hors de la racine"));
+    assert!(c.tool("add_image", json!({"path": p, "data_base64": "%%%"})).is_err());
+    // l'export contient bien l'image
+    let out = dir.join("o.svg");
+    c.tool("export", json!({"path": p, "output": out.to_str().unwrap()})).unwrap();
+    assert!(std::fs::read_to_string(out).unwrap().contains("data:image/png;base64"));
+}
+
+fn base64_decode(s: &str) -> Vec<u8> {
+    // petit décodeur pour ne pas ajouter de dépendance de test
+    let val = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        _ => 63,
+    };
+    let b: Vec<u8> = s.bytes().filter(|c| *c != b'=').map(val).collect();
+    b.chunks(4)
+        .flat_map(|c| {
+            let n = c.iter().fold(0u32, |a, v| (a << 6) | u32::from(*v)) << (6 * (4 - c.len()));
+            [(n >> 16) as u8, (n >> 8) as u8, n as u8].into_iter().take(c.len() * 6 / 8)
+        })
+        .collect()
+}
+
+/// Modifie le fichier comme le ferait l'utilisateur dans l'application.
+fn user_edit(path: &Path, f: impl FnOnce(&mut wb_core::Document)) {
+    let mut doc = wb_core::serial::load(path).unwrap();
+    f(&mut doc);
+    wb_core::serial::save(&doc, path).unwrap();
+}
+
+#[test]
+fn board_changes_reports_what_the_user_did_but_not_what_the_agent_did() {
+    let dir = temp_dir("chg");
+    let mut c = Client::start(&dir);
+    let board = dir.join("c.tableau.json");
+    let p = board.to_str().unwrap();
+    c.tool("create_board", json!({"path": p})).unwrap();
+    let first = c.tool("board_changes", json!({"path": p})).unwrap();
+    assert_eq!(first["baseline"], true, "premier appel : référence");
+    let a = c.tool("add_shape", json!({"path": p, "geom": "rect", "text": "Agent"})).unwrap()["id"].as_str().unwrap().to_owned();
+    let b = c.tool("add_shape", json!({"path": p, "geom": "rect", "text": "À modifier"})).unwrap()["id"].as_str().unwrap().to_owned();
+    let none = c.tool("board_changes", json!({"path": p})).unwrap();
+    assert_eq!(none["unchanged"], true, "les ajouts de l'agent ne sont pas des changements de l'utilisateur : {none}");
+    // l'utilisateur ajoute une forme, en modifie une, en supprime une
+    user_edit(&board, |d| {
+        use wb_core::*;
+        d.pages[0].objects.push(Object::new_box(
+            BoxGeom::Ellipse,
+            Frame::new(0.0, 0.0, 80.0, 50.0),
+            Style::default(),
+            Label::new("Utilisateur", 20.0, Align::Center),
+        ));
+        for o in &mut d.pages[0].objects {
+            if o.id.0 == b
+                && let Kind::Box(bx) = &mut o.kind
+            {
+                bx.label.text = RichText::plain("Modifié");
+            }
+        }
+        d.pages[0].objects.retain(|o| o.id.0 != a);
+    });
+    let ch = c.tool("board_changes", json!({"path": p})).unwrap();
+    assert_eq!(ch["added"].as_array().unwrap().len(), 1, "{ch}");
+    assert_eq!(ch["added"][0]["text"], "Utilisateur");
+    assert_eq!(ch["modified"].as_array().unwrap().len(), 1);
+    assert_eq!(ch["modified"][0]["text"], "Modifié");
+    assert_eq!(ch["removed"], json!([a]));
+    // déjà vu : plus rien
+    assert_eq!(c.tool("board_changes", json!({"path": p})).unwrap()["unchanged"], true);
+    // une modification de l'utilisateur reste à signaler même si l'agent agit entre-temps
+    user_edit(&board, |d| {
+        d.pages[0].objects.retain(|o| o.id.0 != b);
+    });
+    c.tool("add_shape", json!({"path": p, "geom": "rect", "text": "Autre ajout de l'agent"})).unwrap();
+    let ch = c.tool("board_changes", json!({"path": p})).unwrap();
+    assert_eq!(ch["removed"], json!([b]), "{ch}");
+    assert!(ch["added"].as_array().unwrap().is_empty(), "l'ajout de l'agent n'est pas rapporté : {ch}");
+}
+
+#[test]
+fn resources_are_listed_read_and_subscribers_are_notified_of_changes() {
+    let dir = temp_dir("res");
+    let mut c = Client::start(&dir);
+    let init = c.request("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}));
+    assert_eq!(init["result"]["capabilities"]["resources"]["subscribe"], true);
+    let board = dir.join("Mon schéma.tableau.json");
+    let p = board.to_str().unwrap();
+    c.tool("create_board", json!({"path": p})).unwrap();
+    c.tool("add_shape", json!({"path": p, "geom": "rect", "text": "Première"})).unwrap();
+
+    let list = c.request("resources/list", json!({}));
+    let res = list["result"]["resources"].as_array().unwrap();
+    assert_eq!(res.len(), 1, "pas d'application : seulement le fichier : {list}");
+    let uri = res[0]["uri"].as_str().unwrap().to_owned();
+    assert!(uri.starts_with("file:///") && uri.is_ascii() && uri.contains("%C3%A9"), "{uri}");
+    assert_eq!(res[0]["name"], "Mon schéma.tableau.json");
+
+    let read = c.request("resources/read", json!({"uri": uri}));
+    let body: Value = serde_json::from_str(read["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(body["page"]["objects"][0]["text"], "Première");
+    assert_eq!(c.request("resources/read", json!({"uri": "tableau-blanc://live"}))["error"]["code"], -32002, "pas d'application ouverte");
+    assert_eq!(c.request("resources/read", json!({"uri": "file:///etc/passwd"}))["error"]["code"], -32002, "hors racine refusé");
+
+    // abonnement : une modification de l'extérieur déclenche la notification
+    assert_eq!(c.request("resources/subscribe", json!({"uri": uri}))["result"], json!({}));
+    std::thread::sleep(Duration::from_millis(1500)); // laisse le sondage prendre sa référence
+    user_edit(&board, |d| {
+        use wb_core::*;
+        d.pages[0].objects.push(Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 50.0, 50.0), Style::default(), Label::new("x", 20.0, Align::Center)));
+    });
+    let f = std::fs::OpenOptions::new().write(true).open(&board).unwrap();
+    f.set_modified(std::time::SystemTime::now() + Duration::from_secs(3)).unwrap();
+    let n = c.wait_notification("notifications/resources/updated", Some(&uri), Duration::from_secs(8));
+    assert!(n.is_some(), "notification attendue");
+    // désabonné : plus de notification
+    c.request("resources/unsubscribe", json!({"uri": uri}));
+    let f = std::fs::OpenOptions::new().write(true).open(&board).unwrap();
+    f.set_modified(std::time::SystemTime::now() + Duration::from_secs(9)).unwrap();
+    assert!(c.wait_notification("notifications/resources/updated", Some(&uri), Duration::from_millis(2000)).is_none());
+    // un nouveau fichier fait changer la liste
+    c.tool("create_board", json!({"path": dir.join("second.tableau.json").to_str().unwrap()})).unwrap();
+    assert!(c.wait_notification("notifications/resources/list_changed", None, Duration::from_secs(8)).is_some(), "list_changed attendu");
 }

@@ -36,6 +36,8 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 |---|---|
 | `create_board` | Crée un tableau vide (refuse d'écraser un fichier existant). |
 | `save_board` | Mode direct : enregistre le tableau affiché (il doit déjà avoir un fichier). |
+| `board_changes` | Ce que **l'utilisateur** a modifié depuis votre dernier regard (`describe_board` / `board_changes`) : objets ajoutés, modifiés, supprimés. Vos propres modifications ne sont pas signalées. |
+| `add_image` | Image PNG/JPEG/GIF/WebP/SVG (15 Mio au plus) depuis un fichier sous la racine (`source`) ou en base64 ; taille naturelle réduite à 600, ou `w`/`h`. Le type est reconnu d'après le contenu, jamais d'après l'extension. |
 | `describe_board` | Pages et objets (id, type, texte, position, liens des connecteurs) ; en mode direct, aussi `selection`. Lit aussi draw.io, Excalidraw, JSON Canvas, Mermaid. |
 | `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, avec texte, couleurs, taille. |
 | `add_connector` | Flèche **liée** entre deux objets (`straight`, `elbow`, `curve`, pointes, étiquette). |
@@ -51,13 +53,29 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 Sans `x`/`y`, un nouvel objet est placé sous le contenu existant. Les ids renvoyés servent à relier ou modifier les objets.
 Les erreurs sont renvoyées comme résultat d'outil (`isError`) avec un message en français que l'agent peut exploiter.
 
+## Ressources et notifications
+
+Le serveur déclare les capacités MCP `resources` (avec `subscribe` et `listChanged`) :
+
+- `tableau-blanc://live` : le tableau affiché dans l'application (même contenu que `describe_board`, avec la sélection) — présent seulement quand l'application est ouverte ;
+- `file:///…/*.tableau.json` : les tableaux sous la racine `--root` (3 niveaux de dossiers, 300 fichiers au plus).
+
+`resources/subscribe` sur l'une d'elles : le serveur envoie `notifications/resources/updated` quand le contenu change (fichier modifié, ou — pour le tableau
+affiché — modification **ou changement de sélection** par l'utilisateur), et `notifications/resources/list_changed` quand la liste change. Le changement est
+détecté par sondage toutes les 600 ms. La première observation après l'abonnement sert de référence (aucune notification pour l'état déjà lu).
+
+**Selon le client**, ces notifications ne sont pas forcément montrées au modèle : un client qui ne gère pas les abonnements les ignore. C'est pourquoi l'outil
+`board_changes` existe : l'agent peut demander lui-même ce que l'utilisateur a changé, quel que soit le client.
+
 ## Limites
 
 - Plusieurs instances de l'application : la dernière lancée publie le fichier de découverte (les autres ne sont pas pilotables).
 - Après un plantage de l'application, un fichier de découverte périmé peut subsister ; `wb-mcp` bascule alors en mode fichier.
 - En mode direct, l'agent change la page affichée quand il en cible une autre (`page`), et la sélection de l'utilisateur est remplacée par les objets créés.
-- Pas de lecture des traits au crayon ni des images au-delà de leur présence ; pas d'insertion d'images.
+- Pas de lecture des traits au crayon ni du contenu des images (seulement leur présence, taille et position).
+- Le suivi `board_changes` est désactivé au-delà de 20 000 objets (coût linéaire à chaque appel).
+- Les notifications de ressources reposent sur un sondage (600 ms) et ne portent pas le détail du changement : l'agent relit la ressource ou appelle `board_changes`.
 - Le protocole MCP est implémenté à la main (`initialize`, `ping`, `tools/list`, `tools/call`) ; pas de ressources, d'invites ni de notifications serveur.
 - Testé de bout en bout avec un client écrit pour l'occasion (`crates/wb-mcp/tests/session.rs`, `crates/wb-app/src/tests.rs`) **et avec Claude Code 2.1.258**
-  (mode fichier, puis mode direct contre l'application réelle : ajout d'un rectangle, `describe_board` avec `live: true` et sélection). Pas testé avec Claude Desktop.
+  (mode fichier, puis mode direct contre l'application réelle : ajout d'un rectangle, `describe_board` avec `live: true` et sélection). Les ressources, abonnements et notifications sont testés avec le vrai binaire et avec l'application (tests automatisés) mais **pas avec un client MCP réel qui les exploite** (Claude Code a servi pour les outils ; je n'ai pas pu vérifier ce qu'il fait des notifications). Pas testé avec Claude Desktop.
 - Plusieurs agents écrivant en même temps dans le même fichier (mode fichier) : le dernier gagne.

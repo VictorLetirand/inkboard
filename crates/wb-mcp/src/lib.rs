@@ -4,6 +4,7 @@
 //! Voir [`tools`] pour la liste des outils.
 
 pub mod live;
+pub mod resources;
 pub mod tools;
 
 use serde_json::{Value, json};
@@ -19,6 +20,10 @@ pub struct Server {
     pub no_live: bool,
     /// Fichier de découverte de l'application (défaut : `live::discovery_path()`).
     pub live_file: Option<std::path::PathBuf>,
+    /// Référence des changements par fichier (mode fichier) ; voir `tools::apply_tracked`.
+    /// URI des ressources auxquelles le client est abonné.
+    pub subs: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    pub trackers: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, tools::Snapshot>>>,
 }
 
 fn ok(id: &Value, result: Value) -> Value {
@@ -43,15 +48,34 @@ impl Server {
                     id,
                     json!({
                         "protocolVersion": version,
-                        "capabilities": {"tools": {"listChanged": false}},
+                        "capabilities": {"tools": {"listChanged": false}, "resources": {"subscribe": true, "listChanged": true}},
                         "serverInfo": {"name": "wb-mcp", "title": "Tableau blanc", "version": env!("CARGO_PKG_VERSION")},
-                        "instructions": "Tableau blanc hors ligne. Chaque outil prend le chemin `path` d'un fichier .tableau.json (créé par create_board) ; \
+                        "instructions": "Tableau blanc hors ligne. Si l'application est ouverte, les outils agissent en direct sur le tableau affiché (sans `path`) ; sinon ils prennent le chemin `path` d'un fichier .tableau.json (créé par create_board). board_changes signale ce que l'utilisateur a modifié. \
                                          les objets créés renvoient leur `id`, à réutiliser pour relier des formes (add_connector) ou les modifier. \
                                          Sans x/y, un nouvel objet est placé sous le contenu existant. Pour un schéma complet, import_mermaid est le plus rapide."
                     }),
                 )
             }
             "ping" => ok(id, json!({})),
+            "resources/list" => ok(id, json!({"resources": self.list_resources()})),
+            "resources/templates/list" => ok(id, json!({"resourceTemplates": []})),
+            "resources/read" => {
+                let uri = msg.pointer("/params/uri").and_then(Value::as_str).unwrap_or("");
+                match self.read_resource(uri) {
+                    Ok(text) => ok(id, json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]})),
+                    Err(e) => err(id, -32002, &e),
+                }
+            }
+            "resources/subscribe" | "resources/unsubscribe" => {
+                let uri = msg.pointer("/params/uri").and_then(Value::as_str).unwrap_or("").to_owned();
+                let mut subs = self.subs.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if method == "resources/subscribe" {
+                    subs.insert(uri);
+                } else {
+                    subs.remove(&uri);
+                }
+                ok(id, json!({}))
+            }
             "tools/list" => ok(id, json!({"tools": tools::list()})),
             "tools/call" => {
                 let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");

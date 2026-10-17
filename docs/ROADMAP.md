@@ -17,8 +17,8 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Hors ligne, sans compte, sans limite de tableaux | Miro | ✔ par construction |
 | Colorer / surligner des mots d'un paragraphe | Excalidraw | ✔ sélection de mots, gras/italique/souligné/barré, couleur, surlignage (jalon 2) |
 | Raccourcis personnalisables | Excalidraw | ✔ 40 commandes, plusieurs raccourcis, fichier JSON, conflits gérés (jalon 2) |
-| Stylet : pression | Excalidraw | ✔ largeur variable (à valider sur du matériel réel) |
-| Stylet : gomme (extrémité) | Excalidraw | ◐ implémenté via l'API Pointer de Windows ; **non validé sur du matériel réel** |
+| Stylet : pression | Excalidraw | ◐ largeur variable ; **non validé sur du matériel réel** (mode `--pen-test`) |
+| Stylet : gomme (extrémité) | Excalidraw | ◐ implémenté via l'API Pointer de Windows ; **non validé sur du matériel réel** (mode `--pen-test` pour le valider : docs/STYLET.md) |
 | Blocs de code | Excalidraw | ✔ coloration syntaxique minimale (commentaires, chaînes, nombres, mots-clés ; menu « Colorer le code ») |
 | LaTeX | Excalidraw | ✔ composition TeX (STIX Two Math), formule modifiable, couleur suivie |
 | Présentation, minuteur, vote | Excalidraw | ✔ plein écran page par page, minuteur, pastilles |
@@ -29,10 +29,10 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 
 ## Reste à faire
 
-- `wb-mcp` : ressources MCP (lire un tableau comme ressource), notifications vers l'agent quand l'utilisateur modifie le tableau, insertion d'images ; validation avec Claude Desktop.
+- `wb-mcp` : vérifier ce que les clients réels (Claude Code, Claude Desktop) font des notifications de ressources ; notifications avec le détail du changement ; lecture du contenu des images.
 - Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
 - Coloration par langage (la coloration actuelle est générique) ; texte (`\text`) et environnements avancés de la bibliothèque de composition au-delà de ses capacités.
-- Validation sur du matériel réel de la pression et de la gomme du stylet ; gomme sous macOS/Linux (non gérée).
+- **Validation de la pression et de la gomme du stylet sur du matériel réel** (procédure : docs/STYLET.md) ; gomme sous macOS/Linux (non gérée).
 - Alignement par ligne dans le champ de saisie pendant l'édition d'un texte centré multiligne.
 - Version WASM du moteur (même code) si un usage web est souhaité.
 

@@ -1,11 +1,11 @@
 //! Implémentation Windows : subclass de fenêtre qui observe les messages `WM_POINTER*`.
 
-use crate::{eraser_from_flags, set_eraser};
+use crate::{PenSample, PointerKind, record, set_eraser};
 use std::num::NonZeroIsize;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Input::Pointer::{GetPointerPenInfo, GetPointerType, POINTER_PEN_INFO};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-use windows_sys::Win32::UI::WindowsAndMessaging::{PT_PEN, WM_POINTERDOWN, WM_POINTERLEAVE, WM_POINTERUP, WM_POINTERUPDATE};
+use windows_sys::Win32::UI::WindowsAndMessaging::{PT_PEN, PT_TOUCH, WM_POINTERDOWN, WM_POINTERLEAVE, WM_POINTERUP, WM_POINTERUPDATE};
 
 const SUBCLASS_ID: usize = 0x5742_5045; // « WBPE »
 
@@ -27,11 +27,17 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 let mut info = POINTER_PEN_INFO::default();
                 // SAFETY : structure de sortie valide pour la durée de l'appel.
                 if unsafe { GetPointerPenInfo(id, &mut info) } != 0 {
-                    set_eraser(eraser_from_flags(info.penFlags));
+                    record(PenSample {
+                        kind: PointerKind::Pen,
+                        pressure: (info.pressure as f32 / 1024.0).clamp(0.0, 1.0),
+                        flags: info.penFlags,
+                        tilt: (info.tiltX, info.tiltY),
+                        seq: 0,
+                    });
                 }
             } else if ok {
                 // souris ou doigt : plus de gomme
-                set_eraser(false);
+                record(PenSample { kind: if kind == PT_TOUCH { PointerKind::Touch } else { PointerKind::Mouse }, ..PenSample::NONE });
             }
         }
     }
@@ -75,6 +81,7 @@ mod tests {
 
     #[test]
     fn subclass_installs_and_ignores_unknown_pointers_without_consuming_messages() {
+        let _g = crate::TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let hwnd = dummy_window();
         assert!(!hwnd.is_null(), "fenêtre factice créée");
         assert!(install(NonZeroIsize::new(hwnd as isize).unwrap()));
