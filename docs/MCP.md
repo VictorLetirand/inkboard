@@ -41,5 +41,5 @@ Les erreurs sont renvoyées comme résultat d'outil (`isError`) avec un message 
 - Niveau A seulement : pas de mode « direct » avec l'application (le rechargement automatique donne l'illusion, mais l'historique d'annulation de l'application repart de zéro à chaque rechargement).
 - Pas de lecture des traits au crayon ni des images au-delà de leur présence ; pas d'insertion d'images.
 - Le protocole est implémenté à la main (`initialize`, `ping`, `tools/list`, `tools/call`) ; pas de ressources, d'invites ni de notifications serveur.
-- Testé avec un client écrit pour l'occasion (session complète sur stdin/stdout dans `crates/wb-mcp/tests/session.rs`), **pas avec Claude Desktop/Claude Code** réellement.
+- Testé avec un client écrit pour l'occasion (`crates/wb-mcp/tests/session.rs`) **et avec Claude Code 2.1.258** : `claude mcp add` puis `claude mcp list` (✔ Connected), et une demande en langage naturel (Mermaid + formule) a produit un tableau de 6 objets. Pas testé avec Claude Desktop.
 - Plusieurs agents écrivant en même temps dans le même fichier : le dernier gagne (chaque outil relit puis réécrit le fichier entier, atomiquement).

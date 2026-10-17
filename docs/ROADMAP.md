@@ -29,7 +29,7 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 
 ## Reste à faire
 
-- **`wb-mcp` niveau B** : pilotage en direct de l'application ouverte (historique d'annulation conservé, sélection, vue) ; le niveau A (fichiers, avec rechargement automatique) est fait. À valider avec Claude Desktop / Claude Code réels.
+- **`wb-mcp` niveau B** : pilotage en direct de l'application ouverte (historique d'annulation conservé, sélection, vue) ; le niveau A (fichiers, avec rechargement automatique) est fait. Validé avec Claude Code ; Claude Desktop non testé.
 - Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
 - Coloration par langage (la coloration actuelle est générique) ; texte (`\text`) et environnements avancés de la bibliothèque de composition au-delà de ses capacités.
 - Validation sur du matériel réel de la pression et de la gomme du stylet ; gomme sous macOS/Linux (non gérée).
