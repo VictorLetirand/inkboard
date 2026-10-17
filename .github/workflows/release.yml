@@ -1,0 +1,92 @@
+name: Release
+
+# Publie des installeurs téléchargeables (GitHub Releases) quand on pousse une étiquette « v* » (ex. v0.1.0),
+# ou à la demande (workflow_dispatch : les installeurs sont alors seulement disponibles comme artefacts du workflow).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, name: windows-x64 }
+          - { os: ubuntu-22.04, name: linux-x64 }
+          - { os: macos-13, name: macos-x64 }
+          - { os: macos-14, name: macos-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Dépendances Linux (AppImage)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfuse2 libxkbcommon-dev libwayland-dev
+
+      - name: Vérifications
+        run: |
+          cargo fmt --all --check
+          cargo test --workspace
+
+      - name: Compilation
+        run: cargo build --release -p wb-app -p wb-cli -p wb-mcp
+
+      - name: Outil d'empaquetage
+        run: cargo install cargo-packager --locked
+
+      # --- Signature (facultative) ---------------------------------------------------------------
+      # Sans secrets, les installeurs sont produits NON SIGNÉS (avertissement SmartScreen sous Windows, Gatekeeper sous macOS).
+      # macOS : renseigner les secrets APPLE_CERTIFICATE (.p12 en base64), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+      #         APPLE_ID, APPLE_PASSWORD (mot de passe d'application), APPLE_TEAM_ID : cargo-packager signe et notarise.
+      # Windows : voir docs/DISTRIBUTION.md (SignPath Foundation, gratuit pour l'open source, ou Azure Trusted Signing).
+      - name: Empaquetage
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo packager --release -c Packager.toml --formats all
+
+      - name: Empreintes SHA-256
+        shell: bash
+        run: |
+          cd dist
+          for f in *.exe *.msi *.dmg *.deb *.AppImage; do
+            [ -f "$f" ] && (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") >> "SHA256SUMS-${{ matrix.name }}.txt"
+          done
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installeurs-${{ matrix.name }}
+          path: |
+            dist/*.exe
+            dist/*.msi
+            dist/*.dmg
+            dist/*.deb
+            dist/*.AppImage
+            dist/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installeurs
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: installeurs/*
+          generate_release_notes: true

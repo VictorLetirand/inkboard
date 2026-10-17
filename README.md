@@ -6,13 +6,18 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 > État : **application native complète** (moteur, formats d'échange, texte riche, raccourcis, stylet, grands tableaux, présentation)  et **serveur MCP** pour piloter le tableau depuis un agent (niveau fichiers). Le prototype web d'origine est conservé dans
 > [`prototype-web/`](prototype-web/) et reste utilisable ; ses fichiers `.tableau.json` s'importent dans la version Rust.
 
+## Installer
+
+Des installeurs (Windows `.exe` / `.msi`, Linux `.deb` / `.AppImage`, macOS `.dmg`) sont publiés sur la page *Releases* du dépôt à chaque version (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)) ;
+ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premier lancement). Seuls les installeurs Windows ont été construits et testés à ce jour.
+
 ## Démarrer
 
 ```bash
 cargo run --release -p wb-app                 # l'application
 cargo run --release -p wb-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 243 tests
-powershell -File scripts/package.ps1          # archive portable Windows (dist/)
+cargo test --workspace                        # 245 tests
+cargo packager --release -c Packager.toml    # installeurs (voir docs/DISTRIBUTION.md)
 ```
 
 CLI de conversion (utile aux scripts et, plus tard, aux agents) :
@@ -116,3 +121,8 @@ L'index n'est utilisé qu'à partir de 400 objets et suspendu pendant les gestes
 
 - [Architecture et décisions](docs/ARCHITECTURE.md)
 - [Feuille de route et état des « plaintes » des utilisateurs](docs/ROADMAP.md)
+
+## Licence
+
+Double licence **MIT OU Apache-2.0**, à votre choix : voir [LICENSE-MIT](LICENSE-MIT) et [LICENSE-APACHE](LICENSE-APACHE). Les licences des composants tiers embarqués sont dans
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Contributions : [CONTRIBUTING.md](CONTRIBUTING.md).
