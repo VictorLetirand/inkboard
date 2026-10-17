@@ -19,6 +19,16 @@ pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, FormatError> {
     pixmap.encode_png().map_err(|e| FormatError::Invalid(format!("PNG : {e}")))
 }
 
+/// Convertit un SVG en PDF vectoriel (texte et images conservés).
+pub fn svg_to_pdf(svg: &str) -> Result<Vec<u8>, FormatError> {
+    use svg2pdf::usvg as pdf_usvg;
+    let mut fontdb = pdf_usvg::fontdb::Database::new();
+    fontdb.load_system_fonts();
+    let opt = pdf_usvg::Options { fontdb: std::sync::Arc::new(fontdb), ..pdf_usvg::Options::default() };
+    let tree = pdf_usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG : {e}")))?;
+    svg2pdf::to_pdf(&tree, svg2pdf::ConversionOptions::default(), svg2pdf::PageOptions::default()).map_err(|e| FormatError::Invalid(format!("PDF : {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,5 +46,13 @@ mod tests {
     #[test]
     fn rejects_broken_svg() {
         assert!(svg_to_png("<svg", 1.0).is_err());
+    }
+
+    #[test]
+    fn exports_a_pdf_document() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20" viewBox="0 0 40 20"><rect width="40" height="20" fill="#ff0000"/><text x="2" y="14" font-size="10">Hi</text></svg>"##;
+        let pdf = svg_to_pdf(svg).unwrap();
+        assert_eq!(&pdf[..5], b"%PDF-");
+        assert!(svg_to_pdf("<svg").is_err());
     }
 }
