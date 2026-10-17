@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/wb-core", "crates/wb-formats", "crates/wb-cli", "crates/wb-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.90"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
