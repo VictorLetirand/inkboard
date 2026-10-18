@@ -438,7 +438,7 @@ def img_lib_sets(drawio_dir):
     base = Path(drawio_dir) / 'src/main/webapp/img/lib'
     for d, (group, title) in IMG_DIRS.items():
         items, seen = [], set()
-        for f in sorted((base / d).rglob('*.svg')):
+        for f in sorted((base / d).rglob('*.svg'), key=lambda p: p.as_posix()):
             if f.stat().st_size > 120_000:
                 continue
             name = f.stem.replace('_', ' ')
@@ -459,19 +459,19 @@ def simple_icons_set(src):
         slug = i.get('slug') or re.sub(r'[^a-z0-9]', '', i['title'].lower())
         colors[slug] = (i['title'], i.get('hex', '000000'))
     items = []
-    for f in sorted((Path(src) / 'simple-icons/icons').glob('*.svg')):
+    for f in sorted((Path(src) / 'simple-icons/icons').glob('*.svg'), key=lambda p: p.as_posix()):
         title, hexcol = colors.get(f.stem, (f.stem, '000000'))
         svg = clean_svg(f.read_text(encoding='utf-8'))
         svg = re.sub(r'<title>.*?</title>', '', svg)
         svg = svg.replace(' role="img"', '').replace('<svg', f'<svg fill="#{hexcol}"', 1)
         items.append((title, svg))
-    items.sort(key=lambda t: t[0].lower())
+    items.sort(key=lambda t: (t[0].lower(), t[0]))
     return Set('simple-icons', 'Brands', 'Brand logos (Simple Icons)', False, 'CC0-1.0 (Simple Icons)', items)
 
 
 def folder_icons_set(src, folder, sid, title, license_id, fill_mono=False):
     items = []
-    for f in sorted((Path(src) / folder).glob('*.svg')):
+    for f in sorted((Path(src) / folder).glob('*.svg'), key=lambda p: p.as_posix()):
         text = f.read_text(encoding='utf-8')
         svg = clean_svg(text, f'fill="{WHITE}"') if fill_mono else mono_stroke_icon(text)
         items.append((f.stem.replace('-', ' ').replace('_', ' '), svg))

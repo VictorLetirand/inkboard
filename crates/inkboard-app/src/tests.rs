@@ -1599,7 +1599,7 @@ fn svg_images_are_rasterized_at_the_size_they_are_shown() {
     assert_eq!(cache.stats.deferred, 1);
 }
 
-/// Many small icons are drawn from a shared atlas and load over a few frames, within a bounded rasterization time per frame.
+/// Many small icons are drawn from a shared atlas and load over several frames, with bounded rasterization work per frame.
 #[test]
 fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
     use crate::render::TextureCache;
@@ -1609,12 +1609,14 @@ fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
     let assets: Vec<(Id, Asset)> = doc.assets.iter().map(|(id, a)| (id.clone(), a.clone())).collect();
     assert!(assets.len() > 250, "{} distinct assets", assets.len());
     let mut cache = TextureCache::default();
+    // a zero budget allows exactly one rasterization per frame (the first of a frame is always served): deterministic, whatever the machine
+    cache.raster_budget_ms = 0.0;
     let mut ids = std::collections::HashSet::new();
     let mut frames = 0;
     loop {
         let _ = ctx.run(Default::default(), |_| {});
         frames += 1;
-        let before = cache.stats;
+        let before = cache.stats.rasterized;
         ids.clear();
         let mut ready = 0;
         for (id, a) in &assets {
@@ -1623,16 +1625,15 @@ fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
                 ids.insert(t.id);
             }
         }
-        // a frame never spends much more than its budget: one rasterization past it at most
-        let spent = cache.stats.raster_ms - before.raster_ms;
-        let done = cache.stats.rasterized - before.rasterized;
-        assert!(done >= 1 || ready == assets.len(), "progress every frame");
-        assert!(spent < 5.0 + 50.0, "a frame rasterized for {spent} ms");
+        let done = cache.stats.rasterized - before;
+        assert!(done <= 1, "{done} rasterizations in one frame with no budget");
         if ready == assets.len() {
             break;
         }
-        assert!(frames < 600, "{ready}/{} icons after {frames} frames", assets.len());
+        assert_eq!(done, 1, "progress every frame");
+        assert!(frames <= assets.len(), "{ready}/{} icons after {frames} frames", assets.len());
     }
+    assert_eq!(frames, assets.len(), "one icon per frame");
     assert!(ids.len() <= 2, "{} texture pages for {} small icons: they must share the atlas", ids.len(), assets.len());
     assert_eq!(cache.stats.rasterized as usize, assets.len(), "each icon rasterized once");
     assert_eq!(cache.stats.evicted, 0);
