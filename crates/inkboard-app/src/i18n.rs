@@ -181,7 +181,7 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             let p = e.unwrap().path();
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
-            if p.extension().is_some_and(|x| x == "rs" || x == "toml") && !matches!(name.as_str(), "i18n_fr.rs" | "i18n.rs" | "tests.rs") {
+            if p.extension().is_some_and(|x| x == "rs") && !matches!(name.as_str(), "i18n_fr.rs" | "i18n.rs" | "tests.rs") {
                 v.push((name, std::fs::read_to_string(&p).unwrap()));
             }
         }
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn no_french_is_left_in_the_source_outside_the_translation_table() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let accents = |l: &str| l.chars().any(|c| "àâçèêëîïôûùüœÀÉÈÊÎÔÛ".contains(c));
         // common French words that have no accent (the accent check cannot see them), looked for inside string literals
         let has_french_word = |line: &str| {
@@ -274,6 +274,9 @@ mod tests {
             ];
             line.split('"').skip(1).step_by(2).any(|lit| lit.split(|c: char| !c.is_alphanumeric()).any(|w| WORDS.contains(&w)))
         };
+        // outside Rust sources (workflows, scripts, texts) comments and strings are not quoted: look at every word
+        let has_french_stopword =
+            |line: &str| line.split(|c: char| !c.is_alphanumeric()).any(|w| ["voir", "pour", "dans", "avec", "les", "des", "aucun", "gratuit"].contains(&w));
         let allowed = [
             "sans-serif",
             "wb-sans",
@@ -301,12 +304,19 @@ mod tests {
                 let p = e.unwrap().path();
                 let name = p.file_name().unwrap().to_string_lossy().into_owned();
                 if p.is_dir() {
-                    if name != "target" && !name.starts_with('.') {
+                    if !matches!(name.as_str(), "target" | "out" | "dist" | "docs" | "prototype-web" | "assets")
+                        && (!name.starts_with('.') || name == ".github")
+                    {
                         stack.push(p);
                     }
-                } else if p.extension().is_some_and(|x| x == "rs") && !matches!(name.as_str(), "i18n_fr.rs" | "i18n.rs") {
+                } else if p.extension().is_some_and(|x| matches!(x.to_str(), Some("rs" | "toml" | "yml" | "txt" | "ps1" | "py")))
+                    && !matches!(name.as_str(), "i18n_fr.rs" | "i18n.rs")
+                {
+                    let is_rust = p.extension().is_some_and(|x| x == "rs");
                     for (n, line) in std::fs::read_to_string(&p).unwrap().lines().enumerate() {
-                        if (accents(line) || line.contains('é') || has_french_word(line)) && !allowed.iter().any(|a| line.contains(a)) {
+                        if (accents(line) || line.contains('é') || has_french_word(line) || (!is_rust && has_french_stopword(line)))
+                            && !allowed.iter().any(|a| line.contains(a))
+                        {
                             found.push(format!("{}:{}: {}", p.display(), n + 1, line.trim()));
                         }
                     }

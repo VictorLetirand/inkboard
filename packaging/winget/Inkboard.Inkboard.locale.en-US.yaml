@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: Inkboard.Inkboard
+PackageVersion: "{{VERSION}}"
+PackageLocale: en-US
+Publisher: The Inkboard contributors
+PublisherUrl: https://github.com/VictorLetirand/inkboard
+PublisherSupportUrl: https://github.com/VictorLetirand/inkboard/issues
+PackageName: Inkboard
+PackageUrl: https://github.com/VictorLetirand/inkboard
+License: MIT OR Apache-2.0
+LicenseUrl: https://github.com/VictorLetirand/inkboard/blob/main/LICENSE-MIT
+Copyright: Copyright (c) 2026 The Inkboard contributors
+ShortDescription: A fast, free, fully offline infinite whiteboard.
+Description: Inkboard is an infinite whiteboard that works entirely offline. Draw, diagram and present, import and export draw.io, Excalidraw, JSON Canvas and Mermaid, insert from a library of 28,000 icons, and let an AI agent draw on your board through the built-in MCP server.
+Moniker: inkboard
+Tags:
+  - whiteboard
+  - diagram
+  - drawing
+  - drawio
+  - excalidraw
+  - offline
+  - mcp
+ReleaseNotesUrl: https://github.com/VictorLetirand/inkboard/releases/tag/{{TAG}}
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

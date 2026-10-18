@@ -1,15 +1,15 @@
 Inkboard
 
-Ce logiciel est libre. Vous pouvez l'utiliser, le copier, le modifier et le redistribuer selon les termes de l'une OU l'autre des licences ci-dessous, a votre choix
-(double licence MIT OU Apache-2.0).
+This software is free. You may use, copy, modify and redistribute it under the terms of either of the licenses below, at your option
+(dual license: MIT OR Apache-2.0).
 
-Les composants tiers embarques conservent leur propre licence : voir THIRD_PARTY_LICENSES.md.
+Embedded third-party components keep their own licenses: see THIRD_PARTY_LICENSES.md.
 
 ==================== MIT ====================
 
 MIT License
 
-Copyright (c) 2026 Les contributeurs d'Inkboard
+Copyright (c) 2026 The Inkboard contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

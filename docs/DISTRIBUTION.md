@@ -12,7 +12,7 @@ One installer per system, produced by [`cargo-packager`](https://github.com/crab
 
 | System | Formats | Status |
 |---|---|---|
-| Windows | `.exe` (NSIS) and `.msi` (WiX) | **built and tested**: silent install, Start menu shortcut, "Installed apps" entry, launching the installed application, clean uninstall |
+| Windows | `.exe` (NSIS) and `.msi` (WiX) | **built and tested**: silent install, Start menu shortcut, "Installed apps" entry, launching the installed application, clean uninstall (see below) |
 | Linux | `.deb`, `.AppImage` (and PKGBUILD) | configured, **never built or launched** |
 | macOS | `.dmg` (and `.app`), Intel and Apple Silicon | configured, **never built or launched** |
 
@@ -35,16 +35,54 @@ git tag v0.1.0 && git push origin v0.1.0
 The [`release.yml`](../.github/workflows/release.yml) workflow builds the installers on Windows, Linux, macOS Intel and macOS Apple Silicon, computes their SHA-256 hashes and attaches them to a
 GitHub Release. It can also be started by hand (nothing is published then; it only checks that the installers build). **This workflow has not yet completed a full run**: the first pass will probably fix details (runner versions, Linux dependencies).
 
-## Signing (optional, but recommended for an install without warnings)
+## The Windows install, in detail
 
-Without a signature, installation works, with a warning: **SmartScreen** on Windows ("Windows protected your PC" → *More info* → *Run anyway*), **Gatekeeper** on macOS
-(right-click → *Open*). The workflow produces unsigned installers as long as no secret is configured.
+The `.exe` installer is the recommended one:
+
+- **Per-user, no administrator prompt.** It installs to `%LOCALAPPDATA%\Inkboard`, adds a Start menu shortcut and an entry in *Settings → Apps* (with the publisher, version and icon), and its uninstaller removes everything it installed. Your boards are never touched; the uninstaller offers (unchecked by default) to delete the application data folder `%APPDATA%\Inkboard` (custom shortcuts, language, autosaves).
+- **Silent install:** `inkboard_*_x64-setup.exe /S` (and `uninstall.exe /S` in the install folder).
+- **English or French**, following the language of Windows.
+- **Self-contained.** The executables link the C runtime statically and only import Windows system libraries, so nothing needs to be installed first (no Visual C++ redistributable). They carry an icon, version information and an application manifest (no elevation, UTF-8, long paths, per-monitor DPI), and the application is a GUI program: no console window opens behind it.
+- **Works without a good GPU.** The application uses OpenGL and falls back to Direct3D 12 / Vulkan (with a software fallback) when OpenGL is missing or too old (remote desktop, virtual machines). `INKBOARD_RENDERER=wgpu` (or `glow`) forces one of them. If the window cannot be opened at all, a message explains why; if the application crashes, it writes `%APPDATA%\Inkboard\crash.log` and says so.
+
+The `.msi` is the classic Windows Installer package (machine-wide, administrator rights required), for managed environments. It has not been exercised as much as the `.exe`.
+
+### winget
+
+`winget install Inkboard.Inkboard` needs the package to be accepted in [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). The manifest templates are in [`packaging/winget`](../packaging/winget); to prepare the first submission once a release is public:
+
+```powershell
+powershell -File scripts/winget-manifest.ps1 -Tag v0.1.0              # downloads the installer, computes its SHA-256, writes dist/winget/manifests/...
+winget validate --manifest dist/winget/manifests/i/Inkboard/Inkboard/0.1.0
+winget settings --enable LocalManifestFiles
+winget install --manifest dist/winget/manifests/i/Inkboard/Inkboard/0.1.0   # try it
+wingetcreate submit dist/winget/manifests/i/Inkboard/Inkboard/0.1.0         # opens the pull request (needs a GitHub token)
+```
+
+After the first version is merged, the `winget` job of the release workflow submits every stable tag automatically when the repository secret `WINGET_TOKEN` (a classic personal access token with the `public_repo` scope) is set. winget does not apply the "downloaded from the Internet" mark, so a winget install never shows the SmartScreen prompt; the winget-pkgs validation pipeline does scan the installer, which is another reason to sign it.
+
+## Signing (recommended: it is what removes the Windows warning)
+
+Without a signature the installation works, with a warning: **SmartScreen** on Windows ("Windows protected your PC" → *More info* → *Run anyway*), **Gatekeeper** on macOS
+(right-click → *Open*). No amount of packaging removes that prompt: only a code-signing certificate does, and the certificate has to be issued to a verified
+identity, so it is an account you create, not something the repository can contain. The release workflow is ready: **it signs automatically as soon as the
+secrets are set, and produces unsigned installers otherwise.**
 
 | System | Option suited to an open-source project |
 |---|---|
-| Windows | **SignPath Foundation**: free signing for public open-source projects (apply at signpath.org, the project is vetted). Otherwise **Azure Trusted Signing** (~$10/month, identity verification) or a paid OV/EV certificate. |
+| Windows | **Azure Artifact Signing** (formerly Trusted Signing), about $10/month, identity verification; supported by the workflow (below). **SignPath Foundation**: free signing for public open-source projects (apply at signpath.org; the project is vetted; it needs the repository to be public and the installers to go through GitHub artifacts, which the free account's storage quota makes tight). A classic OV/EV certificate also works with `signtool`. |
 | macOS | **Apple Developer** account ($99/year): "Developer ID" certificate + notarization. Set the secrets `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`; `cargo-packager` signs and notarizes. |
 | Linux | No mandatory code signing; publish the SHA-256 hashes (already done) and, if needed, sign the artifacts with `cosign` or GPG. |
+
+### Setting up Azure Artifact Signing for Windows
+
+1. In the Azure portal, create an **Artifact Signing account** and complete the **identity validation** (individual or organization; Microsoft decides who is eligible in which region).
+2. Create a **certificate profile** (type *Public Trust*).
+3. Create an **app registration** (a service principal) and give it the role *Artifact Signing Certificate Profile Signer* on the account.
+4. In the GitHub repository settings add the **secrets** `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` and the **variables** `SIGNING_ENDPOINT` (the regional endpoint of the account, for example `https://weu.codesigning.azure.net`), `SIGNING_ACCOUNT` and `SIGNING_PROFILE`.
+5. Push a tag: the executables (`inkboard.exe`, `ink.exe`, `inkboard-mcp.exe`) are signed and timestamped before packaging, then the `.exe` and `.msi` installers are signed.
+
+A freshly signed application may still trigger SmartScreen for a while: its reputation builds with the number of downloads, and signing is what lets it build instead of starting from zero on every release.
 
 ## Portable Windows archive (no installer)
 

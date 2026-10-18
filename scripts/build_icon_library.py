@@ -37,7 +37,7 @@ YS = {'y', 'y1', 'y2', 'y3'}
 
 
 class ZeroDict(dict):
-    """Attributes of a stencil element: a coordinate that is absent is 0."""
+    """Attributes of a stencil element: a coordinate that is not given is 0."""
 
     def __missing__(self, key):
         return '0'

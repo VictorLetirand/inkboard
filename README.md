@@ -46,9 +46,13 @@ Grab the installer for your system from the [**Releases**](../../releases) page 
 
 The installers also provide the `ink` command-line tool and the `inkboard-mcp` server next to the app.
 
+**On Windows**, download `inkboard_*_x64-setup.exe` and double-click it: it installs for your user in a few seconds (no administrator rights, nothing else to install first), adds a Start menu shortcut, and uninstalls cleanly from *Settings → Apps*. Add `/S` for a silent install. A `winget` package is being prepared (`winget install Inkboard.Inkboard`).
+
 > **The installers are not code-signed yet**, so your system will warn you the first time:
 > on **Windows**, SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*; on **macOS**, Control-click the app → *Open*.
-> Every release lists SHA-256 checksums so you can verify your download. Signing is planned ([why it is not done yet](docs/DISTRIBUTION.md)).
+> Every release lists SHA-256 checksums so you can verify your download. Code signing is ready to be switched on in the release workflow as soon as a signing certificate is available ([how](docs/DISTRIBUTION.md#signing-recommended-it-is-what-removes-the-windows-warning)).
+
+**If the window does not open on Windows:** Inkboard uses OpenGL and falls back to Direct3D / Vulkan by itself; you can force one with the environment variable `INKBOARD_RENDERER=wgpu` (or `glow`). If it ever crashes, it writes `%APPDATA%\Inkboard\crash.log` and tells you where.
 
 ### Build from source
 

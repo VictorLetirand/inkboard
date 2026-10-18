@@ -22,7 +22,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes             $(case "$TAG" in *-*) echo --prerelease;; esac)
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes-file .github/RELEASE_NOTES_TEMPLATE.md --generate-notes $(case "$TAG" in *-*) echo --prerelease;; esac)
 
   package:
     needs: create-release
@@ -36,6 +36,14 @@ jobs:
           - { os: macos-15-intel, name: macos-x64 }
           - { os: macos-14, name: macos-arm64 }
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows code signing (Azure Artifact Signing, formerly Trusted Signing). Optional: without these secrets the installers are unsigned.
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      SIGNING_ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
+      SIGNING_ACCOUNT: ${{ vars.SIGNING_ACCOUNT }}
+      SIGNING_PROFILE: ${{ vars.SIGNING_PROFILE }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -57,11 +65,25 @@ jobs:
         run: cargo install cargo-packager --locked
 
       # --- Signing (optional) ---------------------------------------------------------------
-      # Without secrets, installers are produced UNSIGNED (SmartScreen warning on Windows, Gatekeeper on macOS).
+      # Without secrets, installers are produced UNSIGNED (SmartScreen warning on Windows, Gatekeeper on macOS); see docs/DISTRIBUTION.md.
+      # Windows: set the secrets AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET and the variables SIGNING_ENDPOINT, SIGNING_ACCOUNT,
+      #          SIGNING_PROFILE (Azure Artifact Signing): the executables, then the installers, are signed and timestamped.
       # macOS: set the secrets APPLE_CERTIFICATE (.p12 in base64), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-      #         APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID: cargo-packager signs and notarizes.
-      # Windows : voir docs/DISTRIBUTION.md (SignPath Foundation, gratuit pour l'open source, ou Azure Trusted Signing).
-      - name: Empaquetage
+      #        APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID: cargo-packager signs and notarizes.
+      - name: Sign the executables (Windows)
+        if: runner.os == 'Windows' && env.AZURE_TENANT_ID != ''
+        uses: Azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\target\release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Package
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -71,7 +93,20 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: cargo packager --release -c Packager.toml --formats all
 
-      - name: Empreintes SHA-256
+      - name: Sign the installers (Windows)
+        if: runner.os == 'Windows' && env.AZURE_TENANT_ID != ''
+        uses: Azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe,msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: SHA-256 checksums
         shell: bash
         run: |
           cd dist
@@ -90,5 +125,26 @@ jobs:
           cd dist
           shopt -s nullglob
           files=(*.exe *.msi *.dmg *.deb *.AppImage SHA256SUMS-*.txt)
-          [ ${#files[@]} -gt 0 ] || { echo "aucun installeur produit"; exit 1; }
+          [ ${#files[@]} -gt 0 ] || { echo "no installer produced"; exit 1; }
           gh release upload "$TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+
+  # Publishes the new version to the Windows Package Manager (winget) once the installers are attached. Only for stable tags (no hyphen),
+  # and only when the secret WINGET_TOKEN (a classic token with `public_repo`) is set. The first version of a package is submitted by hand
+  # (see docs/DISTRIBUTION.md); this job then keeps it up to date.
+  winget:
+    needs: package
+    if: ${{ !contains(github.ref_name, '-') && startsWith(github.ref, 'refs/tags/v') && needs.package.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the token
+        id: token
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: echo "present=$([ -n "$WINGET_TOKEN" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Submit to winget-pkgs
+        if: steps.token.outputs.present == 'true'
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: Inkboard.Inkboard
+          installers-regex: '_x64-setup\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
