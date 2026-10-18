@@ -23,6 +23,23 @@ pub struct Raster {
     pub rgba_premultiplied: Vec<u8>,
 }
 
+/// Rasterizes an SVG so that its longest side is exactly `longest_px` pixels (the size comes from the parsed document, whatever its attributes).
+pub fn svg_to_raster_fit(svg: &str, longest_px: u32, with_fonts: bool) -> Result<Raster, FormatError> {
+    let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
+    let opt = usvg::Options { fontdb, ..usvg::Options::default() };
+    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
+    let size = tree.size();
+    let longest = size.width().max(size.height());
+    if longest.is_nan() || longest <= 0.0 {
+        return Err(FormatError::Unsupported("invalid image dimensions".into()));
+    }
+    let scale = longest_px as f32 / longest;
+    let (w, h) = (((size.width() * scale).round() as u32).clamp(1, longest_px), ((size.height() * scale).round() as u32).clamp(1, longest_px));
+    let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image too large".into()))?;
+    resvg::render(&tree, tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height()), &mut pixmap.as_mut());
+    Ok(Raster { width: w, height: h, rgba_premultiplied: pixmap.take() })
+}
+
 /// Rasterizes an SVG. `with_fonts`: loads the system fonts (only needed when the SVG contains text; icons have none).
 pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, FormatError> {
     let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
@@ -65,6 +82,15 @@ pub fn svg_to_pdf(svg: &str) -> Result<Vec<u8>, FormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn svg_to_raster_fit_gives_the_requested_longest_side() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="10" viewBox="0 0 40 10"><rect width="40" height="10" fill="#f00"/></svg>"##;
+        let r = svg_to_raster_fit(svg, 100, false).unwrap();
+        assert_eq!((r.width, r.height), (100, 25));
+        let r = svg_to_raster_fit(svg, 30, false).unwrap();
+        assert!(r.width == 30 && r.height <= 30);
+    }
 
     #[test]
     fn renders_a_png_with_the_right_size_and_signature() {

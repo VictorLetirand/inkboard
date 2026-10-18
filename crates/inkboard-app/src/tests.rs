@@ -1569,11 +1569,78 @@ fn svg_images_are_rasterized_at_the_size_they_are_shown() {
     let aid = t.app().ed.doc.add_asset("image/svg+xml", svg.to_vec());
     let asset = t.app().ed.doc.assets.get(&aid).unwrap().clone();
     let mut cache = TextureCache::default();
-    // power-of-two levels: never stretched, at most halved
-    assert_eq!(cache.get(&ctx, &aid, &asset, 40.0).unwrap().size(), [64, 64], "small");
-    assert_eq!(cache.get(&ctx, &aid, &asset, 700.0).unwrap().size(), [1024, 1024], "enlarged icon: sharp, not a stretched thumbnail");
-    assert_eq!(cache.get(&ctx, &aid, &asset, 1500.0).unwrap().size(), [2048, 2048]);
-    // only three rasterizations per frame: the fourth reuses the closest existing texture
-    assert_eq!(cache.get(&ctx, &aid, &asset, 3000.0).unwrap().size(), [2048, 2048], "closest texture while waiting");
-    assert_eq!(cache.get(&ctx, &aid, &asset, 40.0).unwrap().size(), [64, 64], "already cached levels are free");
+    // power-of-two levels: never stretched, at most halved (one request per frame: the time budget never interferes)
+    let get = |cache: &mut TextureCache, px: f32| {
+        let _ = ctx.run(Default::default(), |_| {});
+        cache.get(&ctx, &aid, &asset, px).unwrap().size()
+    };
+    assert_eq!(get(&mut cache, 40.0), [64, 64], "small");
+    assert_eq!(get(&mut cache, 700.0), [1024, 1024], "enlarged icon: sharp, not a stretched thumbnail");
+    assert_eq!(get(&mut cache, 1500.0), [2048, 2048]);
+    assert_eq!(get(&mut cache, 40.0), [64, 64], "already cached levels are free");
+    // with the frame's rasterization budget spent, a request is answered with the closest existing texture
+    cache.raster_budget_ms = 0.0;
+    let _ = ctx.run(Default::default(), |_| {});
+    assert_eq!(
+        cache.get(&ctx, &aid, &asset, 3000.0).unwrap().size(),
+        [2048, 2048],
+        "the first request of a frame is always served (capped by the texture size limit of this context)"
+    );
+    let other = t
+        .app()
+        .ed
+        .doc
+        .add_asset("image/svg+xml", br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"##.to_vec());
+    let other_asset = t.app().ed.doc.assets.get(&other).unwrap().clone();
+    assert!(cache.get(&ctx, &other, &other_asset, 90.0).is_some(), "first of the frame");
+    assert!(cache.get(&ctx, &aid, &asset, 1500.0).unwrap().size()[0] >= 2048);
+    assert!(cache.stats.deferred == 0, "cached levels need no rasterization");
+    assert!(cache.get(&ctx, &other, &other_asset, 700.0).is_some_and(|t| t.size() == [128, 128]), "deferred: closest texture");
+    assert_eq!(cache.stats.deferred, 1);
+}
+
+/// Many small icons are drawn from a shared atlas and load over a few frames, within a bounded rasterization time per frame.
+#[test]
+fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
+    use crate::render::TextureCache;
+    let ctx = egui::Context::default();
+    let lib = inkboard_icons::Library::open(crate::library::PACK).unwrap();
+    let doc = crate::bench_icons::document(&lib, 300, 300);
+    let assets: Vec<(Id, Asset)> = doc.assets.iter().map(|(id, a)| (id.clone(), a.clone())).collect();
+    assert!(assets.len() > 250, "{} distinct assets", assets.len());
+    let mut cache = TextureCache::default();
+    let mut ids = std::collections::HashSet::new();
+    let mut frames = 0;
+    loop {
+        let _ = ctx.run(Default::default(), |_| {});
+        frames += 1;
+        let before = cache.stats;
+        ids.clear();
+        let mut ready = 0;
+        for (id, a) in &assets {
+            if let Some(t) = cache.get(&ctx, id, a, 20.0) {
+                ready += 1;
+                ids.insert(t.id);
+            }
+        }
+        // a frame never spends much more than its budget: one rasterization past it at most
+        let spent = cache.stats.raster_ms - before.raster_ms;
+        let done = cache.stats.rasterized - before.rasterized;
+        assert!(done >= 1 || ready == assets.len(), "progress every frame");
+        assert!(spent < 5.0 + 50.0, "a frame rasterized for {spent} ms");
+        if ready == assets.len() {
+            break;
+        }
+        assert!(frames < 600, "{ready}/{} icons after {frames} frames", assets.len());
+    }
+    assert!(ids.len() <= 2, "{} texture pages for {} small icons: they must share the atlas", ids.len(), assets.len());
+    assert_eq!(cache.stats.rasterized as usize, assets.len(), "each icon rasterized once");
+    assert_eq!(cache.stats.evicted, 0);
+    // asking again is free
+    let before = cache.stats;
+    let _ = ctx.run(Default::default(), |_| {});
+    for (id, a) in &assets {
+        assert!(cache.get(&ctx, id, a, 20.0).is_some());
+    }
+    assert_eq!(cache.stats, before);
 }

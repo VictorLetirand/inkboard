@@ -30,6 +30,18 @@ Les jeux monochromes (formes de diagramme, ingénierie, maquettes, icônes gén�
 - Les logos et icônes de produits (AWS, Azure, Google Cloud, Cisco, IBM, les logos de marques…) sont des **marques ou la propriété de leurs détenteurs respectifs**. Ils sont fournis, comme dans draw.io, pour légender des schémas de ces produits ; Inkboard n'est ni affilié ni approuvé par eux, et vous restez responsable du respect de la charte de chaque détenteur quand vous publiez un schéma.
 - Les bibliothèques propriétaires d'autres outils (par exemple celle de Miro) ne sont pas incluses : elles ne sont pas publiées sous une licence qui autorise leur redistribution.
 
+## Garder la bibliothèque à jour
+
+La bibliothèque suit automatiquement ses projets amont. Le workflow [`icons.yml`](../../.github/workflows/icons.yml) s'exécute **chaque lundi** (et à la demande depuis l'onglet *Actions*) : il récupère les dernières versions de draw.io, Simple Icons, Tabler, Lucide et Material Design Icons, reconstruit le paquet et le compare à celui du dépôt.
+
+- Si rien n'a changé, il s'arrête là.
+- Si des icônes ont été **ajoutées, supprimées ou redessinées**, il vérifie le nouveau paquet (il se lit, et chaque icône s'affiche), rafraîchit les textes de licence et ouvre une **pull request** qui liste, jeu par jeu, les icônes ajoutées et supprimées et les commits amont d'où elle vient. Rien n'est fusionné tout seul : quelqu'un lit le résumé et fusionne.
+- Si plus de 25 % des icônes devaient disparaître (une réorganisation amont, une récupération cassée), il refuse et n'écrit rien : une personne doit regarder.
+
+Les tableaux existants ne sont jamais touchés : une icône placée sur un tableau est stockée dans le fichier du tableau (le SVG lui-même), donc la retirer de la bibliothèque ne peut pas casser un tableau, et redessiner l'icône en amont ne change pas les tableaux qui contiennent déjà l'ancienne. Les nouvelles icônes arrivent chez les utilisateurs avec la version suivante de l'application, puisque la bibliothèque fait partie de l'exécutable (l'application ne télécharge jamais rien). L'info-bulle du nombre d'icônes de la palette indique de quels commits amont la bibliothèque installée est issue.
+
+Réglage unique du dépôt : *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*. Les pull requests ouvertes avec le jeton par défaut ne lancent pas la CI d'elles-mêmes ; ajoutez un jeton d'accès personnel comme secret `ICONS_PR_TOKEN` pour qu'elle démarre (ou fermez et rouvrez la pull request). Pour mettre à jour à la main : `python scripts/build_icon_library.py --fetch ../iconsrc --report rapport.md`.
+
 ## Reconstruire le paquet
 
 La bibliothèque est un seul fichier, `crates/inkboard-app/assets/icons.bin` (environ 8 Mo, compressé en deflate, intégré à l'exécutable), construit par [`scripts/build_icon_library.py`](../../scripts/build_icon_library.py) à partir de clones superficiels des projets amont. Les commandes exactes et les commits utilisés sont dans la [version anglaise](../ICONS.md#rebuilding-the-pack).

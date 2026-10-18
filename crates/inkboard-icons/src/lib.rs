@@ -27,9 +27,21 @@ pub struct Set {
     size: usize,
 }
 
+/// An upstream project the library was built from.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Source {
+    pub name: String,
+    pub repo: String,
+    pub commit: String,
+    pub date: String,
+    pub license: String,
+}
+
 #[derive(Deserialize)]
 struct Index {
     version: u32,
+    #[serde(default)]
+    sources: Vec<Source>,
     sets: Vec<Set>,
 }
 
@@ -51,6 +63,8 @@ pub struct Library {
     data: &'static [u8],
     body: usize,
     pub sets: Vec<Set>,
+    /// Upstream projects (and the commit of each) the pack was built from.
+    pub sources: Vec<Source>,
     cache: Mutex<VecDeque<Arc<Chunk>>>,
 }
 
@@ -78,11 +92,19 @@ impl Library {
                 return Err(format!("truncated icon pack (set {})", s.id));
             }
         }
-        Ok(Self { data, body: end, sets: index.sets, cache: Mutex::new(VecDeque::new()) })
+        Ok(Self { data, body: end, sets: index.sets, sources: index.sources, cache: Mutex::new(VecDeque::new()) })
     }
 
     pub fn icon_count(&self) -> usize {
         self.sets.iter().map(|s| s.names.len()).sum()
+    }
+
+    /// One line per upstream project: name, short commit and date (for an "about the library" tooltip).
+    pub fn sources_summary(&self) -> String {
+        self.sources.iter().map(|s| format!("{} {} ({})", s.name, s.commit.get(..7).unwrap_or(&s.commit), s.date)).collect::<Vec<_>>().join(
+            "
+",
+        )
     }
 
     /// Distinct groups, in the order of their first set.
@@ -233,6 +255,14 @@ mod tests {
         assert_eq!(svg_dimensions(r#"<svg width="64px" height="32"><path/></svg>"#), Some((64.0, 32.0)));
         assert_eq!(svg_dimensions(r#"<svg viewBox="0 0 24 24"/>"#), Some((24.0, 24.0)));
         assert_eq!(svg_dimensions("<svg><path/></svg>"), None);
+    }
+
+    #[test]
+    fn the_real_pack_names_its_upstream_sources() {
+        let lib = Library::open(include_bytes!("../../inkboard-app/assets/icons.bin")).unwrap();
+        assert!(lib.sources.len() >= 5, "{:?}", lib.sources);
+        assert!(lib.sources.iter().all(|s| s.commit.len() == 40 && s.repo.starts_with("https://github.com/")));
+        assert!(lib.sources_summary().contains("draw.io"));
     }
 
     #[test]

@@ -30,6 +30,18 @@ Monochrome sets (diagram shapes, engineering, mockups, general icons, many gener
 - Logos and product icons (AWS, Azure, Google Cloud, Cisco, IBM, the brand logos…) are **trademarks or property of their respective owners**. They are provided, as in draw.io, to label diagrams of those products; Inkboard is not affiliated with or endorsed by them, and you remain responsible for complying with each owner's brand guidelines when you publish a diagram.
 - Libraries that are proprietary to other tools (for example Miro's) are not included: they are not published under a license that allows redistribution.
 
+## Keeping the library up to date
+
+The library follows its upstream projects automatically. The workflow [`icons.yml`](../.github/workflows/icons.yml) runs **every Monday** (and on demand from the *Actions* tab): it fetches the latest draw.io, Simple Icons, Tabler, Lucide and Material Design Icons, rebuilds the pack, and compares it with the one in the repository.
+
+- If nothing changed, it stops there.
+- If icons were **added, removed or redrawn**, it checks the new pack (it parses, and every icon renders), refreshes the license texts and opens a **pull request** listing, set by set, which icons were added and removed and which upstream commits it comes from. Nothing is merged by itself: someone reads the summary and merges.
+- If more than 25 % of the icons would disappear (an upstream restructuring, a broken fetch), it refuses and writes nothing: a person has to look.
+
+Existing boards are never affected: an icon placed on a board is stored in the board file (the SVG itself), so removing it from the library cannot break a board, and updating its drawing upstream does not change boards that already contain the old one. New icons reach users with the next release of the application, since the library is part of the executable (the application never downloads anything). The palette's tooltip on the icon count shows which upstream commits the installed library was built from.
+
+One-time setup for the repository: *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*. Pull requests opened by the default token do not start the CI by themselves; add a personal access token as the secret `ICONS_PR_TOKEN` to have it start (or close and reopen the pull request). To update by hand: `python scripts/build_icon_library.py --fetch ../iconsrc --report report.md`.
+
 ## Rebuilding the pack
 
 The library is a single file, `crates/inkboard-app/assets/icons.bin` (about 8 MB, deflate-compressed, embedded in the executable), built by [`scripts/build_icon_library.py`](../scripts/build_icon_library.py) from shallow clones of the upstream projects:
@@ -51,4 +63,4 @@ python ../scripts/build_icon_library.py .
 
 The pack in the repository was built from jgraph/drawio `17b367b` (2026-10-18), simple-icons `4d29a35` (2026-10-13), tabler-icons `a4ce140` (2026-10-05), lucide `1ef60af` (2026-10-16) and MaterialDesign-SVG `9e04201` (2023-12-26).
 
-draw.io ships its shapes as *stencils* (vector drawing instructions) in a compact binary encoding inside `stencils.min.js`; the script decodes them and converts each one to SVG (paths, rectangles, ellipses, arcs, colors, dashes). `crates/inkboard-icons` reads the pack (index, search, SVG extraction), and `crates/inkboard-app/src/library.rs` is the palette. Run the full check of the pack with `cargo test --release -p inkboard-app -- --ignored every_library_icon_renders`.
+draw.io ships its shapes as *stencils* (vector drawing instructions) in a compact binary encoding inside `stencils.min.js`; the script decodes them and converts each one to SVG (paths, rectangles, ellipses, arcs, colors, dashes). `crates/inkboard-icons` reads the pack (index, search, SVG extraction), and `crates/inkboard-app/src/library.rs` is the palette. Run the full check of the pack with `cargo test --release -p inkboard-app -- --ignored every_library_icon_renders`. How the app stays fluid with thousands of icons on a board: [PERFORMANCE.md](PERFORMANCE.md).

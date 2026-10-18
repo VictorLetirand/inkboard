@@ -78,6 +78,8 @@ const INDEX_MIN_OBJECTS: usize = 400;
 pub struct App {
     pub caches: Caches,
     pub bench: Option<Bench>,
+    /// Scripted large-board session with icons (`--bench-icons`).
+    pub icon_bench: Option<crate::bench_icons::IconBench>,
     pub keymap: Keymap,
     /// Last pen pressure received (0..1) during a contact, when the hardware provides it.
     pub pen_force: Option<f32>,
@@ -182,6 +184,7 @@ impl App {
         let mut app = Self {
             caches: Caches::default(),
             bench: None,
+            icon_bench: None,
             keymap: Keymap::default(),
             pen_force: None,
             system_image: crate::clipboard::system_image,
@@ -820,6 +823,14 @@ impl App {
                 bg.preset = BgPreset::Slate;
                 self.ed.set_background(bg);
             }
+            if let Some(spec) = demo.split('|').find_map(|t| t.strip_prefix("iconboard="))
+                && let Ok(lib) = inkboard_icons::Library::open(crate::library::PACK)
+            {
+                // e.g. `--ui-demo "iconboard=3000"`: a board of that many icons, fitted in the window
+                let n: usize = spec.parse().unwrap_or(500);
+                self.ed = Editor::new(crate::bench_icons::document(&lib, n, n.min(1500)));
+                self.fit_pending = true;
+            }
             if demo.contains("code") {
                 self.insert_code_block();
             }
@@ -945,5 +956,6 @@ impl eframe::App for App {
         }
         ctx.request_repaint_after(Duration::from_millis(500));
         self.bench_step(ctx, started);
+        self.icon_bench_step(ctx, started);
     }
 }

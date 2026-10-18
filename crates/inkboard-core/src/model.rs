@@ -662,7 +662,12 @@ impl Document {
     pub fn page(&self, id: &Id) -> Option<&Page> {
         self.pages.iter().find(|p| &p.id == id)
     }
+    /// Stores an asset and returns its id; an identical asset (same type and bytes) already in the document is reused, so a board that repeats
+    /// an icon stores and decodes it once.
     pub fn add_asset(&mut self, mime: &str, data: Vec<u8>) -> AssetId {
+        if let Some((id, _)) = self.assets.iter().find(|(_, a)| a.data.len() == data.len() && a.mime == mime && **a.data == data) {
+            return id.clone();
+        }
         let id = Id::new();
         self.assets.insert(id.clone(), Asset { mime: mime.to_owned(), data: Arc::new(data) });
         id
@@ -685,6 +690,18 @@ mod tests {
     fn ids_are_unique() {
         let ids: std::collections::HashSet<Id> = (0..5000).map(|_| Id::new()).collect();
         assert_eq!(ids.len(), 5000);
+    }
+
+    #[test]
+    fn identical_assets_are_stored_once() {
+        let mut d = Document::new("t");
+        let a = d.add_asset("image/svg+xml", b"<svg/>".to_vec());
+        let b = d.add_asset("image/svg+xml", b"<svg/>".to_vec());
+        let other_type = d.add_asset("image/png", b"<svg/>".to_vec());
+        let other_bytes = d.add_asset("image/svg+xml", b"<svg />".to_vec());
+        assert_eq!(a, b, "same type and bytes: same asset");
+        assert!(other_type != a && other_bytes != a);
+        assert_eq!(d.assets.len(), 3);
     }
 
     #[test]

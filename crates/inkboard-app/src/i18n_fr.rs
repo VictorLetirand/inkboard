@@ -37,6 +37,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Bottom to top", "De bas en haut"),
     ("Bring forward", "Avancer"),
     ("Bring to front", "Premier plan"),
+    ("Built from:", "Construite à partir de :"),
     ("Cannot copy", "Copie impossible"),
     ("Cannot copy: {}", "Copie impossible : {}"),
     ("Cannot export: {}", "Export impossible : {}"),

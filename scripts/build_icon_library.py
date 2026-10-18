@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Builds the icon library embedded in Inkboard: crates/inkboard-app/assets/icons.bin and crates/inkboard-app/assets/ICONS-LICENSES.txt.
+"""Builds the icon library embedded in Inkboard: crates/inkboard-app/assets/icons.bin (plus ICONS-LICENSES.txt and icons-sources.json).
 
-Usage: python scripts/build_icon_library.py SRC_DIR
+Usage:
+  python scripts/build_icon_library.py SRC_DIR                 build from existing clones
+  python scripts/build_icon_library.py --fetch DIR             first clone / update the upstream projects into DIR, then build
+Options:
+  --report FILE               write a Markdown summary of what changed compared with the pack in the repository (icons added / removed)
+  --max-removed-percent N     refuse (exit code 2, nothing written) when more than N % of the previous icons disappeared (default 25):
+                              an upstream restructuring must be looked at by a human
 
-SRC_DIR contains shallow clones of the upstream projects (see docs/ICONS.md for the exact commands):
+SRC_DIR contains shallow clones of the upstream projects (see SOURCES, and docs/ICONS.md):
   drawio/         jgraph/drawio    (Apache-2.0)  src/main/webapp/js/stencils.min.js and src/main/webapp/img/lib
   simple-icons/   simple-icons     (CC0-1.0)     icons/*.svg and data/simple-icons.json
   tabler/         tabler-icons     (MIT)         icons/outline/*.svg
@@ -11,13 +17,15 @@ SRC_DIR contains shallow clones of the upstream projects (see docs/ICONS.md for 
   mdi/            MaterialDesign-SVG (Apache-2.0) svg/*.svg
 
 Pack layout (little endian): b"INKLIB01", u32 length of the deflated JSON index, the index, then one raw-deflate chunk per set.
-A chunk is a sequence of records `u32 length, SVG bytes`, in the order of the index's `names`.
+A chunk is a sequence of records `u32 length, SVG bytes`, in the order of the index's `names`. The index also lists the upstream `sources` (commits).
 """
+import argparse
 import base64
 import json
 import os
 import re
 import struct
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -28,6 +36,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 ROOT = Path(__file__).resolve().parent.parent
 OUT_BIN = ROOT / 'crates' / 'inkboard-app' / 'assets' / 'icons.bin'
 OUT_LIC = ROOT / 'crates' / 'inkboard-app' / 'assets' / 'ICONS-LICENSES.txt'
+OUT_SOURCES = ROOT / 'crates' / 'inkboard-app' / 'assets' / 'icons-sources.json'
 
 # ---------------------------------------------------------------------------------------------------------- draw.io stencil decoder
 
@@ -477,7 +486,93 @@ def deflate(data):
     return c.compress(data) + c.flush()
 
 
-def build(src):
+# Upstream projects: name, folder, repository, sparse-checkout paths (cone mode when `cone`), license
+SOURCES = [
+    dict(name='draw.io', dir='drawio', repo='https://github.com/jgraph/drawio.git', sparse=['src/main/webapp/js', 'src/main/webapp/img/lib'], cone=True, license='Apache-2.0'),
+    dict(name='Simple Icons', dir='simple-icons', repo='https://github.com/simple-icons/simple-icons.git', sparse=['icons', 'data', 'LICENSE.md'], cone=False, license='CC0-1.0'),
+    dict(name='Tabler Icons', dir='tabler', repo='https://github.com/tabler/tabler-icons.git', sparse=['icons/outline', 'LICENSE'], cone=False, license='MIT'),
+    dict(name='Lucide', dir='lucide', repo='https://github.com/lucide-icons/lucide.git', sparse=['icons', 'LICENSE'], cone=False, license='ISC'),
+    dict(name='Material Design Icons', dir='mdi', repo='https://github.com/Templarian/MaterialDesign-SVG.git', sparse=['svg', 'LICENSE'], cone=False, license='Apache-2.0'),
+]
+
+
+def git(*args, cwd=None):
+    return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def fetch_sources(dest):
+    """Clones (or updates) the latest default branch of every upstream project, shallowly, into `dest`."""
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    for src in SOURCES:
+        d = dest / src['dir']
+        if not (d / '.git').exists():
+            git('clone', '--depth', '1', '--filter=blob:none', '--sparse', src['repo'], str(d))
+            git('sparse-checkout', 'set', *(['--no-cone'] if not src['cone'] else []), *src['sparse'], cwd=d)
+        else:
+            git('fetch', '--depth', '1', 'origin', 'HEAD', cwd=d)
+            git('reset', '--hard', 'FETCH_HEAD', cwd=d)
+        print(f"fetched {src['name']}: {git('rev-parse', '--short', 'HEAD', cwd=d)}")
+
+
+def source_info(src_dir):
+    out = []
+    for src in SOURCES:
+        d = Path(src_dir) / src['dir']
+        try:
+            commit, date = git('rev-parse', 'HEAD', cwd=d), git('log', '-1', '--format=%cs', cwd=d)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            commit, date = 'unknown', 'unknown'
+        out.append(dict(name=src['name'], repo=src['repo'].removesuffix('.git'), commit=commit, date=date, license=src['license']))
+    return out
+
+
+def read_index(path):
+    """Index of an existing pack (`None` when there is none or it cannot be read)."""
+    try:
+        d = Path(path).read_bytes()
+        n = struct.unpack_from('<I', d, 8)[0]
+        return json.loads(zlib.decompress(d[12:12 + n], -15))
+    except (OSError, struct.error, zlib.error, ValueError):
+        return None
+
+
+def diff_report(old, new_sets, old_sources, new_sources):
+    """Markdown summary of the differences between the previous index and the new sets, and the number of icons removed."""
+    old_sets = {s['id']: s for s in (old or {}).get('sets', [])}
+    new = {s.sid: s for s in new_sets}
+    old_total = sum(len(s['names']) for s in old_sets.values())
+    new_total = sum(len(s.items) for s in new_sets)
+    added_total = removed_total = 0
+    lines = []
+    for sid in sorted(set(old_sets) | set(new)):
+        o = set(old_sets[sid]['names']) if sid in old_sets else set()
+        n = {name for name, _ in new[sid].items} if sid in new else set()
+        added, removed = sorted(n - o), sorted(o - n)
+        added_total += len(added)
+        removed_total += len(removed)
+        if not added and not removed:
+            continue
+        title = (new[sid].title if sid in new else old_sets[sid]['title'])
+        status = ' (new set)' if sid not in old_sets else ' (set removed)' if sid not in new else ''
+        lines.append(f'- **{title}**{status}: +{len(added)} / -{len(removed)}')
+        for label, names in (('added', added), ('removed', removed)):
+            if names:
+                shown = ', '.join(names[:12]) + (f' … (+{len(names) - 12})' if len(names) > 12 else '')
+                lines.append(f'  - {label}: {shown}')
+    head = [f'## Icon library update', '', f'**{new_total} icons** (was {old_total}): **+{added_total}** added, **-{removed_total}** removed.', '']
+    src_lines = ['### Upstream sources', '']
+    old_commits = {s['name']: s['commit'] for s in old_sources}
+    for s in new_sources:
+        prev = old_commits.get(s['name'])
+        mark = 'unchanged' if prev == s['commit'] else f"{prev[:7] if prev else 'new'} → {s['commit'][:7]}"
+        src_lines.append(f"- {s['name']} ([{s['commit'][:7]}]({s['repo']}/commit/{s['commit']}), {s['date']}): {mark}")
+    body = head + (['### Changes by set', ''] + lines + [''] if lines else ['No icon was added or removed (the drawings or the metadata changed).', '']) + src_lines + ['']
+    body += ['Boards that already use an icon keep their own copy of it (the SVG is stored in the board file), so removing an icon from the library never breaks an existing board.', '']
+    return '\n'.join(body), removed_total, old_total
+
+
+def build(src, report=None, max_removed_percent=25.0):
     sets = []
     sets += stencil_sets(Path(src) / 'drawio')
     sets += img_lib_sets(Path(src) / 'drawio')
@@ -491,6 +586,15 @@ def build(src):
         seen_titles[k] = seen_titles.get(k, 0) + 1
         if seen_titles[k] > 1:
             s_.title = f'{s_.title} ({seen_titles[k]})'
+    sources = source_info(src)
+    old = read_index(OUT_BIN)
+    old_sources = (old or {}).get('sources') or (json.loads(OUT_SOURCES.read_text(encoding='utf-8')) if OUT_SOURCES.exists() else [])
+    text, removed, old_total = diff_report(old, sets, old_sources, sources)
+    if report:
+        Path(report).write_text(text, encoding='utf-8', newline='\n')
+    if old_total and removed * 100.0 / old_total > max_removed_percent:
+        print(f'REFUSED: {removed} of {old_total} icons would disappear (more than {max_removed_percent} %): check the upstream projects by hand.')
+        return 2
     chunks, index = [], []
     offset = 0
     for s in sets:
@@ -500,22 +604,33 @@ def build(src):
         chunks.append(comp)
         offset += len(comp)
         print(f'{s.group:20} {s.title:45} {len(s.items):5} icons {len(raw) // 1024:6} KB -> {len(comp) // 1024:5} KB')
-    idx = deflate(json.dumps({'version': 1, 'sets': index}, ensure_ascii=False, separators=(',', ':')).encode())
+    idx = deflate(json.dumps({'version': 1, 'sources': sources, 'sets': index}, ensure_ascii=False, separators=(',', ':')).encode())
     OUT_BIN.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_BIN, 'wb') as f:
         f.write(b'INKLIB01' + struct.pack('<I', len(idx)) + idx)
         for c in chunks:
             f.write(c)
     print(f'{sum(len(s.items) for s in sets)} icons in {len(sets)} sets -> {OUT_BIN} ({OUT_BIN.stat().st_size // 1024} KB)')
+    OUT_SOURCES.write_text(json.dumps(sources, indent=2, ensure_ascii=False) + '\n', encoding='utf-8', newline='\n')
     licenses = []
     for title, rel in [('draw.io (jgraph/drawio) stencils and icons — Apache-2.0', 'drawio/LICENSE'), ('Simple Icons — CC0-1.0', 'simple-icons/LICENSE.md'),
                        ('Tabler Icons — MIT', 'tabler/LICENSE'), ('Lucide — ISC', 'lucide/LICENSE'), ('Material Design Icons (Pictogrammers) — Apache-2.0', 'mdi/LICENSE')]:
         p = Path(src) / rel
         licenses.append(f'===== {title} =====\n\n' + (p.read_text(encoding='utf-8', errors='ignore') if p.exists() else '(license file not found)') + '\n')
     OUT_LIC.write_text('\n'.join(licenses), encoding='utf-8', newline='\n')
+    return 0
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        sys.exit(__doc__)
-    build(sys.argv[1])
+    ap = argparse.ArgumentParser(description='Builds the icon library pack.')
+    ap.add_argument('src', nargs='?', help='folder with the upstream clones')
+    ap.add_argument('--fetch', metavar='DIR', help='clone / update the upstream projects into DIR first, then build from it')
+    ap.add_argument('--report', metavar='FILE', help='write a Markdown summary of the changes')
+    ap.add_argument('--max-removed-percent', type=float, default=25.0)
+    a = ap.parse_args()
+    folder = a.fetch or a.src
+    if not folder:
+        ap.error('give SRC_DIR or --fetch DIR')
+    if a.fetch:
+        fetch_sources(a.fetch)
+    sys.exit(build(folder, a.report, a.max_removed_percent))

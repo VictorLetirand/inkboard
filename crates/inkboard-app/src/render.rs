@@ -44,8 +44,11 @@ const SVG_MIN_PX: u32 = 64;
 const SVG_MAX_PX: u32 = 4096;
 /// Inflated textures kept at most (bytes); the least recently used ones are dropped beyond.
 const TEXTURE_BUDGET: usize = 256 << 20;
-/// SVG rasterizations allowed per frame (the others reuse the closest texture already available and finish on the next frames).
-const SVG_PER_FRAME: u32 = 3;
+/// Images shown smaller than this (points) are drawn as a flat quad of their average color.
+const IMAGE_FLAT_PT: f32 = 9.0;
+/// Time (ms) a frame may spend rasterizing SVGs: past it, the remaining ones reuse the closest texture already available and finish on the
+/// next frames, so a big board never freezes the interface.
+const RASTER_BUDGET_MS: f64 = 5.0;
 
 /// Decoded image of an asset (bitmaps; SVGs at the fallback scale, used for previews).
 pub fn decode_asset(asset: &Asset) -> Option<egui::ColorImage> {
@@ -59,89 +62,242 @@ pub fn decode_asset(asset: &Asset) -> Option<egui::ColorImage> {
 /// Rasterizes an SVG asset so that its longest side is `px` pixels (`None`: the fallback scale).
 fn rasterize_svg(asset: &Asset, px: Option<u32>) -> Option<egui::ColorImage> {
     let svg = std::str::from_utf8(&asset.data).ok()?;
-    let scale = match (px, inkboard_icons::svg_dimensions(svg)) {
-        (Some(px), Some((w, h))) => (f64::from(px) / w.max(h)) as f32,
-        _ => SVG_FALLBACK_SCALE,
-    };
-    let r = inkboard_formats::raster::svg_to_raster(svg, scale, false).ok()?;
+    let r = match px {
+        Some(px) => inkboard_formats::raster::svg_to_raster_fit(svg, px, false),
+        None => inkboard_formats::raster::svg_to_raster(svg, SVG_FALLBACK_SCALE, false),
+    }
+    .ok()?;
     Some(egui::ColorImage::from_rgba_premultiplied([r.width as usize, r.height as usize], &r.rgba_premultiplied))
 }
 
 /// Rasterization level of an SVG shown with a longest side of `target_px` screen pixels: the next power of two, so a texture is never
 /// stretched (and at most halved), whether the cause is zooming in or enlarging the object.
-fn svg_level(target_px: f32) -> u32 {
-    (target_px.max(1.0).ceil() as u32).next_power_of_two().clamp(SVG_MIN_PX, SVG_MAX_PX)
+fn svg_level(target_px: f32, max_side: usize) -> u32 {
+    (target_px.max(1.0).ceil() as u32).next_power_of_two().clamp(SVG_MIN_PX, SVG_MAX_PX.min(max_side as u32))
+}
+
+/// A texture region ready to be drawn: either a whole texture or a cell of the small-icon atlas.
+#[derive(Clone)]
+pub struct ImageTex {
+    pub id: egui::TextureId,
+    /// Part of the texture holding the image.
+    pub uv: egui::Rect,
+    /// Average color (premultiplied): what the image looks like when it is only a few pixels wide.
+    pub avg: Color32,
+    _keep: TextureHandle,
+}
+
+impl ImageTex {
+    /// Size in pixels of the whole texture (an atlas page for small icons).
+    #[cfg(test)]
+    pub fn size(&self) -> [usize; 2] {
+        self._keep.size()
+    }
 }
 
 struct CachedTexture {
-    tex: TextureHandle,
+    level: u32,
+    tex: ImageTex,
+    /// Memory this entry owns (0 for atlas cells, whose pages are shared).
     bytes: usize,
     used: u64,
 }
 
-/// Textures of the document's images, decoded on demand. SVG images are rasterized again when they are shown larger than their current texture.
-#[derive(Default)]
+/// Counters of the texture cache (performance checks).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextureStats {
+    /// SVG rasterizations done.
+    pub rasterized: u32,
+    /// Total time spent rasterizing SVGs, in milliseconds.
+    pub raster_ms: f64,
+    /// Requests answered with a texture of another resolution (or none) because the frame's rasterization budget was spent.
+    pub deferred: u32,
+    /// Textures dropped to stay within the memory budget.
+    pub evicted: u32,
+}
+
+/// Page of the atlas holding the small SVG icons: many icons share one texture, so thousands of them are drawn in a single batch.
+struct AtlasPage {
+    tex: TextureHandle,
+    used: usize,
+}
+
+/// Textures of the document's images, decoded on demand. SVG images are rasterized again when they are shown larger than their current texture;
+/// the small ones live in a shared atlas.
 pub struct TextureCache {
-    /// `(asset, level)`: level 0 for bitmaps, the rasterized longest side in pixels for SVGs.
-    map: HashMap<(Id, u32), CachedTexture>,
+    /// Per asset: its textures, one per rasterization level (level 0 for bitmaps, [`ATLAS_LEVEL`] for atlas cells, the longest side in pixels otherwise).
+    map: HashMap<Id, Vec<CachedTexture>>,
+    atlas: Vec<AtlasPage>,
     /// Assets that cannot be decoded (not tried again).
     broken: std::collections::HashSet<Id>,
     frame: Option<u64>,
-    svg_budget: u32,
+    /// Time spent rasterizing during the current frame, in milliseconds.
+    spent_ms: f64,
+    /// Time (ms) a frame may spend rasterizing SVGs ([`RASTER_BUDGET_MS`]; changed by tests).
+    pub raster_budget_ms: f64,
+    pub stats: TextureStats,
+}
+
+impl Default for TextureCache {
+    fn default() -> Self {
+        Self {
+            map: HashMap::new(),
+            atlas: Vec::new(),
+            broken: Default::default(),
+            frame: None,
+            spent_ms: 0.0,
+            raster_budget_ms: RASTER_BUDGET_MS,
+            stats: TextureStats::default(),
+        }
+    }
+}
+
+/// Pseudo-level of the images stored in the atlas.
+const ATLAS_LEVEL: u32 = 1;
+/// Side of an atlas page and of one cell (the icon is drawn inside a 1 px transparent margin).
+const ATLAS_PAGE: usize = 2048;
+const ATLAS_CELL: usize = 32;
+/// Icons shown with a longest side up to this many pixels use the atlas.
+const ATLAS_MAX_PX: f32 = (ATLAS_CELL - 2) as f32;
+const ATLAS_MAX_PAGES: usize = 4;
+
+/// Average color of an image (sampled), premultiplied.
+fn average_color(img: &egui::ColorImage) -> Color32 {
+    let n = img.pixels.len().max(1);
+    let step = (n / 1024).max(1);
+    let (mut r, mut g, mut b, mut a, mut k) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    for p in img.pixels.iter().step_by(step) {
+        r += u64::from(p.r());
+        g += u64::from(p.g());
+        b += u64::from(p.b());
+        a += u64::from(p.a());
+        k += 1;
+    }
+    let k = k.max(1);
+    Color32::from_rgba_premultiplied((r / k) as u8, (g / k) as u8, (b / k) as u8, (a / k) as u8)
 }
 
 impl TextureCache {
     /// Texture of an image shown with a longest side of `target_px` screen pixels.
-    pub fn get(&mut self, ctx: &egui::Context, id: &Id, asset: &Asset, target_px: f32) -> Option<TextureHandle> {
+    pub fn get(&mut self, ctx: &egui::Context, id: &Id, asset: &Asset, target_px: f32) -> Option<ImageTex> {
         let now = ctx.cumulative_pass_nr();
         if self.frame != Some(now) {
             self.frame = Some(now);
-            self.svg_budget = SVG_PER_FRAME;
+            self.spent_ms = 0.0;
         }
         if self.broken.contains(id) {
             return None;
         }
         let is_svg = asset.mime == "image/svg+xml";
-        let level = if is_svg { svg_level(target_px) } else { 0 };
-        if let Some(c) = self.map.get_mut(&(id.clone(), level)) {
+        let atlas_room = self.atlas.len() < ATLAS_MAX_PAGES || self.atlas.last().is_some_and(|p| p.used < (ATLAS_PAGE / ATLAS_CELL).pow(2));
+        let in_atlas = is_svg && target_px <= ATLAS_MAX_PX && atlas_room;
+        let level = if !is_svg {
+            0
+        } else if in_atlas {
+            ATLAS_LEVEL
+        } else {
+            svg_level(target_px, ctx.input(|i| i.max_texture_side))
+        };
+        if let Some(list) = self.map.get_mut(id)
+            && let Some(c) = list.iter_mut().find(|c| c.level == level)
+        {
             c.used = now;
             return Some(c.tex.clone());
         }
-        if is_svg && self.svg_budget == 0 {
-            // no time left this frame: show the closest texture we have and finish later
+        // the first rasterization of a frame is always allowed; the next ones only while the frame's budget lasts
+        if is_svg && self.spent_ms > 0.0 && self.spent_ms >= self.raster_budget_ms {
+            self.stats.deferred += 1;
             ctx.request_repaint();
-            return self.map.iter().filter(|((i, _), _)| i == id).min_by_key(|((_, l), _)| l.abs_diff(level)).map(|(_, c)| c.tex.clone());
+            return self.map.get(id).and_then(|l| l.iter().min_by_key(|c| c.level.abs_diff(level))).map(|c| c.tex.clone());
         }
-        let img = if is_svg {
-            self.svg_budget -= 1;
-            rasterize_svg(asset, Some(level))
-        } else {
+        let t0 = std::time::Instant::now();
+        let img = if !is_svg {
             decode_asset(asset)
+        } else if in_atlas {
+            rasterize_svg(asset, Some(ATLAS_CELL as u32 - 2))
+        } else {
+            rasterize_svg(asset, Some(level))
         };
+        if is_svg {
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            self.spent_ms += ms;
+            self.stats.rasterized += 1;
+            self.stats.raster_ms += ms;
+        }
         let Some(img) = img else {
             self.broken.insert(id.clone());
             return None;
         };
-        let bytes = img.pixels.len() * 4;
-        let tex = ctx.load_texture(format!("{}@{level}", id.as_str()), img, egui::TextureOptions::LINEAR);
-        self.map.insert((id.clone(), level), CachedTexture { tex: tex.clone(), bytes, used: now });
-        self.evict(&(id.clone(), level));
+        let avg = average_color(&img);
+        let (tex, bytes) = if in_atlas && img.size[0] <= ATLAS_CELL - 2 && img.size[1] <= ATLAS_CELL - 2 {
+            (self.atlas_cell(ctx, id, &img, avg), 0)
+        } else {
+            let bytes = img.pixels.len() * 4;
+            let h = ctx.load_texture(format!("{}@{level}", id.as_str()), img, egui::TextureOptions::LINEAR);
+            (ImageTex { id: h.id(), uv: egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), avg, _keep: h }, bytes)
+        };
+        self.map.entry(id.clone()).or_default().push(CachedTexture { level, tex: tex.clone(), bytes, used: now });
+        self.evict(id, level);
         Some(tex)
     }
 
+    /// Copies a small icon into the next free cell of the atlas (a new page when the last one is full).
+    fn atlas_cell(&mut self, ctx: &egui::Context, id: &Id, img: &egui::ColorImage, avg: Color32) -> ImageTex {
+        let per_row = ATLAS_PAGE / ATLAS_CELL;
+        if self.atlas.last().is_none_or(|p| p.used >= per_row * per_row) {
+            let blank = egui::ColorImage::filled([ATLAS_PAGE, ATLAS_PAGE], Color32::TRANSPARENT);
+            let tex = ctx.load_texture(format!("icon-atlas-{}", self.atlas.len()), blank, egui::TextureOptions::LINEAR);
+            self.atlas.push(AtlasPage { tex, used: 0 });
+        }
+        let page = self.atlas.last_mut().expect("a page was just ensured");
+        let (cx, cy) = (page.used % per_row, page.used / per_row);
+        page.used += 1;
+        let (x, y) = (cx * ATLAS_CELL + 1, cy * ATLAS_CELL + 1);
+        page.tex.set_partial([x, y], img.clone(), egui::TextureOptions::LINEAR);
+        let s = ATLAS_PAGE as f32;
+        let (w, h) = (img.size[0] as f32, img.size[1] as f32);
+        let uv = egui::Rect::from_min_max(pos2(x as f32 / s, y as f32 / s), pos2((x as f32 + w) / s, (y as f32 + h) / s));
+        let _ = id;
+        ImageTex { id: page.tex.id(), uv, avg, _keep: page.tex.clone() }
+    }
+
     /// Drops the least recently used textures while the cache is over its budget (never the one just created).
-    fn evict(&mut self, keep: &(Id, u32)) {
-        let mut total: usize = self.map.values().map(|c| c.bytes).sum();
+    fn evict(&mut self, keep_id: &Id, keep_level: u32) {
+        let mut total: usize = self.map.values().flatten().map(|c| c.bytes).sum();
         while total > TEXTURE_BUDGET {
-            let Some(oldest) = self.map.iter().filter(|(k, _)| *k != keep).min_by_key(|(_, c)| c.used).map(|(k, _)| k.clone()) else { break };
-            if let Some(c) = self.map.remove(&oldest) {
-                total -= c.bytes;
+            let oldest = self
+                .map
+                .iter()
+                .flat_map(|(id, l)| l.iter().map(move |c| (id, c)))
+                .filter(|(id, c)| c.bytes > 0 && !(*id == keep_id && c.level == keep_level))
+                .min_by_key(|(_, c)| c.used)
+                .map(|(id, c)| (id.clone(), c.level));
+            let Some((id, level)) = oldest else { break };
+            if let Some(list) = self.map.get_mut(&id)
+                && let Some(pos) = list.iter().position(|c| c.level == level)
+            {
+                total -= list.remove(pos).bytes;
+                self.stats.evicted += 1;
+            }
+            if self.map.get(&id).is_some_and(Vec::is_empty) {
+                self.map.remove(&id);
             }
         }
     }
 
+    /// Number of textures held (atlas cells count one each).
+    pub fn texture_count(&self) -> usize {
+        self.map.values().map(Vec::len).sum()
+    }
+
+    /// Memory held by the textures, in bytes (atlas pages included).
+    pub fn bytes(&self) -> usize {
+        self.map.values().flatten().map(|c| c.bytes).sum::<usize>() + self.atlas.len() * ATLAS_PAGE * ATLAS_PAGE * 4
+    }
+
     pub fn clear(&mut self) {
         self.map.clear();
+        self.atlas.clear();
         self.broken.clear();
     }
 }
@@ -502,12 +658,27 @@ impl Renderer<'_> {
     fn image(&mut self, i: &ImageObj, tint: Color32) {
         let Some(asset) = self.doc.assets.get(&i.asset) else { return };
         let ctx = self.painter.ctx().clone();
-        let corners: Vec<Pos2> = i.frame.corners().iter().map(|p| self.cam.s(*p)).collect();
-        let target_px = (i.frame.w.max(i.frame.h) as f32 * self.cam.zoom) * ctx.pixels_per_point();
-        match self.textures.get(&ctx, &i.asset, asset, target_px) {
-            Some(tex) => {
-                let uvs = [pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0), pos2(0.0, 1.0)];
-                let mut mesh = Mesh::with_texture(tex.id());
+        let size_pt = i.frame.w.max(i.frame.h) as f32 * self.cam.zoom;
+        let target_px = size_pt * ctx.pixels_per_point();
+        let tex = self.textures.get(&ctx, &i.asset, asset, target_px);
+        let corners = || -> Vec<Pos2> { i.frame.corners().iter().map(|p| self.cam.s(*p)).collect() };
+        match tex {
+            Some(t) if size_pt < IMAGE_FLAT_PT => {
+                // a few pixels wide: a flat quad of the image's average color (no texture, so thousands of them cost one batch)
+                let a = f32::from(t.avg.a()) / 255.0;
+                let color = if i.is_tinted() { tint.gamma_multiply(a) } else { t.avg.gamma_multiply(f32::from(tint.a()) / 255.0) };
+                if i.frame.angle == 0.0 {
+                    let (p, q) = (self.cam.s(Pt::new(i.frame.x, i.frame.y)), self.cam.s(Pt::new(i.frame.x + i.frame.w, i.frame.y + i.frame.h)));
+                    self.painter.rect_filled(egui::Rect::from_two_pos(p, q), 0.0, color);
+                } else {
+                    self.painter.add(Shape::convex_polygon(corners(), color, Stroke::NONE));
+                }
+            }
+            Some(t) => {
+                let corners = corners();
+                let (lo, hi) = (t.uv.min, t.uv.max);
+                let uvs = [pos2(lo.x, lo.y), pos2(hi.x, lo.y), pos2(hi.x, hi.y), pos2(lo.x, hi.y)];
+                let mut mesh = Mesh::with_texture(t.id);
                 for (p, uv) in corners.iter().zip(uvs) {
                     mesh.vertices.push(Vertex { pos: *p, uv, color: tint });
                 }
@@ -515,7 +686,7 @@ impl Renderer<'_> {
                 self.painter.add(Shape::mesh(mesh));
             }
             None => {
-                self.painter.add(Shape::convex_polygon(corners, Color32::from_gray(128).gamma_multiply(0.3), Stroke::NONE));
+                self.painter.add(Shape::convex_polygon(corners(), Color32::from_gray(128).gamma_multiply(0.3), Stroke::NONE));
             }
         }
     }

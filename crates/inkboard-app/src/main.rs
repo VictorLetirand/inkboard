@@ -4,6 +4,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod bench_icons;
 mod chrome;
 mod clipboard;
 mod fonts;
@@ -38,6 +39,8 @@ struct Launch {
     formula_demo: bool,
     pen_test: bool,
     ui_demo: String,
+    /// `--bench-icons COUNT[:DISTINCT]`
+    bench_icons: Option<(usize, usize)>,
 }
 
 fn parse_args(args: &[String]) -> Launch {
@@ -55,6 +58,12 @@ fn parse_args(args: &[String]) -> Launch {
             "--shortcuts-demo" => l.shortcuts_demo = true,
             "--formula-demo" => l.formula_demo = true,
             "--pen-test" => l.pen_test = true,
+            "--bench-icons" => {
+                let spec = it.next().cloned().unwrap_or_default();
+                let (n, d) = spec.split_once(':').unwrap_or((spec.as_str(), "0"));
+                let n = n.parse().unwrap_or(1000);
+                l.bench_icons = Some((n, d.parse().ok().filter(|d| *d > 0).unwrap_or(n.min(2000))));
+            }
             "--ui-demo" => l.ui_demo = it.next().cloned().unwrap_or_default(),
             other => l.open = Some(PathBuf::from(other)),
         }
@@ -97,7 +106,7 @@ Your last saved file is intact.",
 
 fn main() -> eframe::Result {
     let l = parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
-    if l.screenshot.is_none() && !l.bench {
+    if l.screenshot.is_none() && !l.bench && l.bench_icons.is_none() {
         install_panic_hook();
     }
     // OpenGL first (light and fast); if the graphics stack has no usable OpenGL (remote desktop, virtual machine, old driver), wgpu
@@ -155,9 +164,15 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
                 }
             }
             let mut a = app::App::new(cc, l.open.clone(), l.screenshot.clone());
-            if l.screenshot.is_none() && !l.bench {
+            if l.screenshot.is_none() && !l.bench && l.bench_icons.is_none() {
                 // live mode of inkboard-mcp: an agent can drive the displayed board
                 a.live = live::LiveServer::start(cc.egui_ctx.clone(), inkboard_mcp::live::discovery_path()).ok();
+            }
+            if let Some((n, d)) = l.bench_icons
+                && let Ok(lib) = inkboard_icons::Library::open(library::PACK)
+            {
+                a.ed = inkboard_core::Editor::new(bench_icons::document(&lib, n, d));
+                a.icon_bench = Some(bench_icons::IconBench::new(n, d));
             }
             a.bench = l.bench.then(|| app::Bench { close_up: l.bench_close, ..Default::default() });
             a.edit_demo = l.edit_demo;

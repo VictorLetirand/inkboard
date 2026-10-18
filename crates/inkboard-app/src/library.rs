@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The pack built by `scripts/build_icon_library.py`.
-static PACK: &[u8] = include_bytes!("../assets/icons.bin");
+pub static PACK: &[u8] = include_bytes!("../assets/icons.bin");
 
 const WIDTH: f32 = 372.0;
 const CELL: f32 = 62.0;
@@ -120,7 +120,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 if theme::icon_button(ui, "close", false, true).on_hover_text(t("Close")).clicked() {
                     close = true;
                 }
-                ui.label(egui::RichText::new(tr!("{} icons", lib.icon_count())).size(11.5).color(pal.mute));
+                ui.label(egui::RichText::new(tr!("{} icons", lib.icon_count())).size(11.5).color(pal.mute)).on_hover_text(format!(
+                    "{}
+{}",
+                    t("Built from:"),
+                    lib.sources_summary()
+                ));
             });
         });
         ui.add_space(4.0);
