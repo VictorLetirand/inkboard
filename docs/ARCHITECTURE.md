@@ -2,8 +2,8 @@
 
 ## Principes
 
-1. **Le moteur ne connaît pas l'interface.** `wb-core` n'a ni fenêtre, ni police, ni dépendance graphique. Tout ce qui peut
-   se tester sans écran se teste dans `wb-core` / `wb-formats` ; l'interface (`wb-app`) est une couche mince au-dessus.
+1. **Le moteur ne connaît pas l'interface.** `inkboard-core` n'a ni fenêtre, ni police, ni dépendance graphique. Tout ce qui peut
+   se tester sans écran se teste dans `inkboard-core` / `inkboard-formats` ; l'interface (`inkboard-app`) est une couche mince au-dessus.
    Le même moteur servira le futur serveur MCP, la CLI et d'éventuels autres fronts (WASM).
 2. **Les connecteurs ne stockent pas leur tracé.** Un connecteur garde ses extrémités (`Free(point)` ou
    `Bound{cible, ancre}`) ; le chemin est **recalculé à la demande** depuis l'état courant de la page
@@ -30,12 +30,12 @@ Kind     = Box (rect/ellipse/losange/triangle/note/texte) | Pen | Connector | Im
 
 Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<_>>` (copie bon marché pour l'historique).
 
-## Interface (`wb-app`)
+## Interface (`inkboard-app`)
 
 - `render.rs` : dessine une page (formes, texte riche, traits lissés à largeur variable, connecteurs et pointes, images, tableaux). Niveau de détail :
   sous 3 px un objet devient un point ; les caches de l'application (`Caches` : identifiant → position, index spatial) servent au rendu et aux sélections.
 - `tools.rs` : machine à états des gestes (`Drag`), poignées, création d'objets, édition de texte.
-  Les calculs de poignées (redimensionner un cadre tourné, rotation, magnétisme) vivent dans `wb-core::transform` et sont testés à part.
+  Les calculs de poignées (redimensionner un cadre tourné, rotation, magnétisme) vivent dans `inkboard-core::transform` et sont testés à part.
 - `rich_edit.rs` : édition de texte riche. Le champ de saisie egui garde la chaîne brute ; `RichText` suit chaque frappe
   (`apply_edit` : préfixe/suffixe communs) et un `layouter` affiche les styles. La barre flottante et les raccourcis appellent
   `RichText::format` (moteur). La sélection est mémorisée puis rétablie après un clic sur la barre.
@@ -49,7 +49,7 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
   Mode présentation (`App::presenting`, `present_overlay`) et minuteur dans `app.rs` / `ui.rs`.
 - `tests.rs` : 78 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
 
-## Modules ajoutés au noyau (`wb-core`)
+## Modules ajoutés au noyau (`inkboard-core`)
 
 - `spatial.rs` : index spatial en grille (`SpatialIndex`), table id → position, accès rapide aux objets par identifiant.
 - `route.rs` : routage orthogonal A* sur la grille formée par les bords des obstacles (pénalité de coude) ; `connector.rs` l'utilise pour les
@@ -57,15 +57,15 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
 - `pen.rs` : lissage des traits, largeur selon la pression, contour polygonal du trait.
 - `highlight.rs` : coloration syntaxique générique des blocs de code (`RichText` coloré).
 
-`wb-formats::math` compose les formules LaTeX en SVG (crate `latex-rust`, police STIX Two Math embarquée). Une formule est un `ImageObj` dont l'asset est ce SVG
+`inkboard-formats::math` compose les formules LaTeX en SVG (crate `latex-rust`, police STIX Two Math embarquée). Une formule est un `ImageObj` dont l'asset est ce SVG
 **dessiné en blanc** et dont `latex` conserve le source : l'écran teinte la texture avec la couleur de trait, l'export SVG remplace le blanc par cette couleur.
 
-`wb-mcp` : serveur MCP (JSON-RPC sur stdio, écrit à la main) au-dessus de `wb-core`/`wb-formats` ; chaque outil est une fonction `apply(&mut Editor, nom, args)` ; le mode fichier ouvre le fichier, l'applique et réenregistre atomiquement, le mode direct la fait exécuter par l'application (`wb-app::live` : serveur local 127.0.0.1 + jeton, exécution sur le fil d'interface dans une transaction).
-`wb-app::watch` recharge le fichier ouvert quand un autre programme le modifie (sauf modifications locales non enregistrées). Détails : [MCP.md](MCP.md).
+`inkboard-mcp` : serveur MCP (JSON-RPC sur stdio, écrit à la main) au-dessus de `inkboard-core`/`inkboard-formats` ; chaque outil est une fonction `apply(&mut Editor, nom, args)` ; le mode fichier ouvre le fichier, l'applique et réenregistre atomiquement, le mode direct la fait exécuter par l'application (`inkboard-app::live` : serveur local 127.0.0.1 + jeton, exécution sur le fil d'interface dans une transaction).
+`inkboard-app::watch` recharge le fichier ouvert quand un autre programme le modifie (sauf modifications locales non enregistrées). Détails : [MCP.md](MCP.md).
 
-`wb-mcp::resources` : ressources MCP et fil de surveillance (sondage 600 ms → `notifications/resources/updated`) ; `tools::apply_tracked` : suivi des changements de l'utilisateur (empreinte par objet, les modifications de l'agent sont absorbées dans la référence).
+`inkboard-mcp::resources` : ressources MCP et fil de surveillance (sondage 600 ms → `notifications/resources/updated`) ; `tools::apply_tracked` : suivi des changements de l'utilisateur (empreinte par objet, les modifications de l'agent sont absorbées dans la référence).
 
-`wb-pen` (Windows) installe un *subclass* de fenêtre qui lit les `WM_POINTER*` sans les consommer et expose `eraser_active()` et `last_sample()` (pression, indicateurs, inclinaison ; utilisés par le diagnostic `--pen-test`, `wb-app::pen_test`) ; l'application remplace alors l'outil par la gomme
+`inkboard-pen` (Windows) installe un *subclass* de fenêtre qui lit les `WM_POINTER*` sans les consommer et expose `eraser_active()` et `last_sample()` (pression, indicateurs, inclinaison ; utilisés par le diagnostic `--pen-test`, `inkboard-app::pen_test`) ; l'application remplace alors l'outil par la gomme
 pour le geste (`App::eraser_probe`, substituable dans les tests). C'est le seul crate qui autorise `unsafe`.
 
 ### Pourquoi egui ?
@@ -73,15 +73,15 @@ pour le geste (`App::eraser_probe`, substituable dans les tests). C'est le seul 
 Un seul langage et un exécutable natif, hors ligne par construction, avec une API de dessin qui permet de maîtriser le rendu du
 tableau. Limites connues, assumées pour ce jalon : pas d'icônes système (icônes dessinées à la main), éditeur de texte basique
 accessibilité limitée. Si le rendu devait dépasser egui
-(très grands tableaux, effets), `wb-core` reste indépendant : on pourrait changer de moteur de rendu sans toucher au reste.
+(très grands tableaux, effets), `inkboard-core` reste indépendant : on pourrait changer de moteur de rendu sans toucher au reste.
 
 ## Tests
 
 | Crate | Tests | Ce qui est couvert |
 |---|---|---|
-| `wb-core` | 101 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
-| `wb-formats` | 46 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
-| `wb-mcp` | 8 | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports) ; le mode direct, les ressources/notifications et `board_changes` en direct sont testés dans `wb-app` (5 tests : édition annulable, ciblage du fichier ouvert, jeton, ressources et notifications, changements et images) |
-| `wb-app` | 85 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
+| `inkboard-core` | 101 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
+| `inkboard-formats` | 46 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
+| `inkboard-mcp` | 8 | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports) ; le mode direct, les ressources/notifications et `board_changes` en direct sont testés dans `inkboard-app` (5 tests : édition annulable, ciblage du fichier ouvert, jeton, ressources et notifications, changements et images) |
+| `inkboard-app` | 85 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
 
 En plus : l'export draw.io a été ouvert dans le visualiseur officiel diagrams.net (formes, flèches liées, pointillés, rotation).

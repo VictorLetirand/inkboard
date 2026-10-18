@@ -25,12 +25,12 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Interface soignée (cartes flottantes, thème sombre) | – | ✔ identique au prototype web |
 | Connecteurs qui évitent les formes | draw.io | ✔ routage A*, points de passage |
 | Presse-papiers (images, texte) | tous | ✔ |
-| Pilotage par des agents (MCP) | – | ✔ `wb-mcp` : fichiers et mode direct (application ouverte, annulable, sélection visible) |
+| Pilotage par des agents (MCP) | – | ✔ `inkboard-mcp` : fichiers et mode direct (application ouverte, annulable, sélection visible) |
 | Export PDF | Whiteboard | ✔ vectoriel |
 
 ## Reste à faire
 
-- `wb-mcp` : vérifier ce que les clients réels (Claude Code, Claude Desktop) font des notifications de ressources ; notifications avec le détail du changement ; lecture du contenu des images.
+- `inkboard-mcp` : vérifier ce que les clients réels (Claude Code, Claude Desktop) font des notifications de ressources ; notifications avec le détail du changement ; lecture du contenu des images.
 - Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
 - Coloration par langage (la coloration actuelle est générique) ; texte (`\text`) et environnements avancés de la bibliothèque de composition au-delà de ses capacités.
 - **Validation de la pression et de la gomme du stylet sur du matériel réel** (procédure : docs/STYLET.md) ; gomme sous macOS/Linux (non gérée).
@@ -42,7 +42,7 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 - Pas de tests visuels automatisés (la capture d'écran `--screenshot` sert au contrôle manuel).
 - Les traits au crayon sont exportés en images vers draw.io (pas d'équivalent éditable).
 - Les formats d'échange n'ont été confrontés qu'à leurs propres exports et à des fichiers écrits à la main, à l'exception de
-  l'export draw.io vérifié dans le visualiseur officiel ; des fichiers Excalidraw et Obsidian Canvas écrits comme les vrais outils (`wb-formats/tests/realistic.rs`) s'importent correctement, mais aucun fichier réel d'utilisateur n'a été testé.
+  l'export draw.io vérifié dans le visualiseur officiel ; des fichiers Excalidraw et Obsidian Canvas écrits comme les vrais outils (`inkboard-formats/tests/realistic.rs`) s'importent correctement, mais aucun fichier réel d'utilisateur n'a été testé.
 - Le workflow CI (`.github/workflows/ci.yml`, Windows + Linux + macOS) est vert. Linux et macOS : les tests automatiques passent, mais l'application n'y a jamais été lancée à la main ; le workflow de publication (installeurs) n'a jamais été exécuté.
 - Le routage coudé avec contournement est désactivé au-delà de 5 000 objets (coût linéaire par connecteur).
 - Les formules dépendent du crate `latex-rust` 2.1.1 (récent, peu éprouvé ; la 3.x exige Rust 1.99) : une commande non gérée est signalée dans la fenêtre de saisie. Une formule est rastérisée à l'écran (×4) mais reste vectorielle dans les exports SVG et PDF.

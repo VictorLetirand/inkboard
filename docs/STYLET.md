@@ -6,7 +6,7 @@ disponible pendant le développement). Le mode diagnostic permet de le vérifier
 ## Procédure (Windows)
 
 ```bash
-tableau-blanc --pen-test
+inkboard --pen-test
 ```
 
 Un panneau « Diagnostic du stylet » s'affiche à droite. Sur un appareil à stylet (Surface, tablette Wacom, écran tactile à stylet…) :
@@ -21,13 +21,13 @@ Un panneau « Diagnostic du stylet » s'affiche à droite. Sur un appareil à st
 
 | Observation | Signification |
 |---|---|
-| « Pression reçue par Windows » OK mais « par l'application (egui) » NON | Windows voit la pression mais egui ne la transmet pas : l'épaisseur variable ne marchera pas ; la correction consiste à lire la pression directement depuis `wb-pen` (déjà disponible dans `PenSample`). |
+| « Pression reçue par Windows » OK mais « par l'application (egui) » NON | Windows voit la pression mais egui ne la transmet pas : l'épaisseur variable ne marchera pas ; la correction consiste à lire la pression directement depuis `inkboard-pen` (déjà disponible dans `PenSample`). |
 | « Pression variable » NON avec peu de niveaux | Le pilote renvoie une pression binaire (0/1) ou la souris émule le stylet : vérifier le pilote / Windows Ink. |
 | « Extrémité gomme » NON alors que l'extrémité est utilisée | Le pilote ne renseigne pas `PEN_FLAG_INVERTED` / `PEN_FLAG_ERASER` ; certains stylets n'ont pas de gomme matérielle. |
 | Dernier pointeur « souris » alors qu'on utilise le stylet | Windows Ink est désactivé pour l'application ou le pilote émule la souris. |
 
 ## Ce qui est vérifié sans matériel
 
-- L'interprétation des indicateurs du stylet (`wb-pen`) et la construction des verdicts (`wb-app/src/pen_test.rs`).
+- L'interprétation des indicateurs du stylet (`inkboard-pen`) et la construction des verdicts (`inkboard-app/src/pen_test.rs`).
 - L'installation du *subclass* de fenêtre sur une fenêtre factice qui n'altère pas les messages.
 - Le comportement de l'application quand la gomme est détectée (le geste efface quel que soit l'outil actif) et le rendu de l'épaisseur selon la pression.

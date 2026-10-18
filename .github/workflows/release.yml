@@ -51,7 +51,7 @@ jobs:
           cargo test --workspace
 
       - name: Compilation
-        run: cargo build --release -p wb-app -p wb-cli -p wb-mcp
+        run: cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp
 
       - name: Outil d'empaquetage
         run: cargo install cargo-packager --locked

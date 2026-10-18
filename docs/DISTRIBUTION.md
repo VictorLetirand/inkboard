@@ -14,11 +14,11 @@ Un installeur par système, produit par [`cargo-packager`](https://github.com/cr
 | Linux | `.deb`, `.AppImage` (et PKGBUILD) | configurés, **jamais construits ni lancés** |
 | macOS | `.dmg` (et `.app`), Intel et Apple Silicon | configurés, **jamais construits ni lancés** |
 
-L'installeur installe l'application, la CLI de conversion `wb` et le serveur MCP `wb-mcp` côte à côte, ainsi que README et licences. En local (Windows) :
+L'installeur installe l'application, la CLI de conversion `ink` et le serveur MCP `inkboard-mcp` côte à côte, ainsi que README et licences. En local (Windows) :
 
 ```bash
 cargo install cargo-packager --locked
-cargo build --release -p wb-app -p wb-cli -p wb-mcp
+cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp
 cargo packager --release -c Packager.toml --formats nsis     # ou wix
 ```
 
@@ -51,4 +51,4 @@ Sans signature, l'installation fonctionne, avec un avertissement : **SmartScreen
 
 ## Icône
 
-`crates/wb-app/assets/icon.png` (fenêtre) et `icon.ico` (exécutable, intégré par `build.rs` via `embed-resource` ; installeurs : voir `icons` dans `Packager.toml`).
+`crates/inkboard-app/assets/icon.png` (fenêtre) et `icon.ico` (exécutable, intégré par `build.rs` via `embed-resource` ; installeurs : voir `icons` dans `Packager.toml`).

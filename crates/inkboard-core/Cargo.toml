@@ -1,0 +1,16 @@
+[package]
+name = "inkboard-core"
+description = "Moteur du tableau blanc : modèle, géométrie, connecteurs liés, historique, SVG, mise en page."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+
+[lints]
+workspace = true

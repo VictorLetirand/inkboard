@@ -1,0 +1,25 @@
+[package]
+name = "inkboard-mcp"
+description = "Serveur MCP (stdio) du tableau blanc : permet à un agent de créer et modifier des tableaux (fichiers .inkboard.json), d'importer du Mermaid et d'exporter."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "inkboard_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "inkboard-mcp"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.23.1"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+serde_json = "1.0.154"
+inkboard-core = { path = "../inkboard-core" }
+inkboard-formats = { path = "../inkboard-formats" }
+
+[lints]
+workspace = true

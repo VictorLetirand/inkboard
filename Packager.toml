@@ -1,20 +1,20 @@
 # Installeurs : cargo packager --release   (outil : cargo install cargo-packager --locked)
 # Formats produits par système : Windows → NSIS (.exe) et WiX (.msi) ; macOS → .app et .dmg ; Linux → .deb et .AppImage.
-# Prérequis : cargo build --release -p wb-app -p wb-cli -p wb-mcp (le workflow .github/workflows/release.yml le fait).
-name = "tableau-blanc"
-product-name = "Tableau blanc"
+# Prérequis : cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp (le workflow .github/workflows/release.yml le fait).
+name = "inkboard"
+product-name = "Inkboard"
 version = "0.1.0"
-identifier = "org.tableaublanc.app"
-description = "Tableau blanc infini, hors ligne, libre."
-long-description = "Tableau blanc infini 100 % hors ligne : dessin, formes, connecteurs liés, texte riche, formules LaTeX, import et export draw.io / Excalidraw / JSON Canvas / Mermaid, présentation, et un serveur MCP pour piloter le tableau depuis un agent."
-authors = ["Les contributeurs de Tableau blanc"]
-publisher = "Tableau blanc"
-copyright = "Copyright (c) 2026 Les contributeurs de Tableau blanc — MIT OU Apache-2.0"
+identifier = "org.inkboard.app"
+description = "Inkboard, tableau blanc infini, hors ligne et libre."
+long-description = "Inkboard est un tableau blanc infini 100 % hors ligne : dessin, formes, connecteurs liés, texte riche, formules LaTeX, import et export draw.io / Excalidraw / JSON Canvas / Mermaid, présentation, et un serveur MCP pour piloter le tableau depuis un agent."
+authors = ["Les contributeurs d'Inkboard"]
+publisher = "Inkboard"
+copyright = "Copyright (c) 2026 Les contributeurs d'Inkboard — MIT OU Apache-2.0"
 category = "GraphicsAndDesign"
 license-file = "packaging/LICENSE.txt"
 out-dir = "dist"
 binaries-dir = "target/release"
-icons = ["crates/wb-app/assets/icon.ico", "crates/wb-app/assets/icon.png"]
+icons = ["crates/inkboard-app/assets/icon.ico", "crates/inkboard-app/assets/icon.png"]
 resources = [
   { src = "README.md", target = "README.md" },
   { src = "LICENSE-MIT", target = "LICENSE-MIT" },
@@ -23,15 +23,15 @@ resources = [
 ]
 
 [[binaries]]
-path = "tableau-blanc"
+path = "inkboard"
 main = true
 
 # Outils en ligne de commande, installés à côté de l'application (conversion de formats, serveur MCP).
 [[binaries]]
-path = "wb"
+path = "ink"
 
 [[binaries]]
-path = "wb-mcp"
+path = "inkboard-mcp"
 
 # Linux (.deb) : bibliothèques chargées à l'exécution par egui/winit (non testé : aucun Linux disponible pendant le développement).
 [deb]

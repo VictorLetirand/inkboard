@@ -1,0 +1,33 @@
+[package]
+name = "inkboard-app"
+description = "Application de bureau du tableau blanc (egui)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "inkboard"
+path = "src/main.rs"
+
+[dependencies]
+arboard = "3.7.0"
+eframe = "0.33.3"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+rfd = "0.17.2"
+serde_json = "1.0.154"
+inkboard-core = { path = "../inkboard-core" }
+inkboard-pen = { path = "../inkboard-pen" }
+raw-window-handle = "0.6.2"
+inkboard-formats = { path = "../inkboard-formats" }
+inkboard-mcp = { path = "../inkboard-mcp" }
+
+[build-dependencies]
+embed-resource = "3"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+base64 = "0.23.1"
+egui_kittest = { version = "0.33.3", features = ["eframe"] }

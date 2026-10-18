@@ -66,7 +66,7 @@ def main():
             no_file.append((p['name'], p['version'], lic, p.get('repository') or ''))
 
     out = ['# Licences des composants tiers', '',
-           "Les exécutables de Tableau blanc embarquent les bibliothèques ci-dessous (dépendances de production sous Windows, Linux et macOS). Chacune reste sous sa propre licence,",
+           "Les exécutables d'Inkboard embarquent les bibliothèques ci-dessous (dépendances de production sous Windows, Linux et macOS). Chacune reste sous sa propre licence,",
            "toutes permissives. Ce fichier est généré par `scripts/gen_third_party.py`.", '',
            '## Polices embarquées', '',
            '- **STIX Two Math** (composition des formules LaTeX, via la bibliothèque `latex-rust`) : SIL Open Font License 1.1 — texte ci-dessous.',

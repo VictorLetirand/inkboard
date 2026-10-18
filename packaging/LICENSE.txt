@@ -1,4 +1,4 @@
-Tableau blanc
+Inkboard
 
 Ce logiciel est libre. Vous pouvez l'utiliser, le copier, le modifier et le redistribuer selon les termes de l'une OU l'autre des licences ci-dessous, a votre choix
 (double licence MIT OU Apache-2.0).
@@ -9,7 +9,7 @@ Les composants tiers embarques conservent leur propre licence : voir THIRD_PARTY
 
 MIT License
 
-Copyright (c) 2026 Les contributeurs de Tableau blanc
+Copyright (c) 2026 Les contributeurs d'Inkboard
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

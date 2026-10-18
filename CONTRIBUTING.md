@@ -16,6 +16,6 @@ cargo test --workspace
 ```
 
 - Un changement = un sujet ; le diff le plus petit possible, sans refactor non demandé.
-- Une fonctionnalité ou une correction vient avec ses tests (le moteur `wb-core` se teste sans interface ; l'interface se teste avec `egui_kittest`, voir `crates/wb-app/src/tests.rs`).
+- Une fonctionnalité ou une correction vient avec ses tests (le moteur `inkboard-core` se teste sans interface ; l'interface se teste avec `egui_kittest`, voir `crates/inkboard-app/src/tests.rs`).
 - Les dépendances ajoutées doivent être sous licence permissive (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode, OFL pour les polices) : voir `THIRD_PARTY_LICENSES.md` et `docs/DISTRIBUTION.md`.
 - Documentation et messages en français (le code et ses identifiants restent en anglais).
