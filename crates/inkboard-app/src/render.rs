@@ -37,40 +37,112 @@ pub fn col(c: Color, dark: bool, opacity: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, (opacity.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
-/// Rasterization resolution of formulas (SVG): formulas stay sharp up to a high zoom.
-const FORMULA_SCALE: f32 = 4.0;
+/// Fallback rasterization scale of an SVG whose size cannot be read.
+const SVG_FALLBACK_SCALE: f32 = 4.0;
+/// Longest side (pixels) of the smallest and largest SVG rasterizations.
+const SVG_MIN_PX: u32 = 64;
+const SVG_MAX_PX: u32 = 4096;
+/// Inflated textures kept at most (bytes); the least recently used ones are dropped beyond.
+const TEXTURE_BUDGET: usize = 256 << 20;
+/// SVG rasterizations allowed per frame (the others reuse the closest texture already available and finish on the next frames).
+const SVG_PER_FRAME: u32 = 3;
 
-/// Decoded image of an asset; SVGs (formulas) are rasterized.
+/// Decoded image of an asset (bitmaps; SVGs at the fallback scale, used for previews).
 pub fn decode_asset(asset: &Asset) -> Option<egui::ColorImage> {
-    let png;
-    let bytes: &[u8] = if asset.mime == "image/svg+xml" {
-        png = inkboard_formats::raster::svg_to_png(std::str::from_utf8(&asset.data).ok()?, FORMULA_SCALE).ok()?;
-        &png
-    } else {
-        &asset.data
-    };
-    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    if asset.mime == "image/svg+xml" {
+        return rasterize_svg(asset, None);
+    }
+    let img = image::load_from_memory(&asset.data).ok()?.to_rgba8();
     Some(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()))
 }
 
-/// Textures of the document's images, decoded on demand.
+/// Rasterizes an SVG asset so that its longest side is `px` pixels (`None`: the fallback scale).
+fn rasterize_svg(asset: &Asset, px: Option<u32>) -> Option<egui::ColorImage> {
+    let svg = std::str::from_utf8(&asset.data).ok()?;
+    let scale = match (px, inkboard_icons::svg_dimensions(svg)) {
+        (Some(px), Some((w, h))) => (f64::from(px) / w.max(h)) as f32,
+        _ => SVG_FALLBACK_SCALE,
+    };
+    let r = inkboard_formats::raster::svg_to_raster(svg, scale, false).ok()?;
+    Some(egui::ColorImage::from_rgba_premultiplied([r.width as usize, r.height as usize], &r.rgba_premultiplied))
+}
+
+/// Rasterization level of an SVG shown with a longest side of `target_px` screen pixels: the next power of two, so a texture is never
+/// stretched (and at most halved), whether the cause is zooming in or enlarging the object.
+fn svg_level(target_px: f32) -> u32 {
+    (target_px.max(1.0).ceil() as u32).next_power_of_two().clamp(SVG_MIN_PX, SVG_MAX_PX)
+}
+
+struct CachedTexture {
+    tex: TextureHandle,
+    bytes: usize,
+    used: u64,
+}
+
+/// Textures of the document's images, decoded on demand. SVG images are rasterized again when they are shown larger than their current texture.
 #[derive(Default)]
 pub struct TextureCache {
-    map: HashMap<Id, Option<TextureHandle>>,
+    /// `(asset, level)`: level 0 for bitmaps, the rasterized longest side in pixels for SVGs.
+    map: HashMap<(Id, u32), CachedTexture>,
+    /// Assets that cannot be decoded (not tried again).
+    broken: std::collections::HashSet<Id>,
+    frame: Option<u64>,
+    svg_budget: u32,
 }
 
 impl TextureCache {
-    pub fn get(&mut self, ctx: &egui::Context, id: &Id, asset: &Asset) -> Option<&TextureHandle> {
-        self.map
-            .entry(id.clone())
-            .or_insert_with(|| {
-                let img = decode_asset(asset)?;
-                Some(ctx.load_texture(id.as_str(), img, egui::TextureOptions::LINEAR))
-            })
-            .as_ref()
+    /// Texture of an image shown with a longest side of `target_px` screen pixels.
+    pub fn get(&mut self, ctx: &egui::Context, id: &Id, asset: &Asset, target_px: f32) -> Option<TextureHandle> {
+        let now = ctx.cumulative_pass_nr();
+        if self.frame != Some(now) {
+            self.frame = Some(now);
+            self.svg_budget = SVG_PER_FRAME;
+        }
+        if self.broken.contains(id) {
+            return None;
+        }
+        let is_svg = asset.mime == "image/svg+xml";
+        let level = if is_svg { svg_level(target_px) } else { 0 };
+        if let Some(c) = self.map.get_mut(&(id.clone(), level)) {
+            c.used = now;
+            return Some(c.tex.clone());
+        }
+        if is_svg && self.svg_budget == 0 {
+            // no time left this frame: show the closest texture we have and finish later
+            ctx.request_repaint();
+            return self.map.iter().filter(|((i, _), _)| i == id).min_by_key(|((_, l), _)| l.abs_diff(level)).map(|(_, c)| c.tex.clone());
+        }
+        let img = if is_svg {
+            self.svg_budget -= 1;
+            rasterize_svg(asset, Some(level))
+        } else {
+            decode_asset(asset)
+        };
+        let Some(img) = img else {
+            self.broken.insert(id.clone());
+            return None;
+        };
+        let bytes = img.pixels.len() * 4;
+        let tex = ctx.load_texture(format!("{}@{level}", id.as_str()), img, egui::TextureOptions::LINEAR);
+        self.map.insert((id.clone(), level), CachedTexture { tex: tex.clone(), bytes, used: now });
+        self.evict(&(id.clone(), level));
+        Some(tex)
     }
+
+    /// Drops the least recently used textures while the cache is over its budget (never the one just created).
+    fn evict(&mut self, keep: &(Id, u32)) {
+        let mut total: usize = self.map.values().map(|c| c.bytes).sum();
+        while total > TEXTURE_BUDGET {
+            let Some(oldest) = self.map.iter().filter(|(k, _)| *k != keep).min_by_key(|(_, c)| c.used).map(|(k, _)| k.clone()) else { break };
+            if let Some(c) = self.map.remove(&oldest) {
+                total -= c.bytes;
+            }
+        }
+    }
+
     pub fn clear(&mut self) {
         self.map.clear();
+        self.broken.clear();
     }
 }
 
@@ -431,7 +503,8 @@ impl Renderer<'_> {
         let Some(asset) = self.doc.assets.get(&i.asset) else { return };
         let ctx = self.painter.ctx().clone();
         let corners: Vec<Pos2> = i.frame.corners().iter().map(|p| self.cam.s(*p)).collect();
-        match self.textures.get(&ctx, &i.asset, asset) {
+        let target_px = (i.frame.w.max(i.frame.h) as f32 * self.cam.zoom) * ctx.pixels_per_point();
+        match self.textures.get(&ctx, &i.asset, asset, target_px) {
             Some(tex) => {
                 let uvs = [pos2(0.0, 0.0), pos2(1.0, 0.0), pos2(1.0, 1.0), pos2(0.0, 1.0)];
                 let mut mesh = Mesh::with_texture(tex.id());

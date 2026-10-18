@@ -1557,3 +1557,23 @@ fn every_library_icon_renders() {
     }
     assert!(failures.is_empty(), "{} icons do not render, e.g. {:?}", failures.len(), &failures[..failures.len().min(10)]);
 }
+
+/* ------------------------------------------------------------ svg resolution */
+
+#[test]
+fn svg_images_are_rasterized_at_the_size_they_are_shown() {
+    use crate::render::TextureCache;
+    let ctx = egui::Context::default();
+    let mut t = T::new();
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20"><circle cx="10" cy="10" r="9" fill="#08f"/></svg>"##;
+    let aid = t.app().ed.doc.add_asset("image/svg+xml", svg.to_vec());
+    let asset = t.app().ed.doc.assets.get(&aid).unwrap().clone();
+    let mut cache = TextureCache::default();
+    // power-of-two levels: never stretched, at most halved
+    assert_eq!(cache.get(&ctx, &aid, &asset, 40.0).unwrap().size(), [64, 64], "small");
+    assert_eq!(cache.get(&ctx, &aid, &asset, 700.0).unwrap().size(), [1024, 1024], "enlarged icon: sharp, not a stretched thumbnail");
+    assert_eq!(cache.get(&ctx, &aid, &asset, 1500.0).unwrap().size(), [2048, 2048]);
+    // only three rasterizations per frame: the fourth reuses the closest existing texture
+    assert_eq!(cache.get(&ctx, &aid, &asset, 3000.0).unwrap().size(), [2048, 2048], "closest texture while waiting");
+    assert_eq!(cache.get(&ctx, &aid, &asset, 40.0).unwrap().size(), [64, 64], "already cached levels are free");
+}
