@@ -22,7 +22,8 @@ CI runs the same checks on Windows, Linux and macOS with the latest stable Rust.
   (see `crates/inkboard-app/src/tests.rs`).
 - New dependencies must have a permissive license (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode, OFL for fonts). After changing dependencies, run
   `python scripts/gen_third_party.py` to refresh `THIRD_PARTY_LICENSES.md` (it fails on a non-permissive license).
-- The in-depth documentation (`docs/`) is currently written in French; English contributions to it are very welcome.
+- User-facing strings are written in English in the code and wrapped in `t("…")` / `tr!("…")`; French lives in `crates/inkboard-app/src/i18n_fr.rs`. Add a translation there when you add a string (a test fails if a key is missing or duplicated).
+- Documentation is English first (`docs/`), with French copies in `docs/fr/`.
 
 ## Reporting bugs
 

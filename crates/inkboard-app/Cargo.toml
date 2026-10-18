@@ -1,6 +1,6 @@
 [package]
 name = "inkboard-app"
-description = "Application de bureau du tableau blanc (egui)."
+description = "Inkboard desktop application (egui)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,6 +21,7 @@ inkboard-pen = { path = "../inkboard-pen" }
 raw-window-handle = "0.6.2"
 inkboard-formats = { path = "../inkboard-formats" }
 inkboard-mcp = { path = "../inkboard-mcp" }
+sys-locale = "0.3"
 
 [build-dependencies]
 embed-resource = "3"

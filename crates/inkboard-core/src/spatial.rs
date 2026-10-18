@@ -1,13 +1,13 @@
-//! Index spatial par grille : retrouver rapidement les objets d'une zone (affichage, clic, lasso).
+//! Grid-based spatial index: quickly find the objects of an area (drawing, click, marquee).
 //!
-//! L'index est une photo de la page à un instant donné : à reconstruire quand les objets changent
-//! (l'application le fait à chaque nouvelle révision du document).
+//! The index is a snapshot of the page at a given time: rebuild it when the objects change
+//! (the application does so on every new document revision).
 
 use crate::geom::{Pt, Rect};
 use crate::model::{Id, Object, Page};
 use std::collections::HashMap;
 
-/// Au-delà de ce nombre de cellules, un objet est rangé dans la liste des « grands » objets, toujours testés.
+/// Above this number of cells an object goes in the list of "large" objects, which are always tested.
 const MAX_CELLS_PER_OBJECT: i64 = 64;
 
 #[derive(Debug, Default)]
@@ -18,13 +18,13 @@ pub struct SpatialIndex {
     bounds: Vec<Rect>,
 }
 
-/// Table identifiant → position dans `page.objects` (la recherche directe est linéaire).
+/// Id → position table in `page.objects` (direct lookup is linear).
 pub fn id_index(page: &Page) -> HashMap<Id, usize> {
     page.objects.iter().enumerate().map(|(i, o)| (o.id.clone(), i)).collect()
 }
 
 impl SpatialIndex {
-    /// Construit l'index d'une page. `ids` doit correspondre à `page` (voir [`id_index`]).
+    /// Builds the index of a page. `ids` must match `page` (see [`id_index`]).
     pub fn build(page: &Page, ids: &HashMap<Id, usize>) -> Self {
         let get = |id: &Id| ids.get(id).map(|&i| &page.objects[i]);
         let bounds: Vec<Rect> = page.objects.iter().map(|o| page.bounds_with(o, &get)).collect();
@@ -56,7 +56,7 @@ impl SpatialIndex {
         ((x / self.cell).floor().clamp(-1.0e9, 1.0e9) as i32, (y / self.cell).floor().clamp(-1.0e9, 1.0e9) as i32)
     }
 
-    /// Boîte englobante en cache de l'objet `i`.
+    /// Cached bounding box of object `i`.
     pub fn bounds(&self, i: usize) -> Rect {
         self.bounds[i]
     }
@@ -69,13 +69,13 @@ impl SpatialIndex {
         self.bounds.is_empty()
     }
 
-    /// Indices (croissants, donc dans l'ordre de dessin) des objets dont la boîte touche `r`.
+    /// Indices (increasing, hence in drawing order) of the objects whose box touches `r`.
     pub fn query(&self, r: Rect) -> Vec<usize> {
         let ((x0, y0), (x1, y1)) = (self.cell_of(r.x, r.y), self.cell_of(r.right(), r.bottom()));
         let mut out: Vec<u32> = self.large.clone();
         let span = (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1);
         if span as usize > self.cells.len() {
-            // zone plus vaste que le nombre de cellules occupées : on parcourt les cellules existantes
+            // area larger than the number of occupied cells: walk the existing cells
             for (&(cx, cy), v) in &self.cells {
                 if cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1 {
                     out.extend_from_slice(v);
@@ -95,13 +95,13 @@ impl SpatialIndex {
         out.into_iter().map(|i| i as usize).filter(|&i| self.bounds[i].intersects(&r)).collect()
     }
 
-    /// Objets dont la boîte contient ou touche le point `p` à `tol` près.
+    /// Objects whose box contains or touches point `p` within `tol`.
     pub fn query_point(&self, p: Pt, tol: f64) -> Vec<usize> {
         self.query(Rect::new(p.x - tol, p.y - tol, 2.0 * tol, 2.0 * tol))
     }
 }
 
-/// Fournit la recherche d'objet par identifiant pour les fonctions `*_with`.
+/// Provides the object lookup by id for the `*_with` functions.
 pub fn getter<'a>(page: &'a Page, ids: &'a HashMap<Id, usize>) -> impl Fn(&Id) -> Option<&'a Object> {
     move |id| ids.get(id).map(|&i| &page.objects[i])
 }
@@ -160,7 +160,7 @@ mod tests {
         p.objects.push(Object::new(Kind::Connector(Connector::new(End::bound(ia), End::bound(ib))), Style::default()));
         let ids = id_index(&p);
         let idx = SpatialIndex::build(&p, &ids);
-        assert!(idx.query_point(Pt::new(500.0, 25.0), 1.0).contains(&2), "la flèche traverse le milieu");
+        assert!(idx.query_point(Pt::new(500.0, 25.0), 1.0).contains(&2), "the arrow crosses the middle");
         assert!(!idx.query_point(Pt::new(500.0, 500.0), 1.0).contains(&2));
     }
 

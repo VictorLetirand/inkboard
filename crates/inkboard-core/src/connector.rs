@@ -1,9 +1,9 @@
-//! Connecteurs (flèches et lignes) liés aux objets.
+//! Connectors (arrows and lines) bound to objects.
 //!
-//! Un connecteur stocke seulement ses extrémités : libres (un point) ou liées à
-//! un objet (identifiant + ancre). Le tracé est **recalculé à la demande** à
-//! partir de l'état courant de la page : déplacer, redimensionner ou faire
-//! tourner une forme fait donc suivre ses flèches sans aucune mise à jour.
+//! A connector only stores its ends: free (a point) or bound to
+//! an object (id + anchor). The path is **recomputed on demand** from
+//! the page's current state: moving, resizing or rotating a shape
+//! therefore makes its arrows follow with no update at all.
 
 use crate::geom::{Frame, Pt, Rect, ray_poly_hit};
 use crate::model::{Id, Kind, Label, Object, Outline, Page};
@@ -13,10 +13,10 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Anchor {
-    /// Point du contour tourné vers l'autre extrémité.
+    /// Point of the outline facing the other end.
     #[default]
     Auto,
-    /// Position relative dans la boîte de la cible (0..1 en x et en y).
+    /// Relative position in the target's box (0..1 in x and y).
     Frac { fx: f64, fy: f64 },
 }
 
@@ -73,7 +73,7 @@ pub enum Arrowhead {
 pub struct Connector {
     pub start: End,
     pub end: End,
-    /// Points de passage intermédiaires.
+    /// Intermediate waypoints.
     #[serde(default)]
     pub via: Vec<Pt>,
     #[serde(default)]
@@ -93,7 +93,7 @@ impl Connector {
     pub fn straight(a: Pt, b: Pt) -> Self {
         Self::new(End::free(a), End::free(b))
     }
-    /// Déplace les extrémités libres et les points de passage.
+    /// Moves the free ends and the waypoints.
     pub fn translate_free(&mut self, d: Pt) {
         self.map_free(|p| p + d);
     }
@@ -112,7 +112,7 @@ impl Connector {
     }
 }
 
-/* ---------------------------------------------------------- Géométrie */
+/* ---------------------------------------------------------- Geometry */
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
@@ -155,7 +155,7 @@ fn side_toward(f: &Frame, toward: Pt) -> Side {
     }
 }
 
-/// Point du contour de l'objet, dans la direction de `toward`.
+/// Point of the object's outline, in the direction of `toward`.
 pub fn boundary_hit(outline: Outline, f: &Frame, toward: Pt) -> Pt {
     let mut dir = f.to_local(toward);
     if dir.len() < 1e-9 {
@@ -194,14 +194,14 @@ fn simplify(pts: Vec<Pt>) -> Vec<Pt> {
     out
 }
 
-/// Longueur de la sortie perpendiculaire à un côté de forme.
+/// Length of the perpendicular exit from a shape side.
 const STUB: f64 = 24.0;
-/// Dégagement minimal entre un connecteur coudé et les formes qu'il contourne.
+/// Minimum clearance between an elbow connector and the shapes it goes around.
 const CLEARANCE: f64 = 14.0;
-/// Au-delà de ce nombre d'objets, les connecteurs coudés ne cherchent plus à contourner les formes (coût linéaire par connecteur).
+/// Above this many objects, elbow connectors no longer try to go around shapes (linear cost per connector).
 const AVOID_MAX_OBJECTS: usize = 5000;
 
-/// Chemin orthogonal entre deux points, avec sortie perpendiculaire aux côtés.
+/// Orthogonal path between two points, leaving perpendicular to the sides.
 fn orthogonal(a: Pt, sa: Option<Side>, b: Pt, sb: Option<Side>) -> Vec<Pt> {
     let a1 = sa.map_or(a, |s| a + s.dir() * STUB);
     let b1 = sb.map_or(b, |s| b + s.dir() * STUB);
@@ -254,7 +254,7 @@ fn catmull_rom(pts: &[Pt]) -> Vec<Pt> {
     out
 }
 
-/// Point situé à mi-longueur du chemin, et angle de la tangente en ce point.
+/// Point at half the path length, and the tangent angle at that point.
 pub fn path_midpoint(path: &[Pt]) -> (Pt, f64) {
     let total: f64 = path.windows(2).map(|w| w[0].dist(w[1])).sum();
     let mut acc = 0.0;
@@ -270,7 +270,7 @@ pub fn path_midpoint(path: &[Pt]) -> (Pt, f64) {
     (path.first().copied().unwrap_or_default(), 0.0)
 }
 
-/// Sommets de la pointe de flèche : `tip` est l'extrémité, `from` un point en amont.
+/// Vertices of the arrowhead: `tip` is the end, `from` a point upstream.
 pub fn head_points(tip: Pt, from: Pt, size: f64, head: Arrowhead) -> Vec<Pt> {
     let d = (tip - from).normalized();
     let n = Pt::new(-d.y, d.x);
@@ -326,14 +326,14 @@ impl Page {
         }
     }
 
-    /// Index des objets par identifiant : à construire une fois par image pour dessiner de
-    /// nombreux connecteurs (la recherche directe est linéaire).
+    /// Index of objects by id: build it once per frame to draw many connectors
+    /// (direct lookup is linear).
     pub fn index(&self) -> HashMap<&Id, &Object> {
         self.objects.iter().map(|o| (&o.id, o)).collect()
     }
 
-    /// Si le chemin coudé traverse une autre forme, cherche un chemin orthogonal qui la contourne ;
-    /// sinon (ou si rien n'est trouvé) renvoie le chemin d'origine.
+    /// If the elbow path crosses another shape, looks for an orthogonal path around it;
+    /// otherwise (or when nothing is found) returns the original path.
     fn avoid_obstacles(&self, path: Vec<Pt>, a: &Attach, b: &Attach, c: &Connector) -> Vec<Pt> {
         if self.objects.len() > AVOID_MAX_OBJECTS || path.len() < 2 {
             return path;
@@ -362,12 +362,12 @@ impl Page {
         simplify(out)
     }
 
-    /// Tracé (polyligne) du connecteur ; `None` si une cible a disparu.
+    /// Path (polyline) of the connector; `None` when a target has disappeared.
     pub fn connector_path(&self, c: &Connector) -> Option<Vec<Pt>> {
         self.connector_path_with(c, &|id| self.get(id))
     }
 
-    /// Comme [`Page::connector_path`], avec une recherche d'objet fournie (ex. [`Page::index`]).
+    /// Like [`Page::connector_path`], with a supplied object lookup (e.g. [`Page::index`]).
     pub fn connector_path_with<'a>(&self, c: &Connector, get: &dyn Fn(&Id) -> Option<&'a Object>) -> Option<Vec<Pt>> {
         let (sref, sobj) = Self::end_ref(get, &c.start)?;
         let (eref, eobj) = Self::end_ref(get, &c.end)?;
@@ -413,7 +413,7 @@ impl Page {
         })
     }
 
-    /// Détache (rend libres) les extrémités liées à des objets de `gone`, à leur position actuelle.
+    /// Detaches (frees) the ends bound to objects of `gone`, at their current position.
     pub fn detach_ends_to(&self, c: &Connector, gone: &[Id]) -> Option<Connector> {
         let hits = |e: &End| e.target().is_some_and(|t| gone.contains(t));
         if !hits(&c.start) && !hits(&c.end) {
@@ -483,7 +483,7 @@ mod tests {
         let mut f = Frame::new(0.0, 0.0, 100.0, 100.0);
         f.angle = std::f64::consts::FRAC_PI_4;
         let p = boundary_hit(Outline::Rect, &f, Pt::new(1000.0, 50.0));
-        // la pointe du carré tourné de 45° est à 50*sqrt(2) du centre
+        // the tip of the square rotated by 45° is at 50*sqrt(2) from the center
         assert!((p.dist(Pt::new(50.0, 50.0)) - 50.0 * 2f64.sqrt()).abs() < 1e-6);
     }
 
@@ -497,7 +497,7 @@ mod tests {
         let path = p.connector_path(&c).unwrap();
         assert!(path.len() >= 3);
         for w in path.windows(2) {
-            assert!((w[0].x - w[1].x).abs() < 1e-6 || (w[0].y - w[1].y).abs() < 1e-6, "segment oblique : {w:?}");
+            assert!((w[0].x - w[1].x).abs() < 1e-6 || (w[0].y - w[1].y).abs() < 1e-6, "oblique segment: {w:?}");
         }
     }
 
@@ -535,9 +535,9 @@ mod tests {
         c.route = Route::Elbow;
         let path = p.connector_path(&c).unwrap();
         let wall_rect = p.get(&wall).unwrap().frame().unwrap().aabb();
-        assert!(!crosses(&path, &[wall_rect]), "le chemin contourne l'obstacle : {path:?}");
+        assert!(!crosses(&path, &[wall_rect]), "the path goes around the obstacle: {path:?}");
         for w in path.windows(2) {
-            assert!((w[0].x - w[1].x).abs() < 1e-6 || (w[0].y - w[1].y).abs() < 1e-6, "segment oblique : {w:?}");
+            assert!((w[0].x - w[1].x).abs() < 1e-6 || (w[0].y - w[1].y).abs() < 1e-6, "oblique segment: {w:?}");
         }
         assert!(path[0].dist(Pt::new(100.0, 25.0)) < 1e-6 && path.last().unwrap().dist(Pt::new(500.0, 25.0)) < 1e-6);
     }
@@ -547,7 +547,7 @@ mod tests {
         let mut p = Page::new("t");
         let a = bx(&mut p, BoxGeom::Rect, 0.0, 0.0, 100.0, 50.0);
         let b = bx(&mut p, BoxGeom::Rect, 300.0, 200.0, 100.0, 50.0);
-        bx(&mut p, BoxGeom::Rect, 900.0, 900.0, 100.0, 50.0); // loin de tout
+        bx(&mut p, BoxGeom::Rect, 900.0, 900.0, 100.0, 50.0); // far from everything
         let mut c = Connector::new(End::bound(a.clone()), End::bound(b.clone()));
         c.route = Route::Elbow;
         let with_far_shape = p.connector_path(&c).unwrap();

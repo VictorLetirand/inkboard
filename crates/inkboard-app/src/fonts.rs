@@ -1,4 +1,4 @@
-//! Polices : chargement des polices système (Windows) et mesure de texte pour le moteur.
+//! Fonts: loading of system fonts (Windows) and text measurement for the engine.
 
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily as EFamily, FontId};
 use inkboard_core::FontFamily;
@@ -16,7 +16,7 @@ fn read_system_font(file: &str) -> Option<Vec<u8>> {
     dirs.iter().find_map(|d| std::fs::read(std::path::Path::new(d).join(file)).ok())
 }
 
-/// Installe les polices du tableau (Segoe UI, Segoe Print, Georgia, Consolas quand elles existent).
+/// Installs the board's fonts (Segoe UI, Segoe Print, Georgia, Consolas when they exist).
 pub fn install(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
     let base_prop = defs.families.get(&EFamily::Proportional).cloned().unwrap_or_default();
@@ -45,7 +45,7 @@ pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(defs);
 }
 
-/// Police egui correspondant à une famille du modèle.
+/// egui font corresponding to a model font family.
 pub fn font_id(f: FontFamily, size: f32, bold: bool) -> FontId {
     let name = match (f, bold) {
         (FontFamily::Sans, true) => SANS_BOLD,
@@ -57,7 +57,7 @@ pub fn font_id(f: FontFamily, size: f32, bold: bool) -> FontId {
     FontId::new(size.max(1.0), EFamily::Name(name.into()))
 }
 
-/// Mesure exacte du texte avec les polices de l'application.
+/// Exact text measurement with the application's fonts.
 #[derive(Clone)]
 pub struct EguiMeasurer(pub egui::Context);
 

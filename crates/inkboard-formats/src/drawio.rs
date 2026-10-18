@@ -1,9 +1,9 @@
 //! draw.io / diagrams.net (`.drawio`, mxGraph XML).
 //!
-//! Export : XML non compressé, une `<diagram>` par page. Les connecteurs liés
-//! restent liés (attributs `source` / `target`), les traits au crayon deviennent des images SVG.
-//! Import : XML compressé ou non, plusieurs pages, formes, texte riche, images intégrées,
-//! arêtes (liées ou libres, points de passage, flèches, étiquettes).
+//! Export: uncompressed XML, one `<diagram>` per page. Bound connectors
+//! stay bound (`source` / `target` attributes), pen strokes become SVG images.
+//! Import: compressed or not, several pages, shapes, rich text, embedded images,
+//! edges (bound or free, waypoints, arrows, labels).
 
 use crate::common::{FormatError, Imported, Report, data_url, font_family, parse_color, parse_data_url, round2};
 use crate::xml::{self, Node, esc};
@@ -243,7 +243,7 @@ fn page_xml(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
     )
 }
 
-/// Exporte toutes les pages du document au format draw.io (XML non compressé).
+/// Exports all the document's pages in draw.io format (uncompressed XML).
 pub fn export(doc: &Document, m: &dyn Measurer) -> String {
     let pages: String = doc.pages.iter().map(|p| page_xml(doc, p, m)).collect();
     format!("<mxfile host=\"Inkboard\" agent=\"Inkboard\" version=\"1.0\" type=\"device\">{pages}</mxfile>")
@@ -354,7 +354,7 @@ fn entity(name: &str) -> Option<char> {
     }
 }
 
-/// Convertit le HTML des étiquettes draw.io (sous-ensemble courant) en texte riche.
+/// Converts draw.io label HTML (common subset) to rich text.
 pub fn html_to_rich(h: &str) -> RichText {
     let mut spans: Vec<Span> = Vec::new();
     let mut stack: Vec<(String, SpanStyle)> = Vec::new();
@@ -471,9 +471,9 @@ pub fn html_to_rich(h: &str) -> RichText {
 fn inflate(raw: &str) -> Result<String, FormatError> {
     use base64::{Engine, engine::general_purpose::STANDARD};
     let bytes =
-        STANDARD.decode(raw.split_whitespace().collect::<String>().as_bytes()).map_err(|_| FormatError::Invalid("diagramme compressé illisible".into()))?;
+        STANDARD.decode(raw.split_whitespace().collect::<String>().as_bytes()).map_err(|_| FormatError::Invalid("unreadable compressed diagram".into()))?;
     let mut s = String::new();
-    DeflateDecoder::new(bytes.as_slice()).read_to_string(&mut s).map_err(|_| FormatError::Invalid("décompression impossible".into()))?;
+    DeflateDecoder::new(bytes.as_slice()).read_to_string(&mut s).map_err(|_| FormatError::Invalid("cannot decompress".into()))?;
     let decoded = percent_encoding::percent_decode_str(&s).decode_utf8_lossy().into_owned();
     Ok(decoded)
 }
@@ -571,7 +571,7 @@ impl Builder<'_> {
         page
     }
 
-    /// Crée l'objet d'un sommet ; renvoie l'identifiant s'il peut recevoir des connecteurs.
+    /// Creates the object of a vertex; returns its id when it can receive connectors.
     fn vertex(&mut self, c: &Cell, r: Rect, out: &mut Vec<Object>) -> Option<Id> {
         let s = &c.style;
         let shape = s.get("shape").map(|v| v.to_ascii_lowercase()).unwrap_or_else(|| c.names.first().map(|n| n.to_ascii_lowercase()).unwrap_or_default());
@@ -594,7 +594,7 @@ impl Builder<'_> {
             out.push(obj);
             return Some(id);
         }
-        // texte libre
+        // free text
         if c.names.iter().any(|n| n == "text") || s.get("shape").is_some_and(|v| v == "text") {
             let mut label = label_for(c, Align::Left);
             if label.text.is_empty() {
@@ -735,7 +735,7 @@ impl Builder<'_> {
     }
 }
 
-/// Importe un fichier draw.io (compressé ou non, une ou plusieurs pages).
+/// Imports a draw.io file (compressed or not, one or several pages).
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
     let root = xml::parse(content).map_err(FormatError::Invalid)?;
     let mut diagrams: Vec<&Node> = Vec::new();
@@ -744,7 +744,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
     } else {
         root.find_all("diagram", &mut diagrams);
         if diagrams.is_empty() {
-            return Err(FormatError::Invalid("aucun diagramme draw.io".into()));
+            return Err(FormatError::Invalid("no draw.io diagram".into()));
         }
     }
     let mut b = Builder { m, assets: Default::default(), report: Report::default() };
@@ -805,17 +805,17 @@ mod tests {
     fn export_is_wellformed_and_roundtrips_structure() {
         let d = sample_document();
         let xml = export(&d, &ApproxMeasurer);
-        let root = crate::xml::parse(&xml).expect("XML bien formé");
+        let root = crate::xml::parse(&xml).expect("well-formed XML");
         assert_eq!(root.name, "mxfile");
         let r = import(&xml, "x", &ApproxMeasurer).unwrap();
         let p = &r.doc.pages[0];
-        // le crayon revient sous forme d'image, tout le reste garde sa nature
+        // the pen comes back as an image, everything else keeps its nature
         let k = kinds(p);
         assert_eq!(k.iter().filter(|x| **x == "conn").count(), 2);
         for want in ["rect", "ellipse", "diamond", "triangle", "sticky", "text"] {
-            assert!(k.contains(&want), "{want} manquant dans {k:?}");
+            assert!(k.contains(&want), "{want} missing from {k:?}");
         }
-        assert_eq!(k.iter().filter(|x| **x == "image").count(), 2, "image + trait converti en image");
+        assert_eq!(k.iter().filter(|x| **x == "image").count(), 2, "image + stroke converted to an image");
         assert_eq!(r.report.skipped, 0);
     }
 
@@ -828,7 +828,7 @@ mod tests {
         assert!(matches!(bound[0].start, End::Bound { .. }) && matches!(bound[0].end, End::Bound { .. }));
         assert!(p.connector_path(bound[0]).is_some());
         assert!(matches!(bound[1].start, End::Bound { .. }) && matches!(bound[1].end, End::Free { .. }));
-        assert_eq!(bound[0].label.as_ref().unwrap().text.to_plain(), "oui");
+        assert_eq!(bound[0].label.as_ref().unwrap().text.to_plain(), "yes");
     }
 
     #[test]
@@ -837,24 +837,24 @@ mod tests {
         let r = import(&export(&d, &ApproxMeasurer), "x", &ApproxMeasurer).unwrap();
         let rect =
             r.doc.pages[0].objects.iter().find_map(|o| if let Kind::Box(b) = &o.kind { (b.geom == BoxGeom::Rect).then_some((o, b)) } else { None }).unwrap();
-        assert_eq!(rect.1.label.text.to_plain(), "Début\nligne 2");
-        assert!(rect.1.label.text.0[0].style.bold, "gras conservé : {:?}", rect.1.label.text);
+        assert_eq!(rect.1.label.text.to_plain(), "Start\nline 2");
+        assert!(rect.1.label.text.0[0].style.bold, "bold kept: {:?}", rect.1.label.text);
         assert_eq!(rect.0.style.fill, Some(Color::Rgb(165, 216, 255)));
         assert!(rect.0.style.roundness > 0.3);
         let ell =
             r.doc.pages[0].objects.iter().find_map(|o| if let Kind::Box(b) = &o.kind { (b.geom == BoxGeom::Ellipse).then_some((o, b)) } else { None }).unwrap();
         assert_eq!(ell.0.style.dash, Dash::Dashed);
-        assert!((ell.1.frame.angle - 0.3).abs() < 0.01, "rotation conservée");
+        assert!((ell.1.frame.angle - 0.3).abs() < 0.01, "rotation kept");
     }
 
     #[test]
     fn imports_foreign_drawio_with_edges_waypoints_and_unknown_shapes() {
         let src = r##"<mxfile><diagram name="P"><mxGraphModel background="#ffffff"><root><mxCell id="0"/><mxCell id="1" parent="0"/>
  <mxCell id="a" value="Start" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="80" height="80" as="geometry"/></mxCell>
- <mxCell id="b" value="&lt;b&gt;Étape&lt;/b&gt;&lt;br&gt;2" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="240" y="50" width="120" height="60" as="geometry"/></mxCell>
+ <mxCell id="b" value="&lt;b&gt;Step&lt;/b&gt;&lt;br&gt;2" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="240" y="50" width="120" height="60" as="geometry"/></mxCell>
  <mxCell id="c" value="Cyl" style="shape=cylinder3;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="440" y="40" width="70" height="90" as="geometry"/></mxCell>
- <object label="Objet" id="d"><mxCell style="rhombus;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="200" width="100" height="80" as="geometry"/></mxCell></object>
- <mxCell id="t" value="Titre" style="text;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="200" y="0" width="100" height="30" as="geometry"/></mxCell>
+ <object label="Object" id="d"><mxCell style="rhombus;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="200" width="100" height="80" as="geometry"/></mxCell></object>
+ <mxCell id="t" value="Title" style="text;html=1;align=center;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="200" y="0" width="100" height="30" as="geometry"/></mxCell>
  <mxCell id="e1" value="go" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"/></mxCell>
  <mxCell id="e2" style="endArrow=none;startArrow=oval;dashed=1;html=1;" edge="1" parent="1" source="b" target="c"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="400" y="160"/></Array></mxGeometry></mxCell>
  <mxCell id="e3" style="html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="10" y="300" as="sourcePoint"/><mxPoint x="200" y="300" as="targetPoint"/></mxGeometry></mxCell>
@@ -863,26 +863,26 @@ mod tests {
         let r = import(src, "ext", &ApproxMeasurer).unwrap();
         let p = &r.doc.pages[0];
         assert_eq!(p.name, "P");
-        assert_eq!(r.report.approximated, 1, "cylindre approximé");
-        assert_eq!(r.report.skipped, 1, "arête sans extrémités");
+        assert_eq!(r.report.approximated, 1, "cylinder approximated");
+        assert_eq!(r.report.skipped, 1, "edge without ends");
         let conns: Vec<&Connector> = p.objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
         assert_eq!(conns.len(), 3);
         assert_eq!(conns[0].route, Route::Elbow);
-        assert_eq!(conns[0].head_end, Arrowhead::Triangle, "classic par défaut");
+        assert_eq!(conns[0].head_end, Arrowhead::Triangle, "classic by default");
         assert_eq!(conns[0].label.as_ref().unwrap().text.to_plain(), "go");
         assert_eq!(conns[1].head_end, Arrowhead::None);
         assert_eq!(conns[1].head_start, Arrowhead::Dot);
         assert_eq!(conns[1].via, vec![Pt::new(400.0, 160.0)]);
         assert!(matches!(conns[2].start, End::Free { .. }));
-        // texte riche (gras) de l'étape 2 et objet enveloppé
+        // rich text (bold) of step 2 and a wrapped object
         let b = p
             .objects
             .iter()
-            .find_map(|o| if let Kind::Box(b) = &o.kind { (b.label.text.to_plain() == "Étape\n2").then_some(b) } else { None })
-            .expect("étiquette HTML convertie");
+            .find_map(|o| if let Kind::Box(b) = &o.kind { (b.label.text.to_plain() == "Step\n2").then_some(b) } else { None })
+            .expect("HTML label converted");
         assert!(b.label.text.0[0].style.bold);
-        assert!(p.objects.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.label.text.to_plain() == "Objet" && b.geom == BoxGeom::Diamond)));
-        assert!(p.objects.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Text && b.label.text.to_plain() == "Titre")));
+        assert!(p.objects.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.label.text.to_plain() == "Object" && b.geom == BoxGeom::Diamond)));
+        assert!(p.objects.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Text && b.label.text.to_plain() == "Title")));
         assert_eq!(r.doc.background.preset, BgPreset::White);
     }
 
@@ -896,22 +896,22 @@ mod tests {
         let mut z = DeflateEncoder::new(Vec::new(), Compression::default());
         z.write_all(enc.as_bytes()).unwrap();
         let packed = STANDARD.encode(z.finish().unwrap());
-        let src = format!("<mxfile><diagram name=\"Compressé\" id=\"x\">{packed}</diagram></mxfile>");
+        let src = format!("<mxfile><diagram name=\"Compressed\" id=\"x\">{packed}</diagram></mxfile>");
         let r = import(&src, "z", &ApproxMeasurer).unwrap();
-        assert_eq!(r.doc.pages[0].name, "Compressé");
+        assert_eq!(r.doc.pages[0].name, "Compressed");
         assert!(matches!(&r.doc.pages[0].objects[0].kind, Kind::Box(b) if b.label.text.to_plain() == "Zip é"));
-        assert!(import("<mxfile><diagram>!!!pas-du-base64!!!</diagram></mxfile>", "z", &ApproxMeasurer).is_err());
+        assert!(import("<mxfile><diagram>!!!not-base64!!!</diagram></mxfile>", "z", &ApproxMeasurer).is_err());
     }
 
     #[test]
     fn multiple_pages_roundtrip_and_containers_offset_children() {
         let mut d = sample_document();
-        let mut p2 = Page::new("Deuxième");
+        let mut p2 = Page::new("Second");
         p2.objects.push(Object::new_box(BoxGeom::Rect, Frame::new(5.0, 5.0, 50.0, 50.0), Style::default(), Label::new("p2", 20.0, Align::Center)));
         d.pages.push(p2);
         let r = import(&export(&d, &ApproxMeasurer), "x", &ApproxMeasurer).unwrap();
         assert_eq!(r.doc.pages.len(), 2);
-        assert_eq!(r.doc.pages[1].name, "Deuxième");
+        assert_eq!(r.doc.pages[1].name, "Second");
         let src = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
           <mxCell id="g" value="" style="swimlane;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="300" height="200" as="geometry"/></mxCell>
           <mxCell id="k" value="enfant" style="rounded=0;" vertex="1" parent="g"><mxGeometry x="20" y="40" width="80" height="40" as="geometry"/></mxCell></root></mxGraphModel>"#;
@@ -921,19 +921,19 @@ mod tests {
             .iter()
             .find_map(|o| if let Kind::Box(b) = &o.kind { (b.label.text.to_plain() == "enfant").then_some(b.frame) } else { None })
             .unwrap();
-        assert_eq!((child.x, child.y), (120.0, 140.0), "coordonnées relatives au conteneur");
+        assert_eq!((child.x, child.y), (120.0, 140.0), "coordinates relative to the container");
     }
 
     #[test]
     fn html_conversion_handles_entities_and_blocks() {
         let r = html_to_rich(
-            "a &lt;b&gt; &amp; c<div>ligne 2</div><span style=\"color:#ff0000;background-color:#ffff00\">rouge</span><font color=\"#00ff00\">vert</font>",
+            "a &lt;b&gt; &amp; c<div>line 2</div><span style=\"color:#ff0000;background-color:#ffff00\">red</span><font color=\"#00ff00\">green</font>",
         );
-        assert_eq!(r.to_plain(), "a <b> & c\nligne 2\nrougevert");
-        let red = r.0.iter().find(|s| s.text == "rouge").unwrap();
+        assert_eq!(r.to_plain(), "a <b> & c\nline 2\nredgreen");
+        let red = r.0.iter().find(|s| s.text == "red").unwrap();
         assert_eq!(red.style.color, Some(Color::Rgb(255, 0, 0)));
         assert!(red.style.highlight.is_some());
-        assert_eq!(r.0.iter().find(|s| s.text == "vert").unwrap().style.color, Some(Color::Rgb(0, 255, 0)));
+        assert_eq!(r.0.iter().find(|s| s.text == "green").unwrap().style.color, Some(Color::Rgb(0, 255, 0)));
         assert!(html_to_rich("<b>x</b>").0[0].style.bold);
         assert!(html_to_rich("").is_empty());
     }

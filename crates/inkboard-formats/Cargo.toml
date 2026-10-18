@@ -1,6 +1,6 @@
 [package]
 name = "inkboard-formats"
-description = "Import/export : draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format du prototype web."
+description = "Import/export: draw.io, Excalidraw, JSON Canvas, Mermaid, legacy web-prototype format."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,8 +1,8 @@
-//! Opérations élémentaires réversibles et pile d'annulation.
+//! Elementary reversible operations and the undo stack.
 
 use crate::model::{Background, Document, Id, Layer, Object, Page};
 
-/// Modification atomique d'un document, toujours accompagnée de son inverse.
+/// Atomic modification of a document, always paired with its inverse.
 #[derive(Clone, Debug)]
 pub enum Op {
     Insert { page: Id, index: usize, obj: Box<Object> },
@@ -39,7 +39,7 @@ impl Document {
         self.pages.iter_mut().find(|p| &p.id == id)
     }
 
-    /// Applique une opération. Les opérations incohérentes (page ou objet absent) sont ignorées.
+    /// Applies an operation. Inconsistent operations (missing page or object) are ignored.
     pub fn apply(&mut self, op: &Op) {
         match op {
             Op::Insert { page, index, obj } => {
@@ -100,7 +100,7 @@ impl Document {
     }
 }
 
-/// Pile d'annulation : une entrée = une transaction (liste d'opérations).
+/// Undo stack: one entry = one transaction (a list of operations).
 #[derive(Clone, Debug)]
 pub struct History {
     undo: Vec<Vec<Op>>,

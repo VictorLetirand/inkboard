@@ -1,6 +1,6 @@
-//! Coloration syntaxique minimale pour les blocs de code (langages « famille C » : Rust, JS/TS, C/C++, Java, Go, Python, shell…).
+//! Minimal syntax coloring for code blocks ("C-family" languages: Rust, JS/TS, C/C++, Java, Go, Python, shell…).
 //!
-//! Ce n'est pas un analyseur : il distingue commentaires, chaînes, nombres et mots-clés courants, sur fond sombre.
+//! It is not a parser: it tells comments, strings, numbers and common keywords apart, on a dark background.
 
 use crate::style::Color;
 use crate::text::RichText;
@@ -101,7 +101,7 @@ const STRING: Color = Color::Rgb(0x98, 0xc3, 0x79);
 const NUMBER: Color = Color::Rgb(0xd1, 0x9a, 0x66);
 const KEYWORD: Color = Color::Rgb(0xc6, 0x78, 0xdd);
 
-/// Intervalles `(début, fin, couleur)` en indices de caractères.
+/// Ranges `(start, end, color)` in character indices.
 pub fn tokens(src: &str) -> Vec<(usize, usize, Color)> {
     let c: Vec<char> = src.chars().collect();
     let mut out = Vec::new();
@@ -122,7 +122,7 @@ pub fn tokens(src: &str) -> Vec<(usize, usize, Color)> {
             i = (i + 2).min(c.len());
             out.push((start, i, COMMENT));
         } else if ch == '\'' {
-            // littéral de caractère (`'x'`, `'\n'`) ; sinon apostrophe isolée (durée de vie Rust `'a`)
+            // character literal (`'x'`, `'\n'`); otherwise a lone apostrophe (Rust lifetime `'a`)
             let close = if c.get(i + 1) == Some(&'\\') { i + 3 } else { i + 2 };
             if c.get(close) == Some(&'\'') {
                 i = close + 1;
@@ -157,7 +157,7 @@ pub fn tokens(src: &str) -> Vec<(usize, usize, Color)> {
     out
 }
 
-/// Texte enrichi des couleurs de `src`.
+/// Rich text with the colors of `src`.
 pub fn highlight(src: &str) -> RichText {
     let mut rt = RichText::plain(src);
     for (a, b, col) in tokens(src) {

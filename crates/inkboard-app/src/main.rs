@@ -4,6 +4,8 @@ mod app;
 mod chrome;
 mod clipboard;
 mod fonts;
+mod i18n;
+mod i18n_fr;
 mod icons;
 mod insert;
 mod keymap;
@@ -62,7 +64,7 @@ fn main() -> eframe::Result {
         "Inkboard",
         options,
         Box::new(move |cc| {
-            // gomme du stylet : winit/egui n'exposent pas l'extrémité gomme, on l'observe via l'API Pointer de Windows
+            // pen eraser: winit/egui do not expose the eraser end, so it is observed through the Windows Pointer API
             {
                 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
                 if let Ok(h) = cc.window_handle()
@@ -73,7 +75,7 @@ fn main() -> eframe::Result {
             }
             let mut a = app::App::new(cc, open.clone(), screenshot.clone());
             if screenshot.is_none() && !bench {
-                // mode direct de inkboard-mcp : un agent peut piloter le tableau affiché
+                // live mode of inkboard-mcp: an agent can drive the displayed board
                 a.live = live::LiveServer::start(cc.egui_ctx.clone(), inkboard_mcp::live::discovery_path()).ok();
             }
             a.bench = bench.then(|| app::Bench { close_up: bench_close, ..Default::default() });

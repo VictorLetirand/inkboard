@@ -1,4 +1,4 @@
-//! `ink` : conversion en ligne de commande entre les formats du tableau blanc.
+//! `ink`: command-line conversion between the whiteboard formats.
 //!
 //! ```text
 //! ink convert schema.mmd schema.drawio
@@ -15,7 +15,7 @@ use inkboard_formats::import_any;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "ink", version, about = "Convertit les tableaux blancs entre formats (draw.io, Excalidraw, JSON Canvas, Mermaid, SVG).")]
+#[command(name = "ink", version, about = "Converts whiteboards between formats (draw.io, Excalidraw, JSON Canvas, Mermaid, SVG).")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -23,25 +23,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Convertit un fichier. Entrée : .inkboard.json, .json (prototype), .drawio, .excalidraw, .canvas, .mmd.
-    /// Sortie (d'après l'extension) : .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png.
+    /// Converts a file. Input: .inkboard.json, .json (prototype), .drawio, .excalidraw, .canvas, .mmd.
+    /// Output (by extension): .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf.
     Convert {
         input: PathBuf,
         output: PathBuf,
-        /// Numéro de page à exporter (à partir de 1) pour les formats à page unique.
+        /// Page number to export (from 1) for single-page formats.
         #[arg(long, default_value_t = 1)]
         page: usize,
     },
-    /// Affiche un résumé du contenu d'un fichier.
+    /// Shows a summary of a file's content.
     Info { input: PathBuf },
-    /// Génère un grand tableau (formes, traits, connecteurs liés) pour mesurer les performances.
+    /// Generates a large board (shapes, strokes, bound connectors) to measure performance.
     Bench { count: usize, output: PathBuf },
 }
 
 fn read(path: &Path) -> Result<(Document, String)> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("lecture de {}", path.display()))?;
+    let content = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let imported = import_any(name, &content, &ApproxMeasurer).with_context(|| format!("ouverture de {name}"))?;
+    let imported = import_any(name, &content, &ApproxMeasurer).with_context(|| format!("opening {name}"))?;
     let summary = imported.report.summary();
     Ok((imported.doc, summary))
 }
@@ -50,8 +50,8 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Bench { count, output } => {
             let doc = bench_document(count);
-            inkboard_core::serial::save(&doc, &output).with_context(|| format!("écriture de {}", output.display()))?;
-            println!("{} objets → {}", doc.pages[0].objects.len(), output.display());
+            inkboard_core::serial::save(&doc, &output).with_context(|| format!("writing {}", output.display()))?;
+            println!("{} objects → {}", doc.pages[0].objects.len(), output.display());
             Ok(())
         }
         Cmd::Info { input } => {
@@ -68,16 +68,16 @@ fn main() -> Result<()> {
                         Kind::Table(_) => tables += 1,
                     }
                 }
-                println!("  « {} » : {boxes} forme(s), {conns} connecteur(s), {pens} trait(s), {imgs} image(s), {tables} tableau(x)", p.name);
+                println!("  \"{}\": {boxes} shape(s), {conns} connector(s), {pens} stroke(s), {imgs} image(s), {tables} table(s)", p.name);
             }
             if !report.is_empty() {
-                println!("  à noter : {report}");
+                println!("  note: {report}");
             }
             Ok(())
         }
         Cmd::Convert { input, output, page } => {
             let (doc, report) = read(&input)?;
-            let idx = page.checked_sub(1).filter(|i| *i < doc.pages.len()).with_context(|| format!("la page {page} n'existe pas (1 à {})", doc.pages.len()))?;
+            let idx = page.checked_sub(1).filter(|i| *i < doc.pages.len()).with_context(|| format!("page {page} does not exist (1 to {})", doc.pages.len()))?;
             let out_name = output.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
             let text = if out_name.ends_with(".inkboard.json") || out_name.ends_with(".tableau.json") || out_name.ends_with(".wb") {
                 inkboard_core::serial::to_json(&doc, true)
@@ -88,34 +88,34 @@ fn main() -> Result<()> {
             } else if out_name.ends_with(".canvas") {
                 let (json, dropped) = inkboard_formats::jsoncanvas::export(&doc.pages[idx]);
                 if dropped > 0 {
-                    eprintln!("note : {dropped} élément(s) non représentables en JSON Canvas ignorés");
+                    eprintln!("note: {dropped} element(s) that cannot be represented in JSON Canvas were skipped");
                 }
                 json
             } else if out_name.ends_with(".png") {
-                let svg = export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("la page est vide : rien à exporter")?;
+                let svg = export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("the page is empty: nothing to export")?;
                 let png = inkboard_formats::raster::svg_to_png(&svg, 2.0)?;
-                std::fs::write(&output, png).with_context(|| format!("écriture de {}", output.display()))?;
+                std::fs::write(&output, png).with_context(|| format!("writing {}", output.display()))?;
                 println!("{} → {}", input.display(), output.display());
                 return Ok(());
             } else if out_name.ends_with(".pdf") {
-                let svg = export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("la page est vide : rien à exporter")?;
+                let svg = export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("the page is empty: nothing to export")?;
                 let pdf = inkboard_formats::raster::svg_to_pdf(&svg)?;
-                std::fs::write(&output, pdf).with_context(|| format!("écriture de {}", output.display()))?;
+                std::fs::write(&output, pdf).with_context(|| format!("writing {}", output.display()))?;
                 println!("{} → {}", input.display(), output.display());
                 return Ok(());
             } else if out_name.ends_with(".svg") {
-                export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("la page est vide : rien à exporter")?
+                export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("the page is empty: nothing to export")?
             } else {
-                bail!("extension de sortie non reconnue : {out_name} (attendu : .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf)");
+                bail!("unrecognized output extension: {out_name} (expected: .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf)");
             };
-            std::fs::write(&output, text).with_context(|| format!("écriture de {}", output.display()))?;
-            println!("{} → {}{}", input.display(), output.display(), if report.is_empty() { String::new() } else { format!("  (à noter : {report})") });
+            std::fs::write(&output, text).with_context(|| format!("writing {}", output.display()))?;
+            println!("{} → {}{}", input.display(), output.display(), if report.is_empty() { String::new() } else { format!("  (note: {report})") });
             Ok(())
         }
     }
 }
 
-/// Tableau synthétique : ~60 % de formes avec texte, ~25 % de traits, ~15 % de connecteurs liés.
+/// Synthetic board: ~60 % labelled shapes, ~25 % strokes, ~15 % bound connectors.
 fn bench_document(count: usize) -> Document {
     use inkboard_core::*;
     let mut seed = 0x2545_F491_4F6C_DD1Du64;
@@ -138,7 +138,7 @@ fn bench_document(count: usize) -> Document {
                 geom,
                 Frame::new(cx, cy, 160.0, 90.0),
                 Style { fill: Some(style::FILLS[(rnd() * 10.0) as usize % 10]), ..Style::default() },
-                Label::new(&format!("Nœud {i}"), 20.0, Align::Center),
+                Label::new(&format!("Node {i}"), 20.0, Align::Center),
             );
             shapes.push(o.id.clone());
             objs.push(o);
@@ -153,7 +153,7 @@ fn bench_document(count: usize) -> Document {
             objs.push(Object::new_pen(pts, false, Style::default()));
         } else if shapes.len() > 2 {
             let a = shapes[shapes.len() - 1].clone();
-            // liens locaux, comme dans un vrai schéma : vers l'une des 8 formes précédentes
+            // local links, like in a real diagram: to one of the 8 previous shapes
             let b = shapes[shapes.len().saturating_sub(2 + (rnd() * 8.0) as usize) % shapes.len()].clone();
             if a != b {
                 objs.push(Object::new(Kind::Connector(Connector::new(End::bound(a), End::bound(b))), Style { width: 2.0, ..Style::default() }));

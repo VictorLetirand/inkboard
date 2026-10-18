@@ -1,14 +1,14 @@
-//! Traits à main levée : lissage et épaisseur variable selon la pression du stylet.
+//! Freehand strokes: smoothing and variable width according to the pen pressure.
 
 use crate::geom::Pt;
 
-/// Épaisseur d'un point selon la pression (0..1) : de 30 % à 160 % de l'épaisseur de base.
+/// Width of a point according to the pressure (0..1): from 30 % to 160 % of the base width.
 pub fn pressure_width(base: f64, p: f32) -> f64 {
     base * (0.3 + 1.3 * f64::from(p.clamp(0.0, 1.0)))
 }
 
-/// Lissage par courbes quadratiques passant par les milieux des segments. Renvoie les points échantillonnés
-/// (`steps` par segment) et la pression interpolée (0.5 si aucune pression n'est fournie).
+/// Smoothing with quadratic curves through the segment midpoints. Returns the sampled points
+/// (`steps` per segment) and the interpolated pressure (0.5 when no pressure is provided).
 pub fn smooth(pts: &[Pt], pressures: Option<&[f32]>, steps: usize) -> (Vec<Pt>, Vec<f32>) {
     let n = pts.len();
     let pr = |i: usize| pressures.and_then(|p| p.get(i)).copied().unwrap_or(0.5);
@@ -36,7 +36,7 @@ pub fn smooth(pts: &[Pt], pressures: Option<&[f32]>, steps: usize) -> (Vec<Pt>, 
     (out, out_p)
 }
 
-/// Bords gauche et droit d'un trait dont l'épaisseur varie : deux points décalés de `±w/2` perpendiculairement à la trajectoire.
+/// Left and right edges of a variable-width stroke: two points offset by `±w/2` perpendicular to the path.
 pub fn stroke_sides(pts: &[Pt], widths: &[f64]) -> (Vec<Pt>, Vec<Pt>) {
     let n = pts.len();
     let mut left = Vec::with_capacity(n);
@@ -91,9 +91,9 @@ mod tests {
         let (l, r) = stroke_sides(&pts, &[2.0, 4.0, 6.0]);
         for i in 0..3 {
             assert!((l[i].dist(r[i]) - [2.0, 4.0, 6.0][i]).abs() < 1e-9);
-            assert!((l[i].x - pts[i].x).abs() < 1e-9, "décalage perpendiculaire à une trajectoire horizontale");
+            assert!((l[i].x - pts[i].x).abs() < 1e-9, "offset perpendicular to a horizontal path");
         }
-        // un seul point : pas de division par zéro
+        // a single point: no division by zero
         let (l, r) = stroke_sides(&[Pt::new(5.0, 5.0)], &[4.0]);
         assert!(l[0].dist(r[0]) > 3.9);
     }

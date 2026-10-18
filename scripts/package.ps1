@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-  Construit l'application en release et produit une archive portable : dist/inkboard-<version>-windows-x64.zip
+  Builds the application in release mode and produces a portable archive: dist/inkboard-<version>-windows-x64.zip
 
 .DESCRIPTION
-  L'archive contient l'exécutable, la CLI `ink`, le serveur MCP `inkboard-mcp`, le README et les scripts d'installation par utilisateur.
-  Elle n'est pas signée : voir docs/DISTRIBUTION.md pour la signature de code.
+  The archive contains the executable, the `ink` CLI, the `inkboard-mcp` MCP server, the README and the per-user install scripts.
+  It is not signed: see docs/DISTRIBUTION.md for code signing.
 #>
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp
-if ($LASTEXITCODE -ne 0) { throw 'La compilation a échoué.' }
+if ($LASTEXITCODE -ne 0) { throw 'The build failed.' }
 
 $version = (Select-String -Path 'Cargo.toml' -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
 $name = "inkboard-$version-windows-x64"
@@ -29,5 +29,5 @@ if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $stage -DestinationPath $zip
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
 Set-Content -Path "$zip.sha256" -Value "$hash  $name.zip" -Encoding ascii
-Write-Host "Archive : $zip"
-Write-Host "SHA-256 : $hash"
+Write-Host "Archive: $zip"
+Write-Host "SHA-256: $hash"

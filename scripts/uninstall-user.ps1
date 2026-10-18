@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Annule install-user.ps1 : retire les fichiers, le raccourci et les entrées de registre HKCU.
-  Les documents et le dossier %APPDATA%\Inkboard (raccourcis personnalisés, enregistrement automatique) sont conservés.
+  Undoes install-user.ps1: removes the files, the shortcut and the HKCU registry entries.
+  Your documents and the %APPDATA%\Inkboard folder (custom shortcuts, autosave) are kept.
 #>
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:LOCALAPPDATA 'Programs\Inkboard'
@@ -12,7 +12,7 @@ foreach ($ext in '.drawio', '.excalidraw', '.canvas', '.mmd') {
 }
 Remove-Item 'HKCU:\Software\Classes\Inkboard.Document' -Recurse -Force -ErrorAction SilentlyContinue
 if (Test-Path $dir) {
-    # le script tourne depuis ce dossier : suppression différée
+    # the script runs from this folder: deferred removal
     Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', "Start-Sleep 2; Remove-Item -LiteralPath '$dir' -Recurse -Force"
 }
-Write-Host 'Désinstallé.'
+Write-Host 'Uninstalled.'

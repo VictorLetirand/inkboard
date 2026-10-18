@@ -1,7 +1,7 @@
 //! Excalidraw (`.excalidraw`, JSON).
 //!
-//! Export : formes + texte lié (« containerId »), flèches avec liaisons, traits libres, images.
-//! Import : mêmes éléments ; un polygone ou une polyligne devient un connecteur à points de passage.
+//! Export: shapes + bound text ("containerId"), arrows with bindings, freehand strokes, images.
+//! Import: same elements; a polygon or a polyline becomes a connector with waypoints.
 
 use crate::common::{FormatError, Imported, Report, data_url, parse_color, parse_data_url};
 use inkboard_core::geom::Rect;
@@ -58,7 +58,7 @@ fn head_back(v: Option<&Value>) -> Arrowhead {
 
 /* ===================================================================== Export */
 
-/// Exporte une page au format Excalidraw (une scène = une page).
+/// Exports a page in Excalidraw format (one scene = one page).
 pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
     let dark = doc.background.preset.is_dark();
     let col = |c: Color| c.resolve_hex(dark);
@@ -296,7 +296,7 @@ pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
         "appState": {"gridSize": null, "viewBackgroundColor": doc.background.preset.hex(), "theme": if dark { "dark" } else { "light" }},
         "files": files,
     });
-    serde_json::to_string(&scene).expect("scène sérialisable")
+    serde_json::to_string(&scene).expect("serializable scene")
 }
 
 /* ===================================================================== Import */
@@ -349,7 +349,7 @@ fn finish(mut o: Object, e: &Value) -> Object {
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
     let v: Value = serde_json::from_str(content)?;
     if text(&v, "type") != Some("excalidraw") {
-        return Err(FormatError::Invalid("pas une scène Excalidraw".into()));
+        return Err(FormatError::Invalid("not an Excalidraw scene".into()));
     }
     let els: Vec<&Value> = v
         .get("elements")
@@ -362,7 +362,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
     if let Some(bg) = v.pointer("/appState/viewBackgroundColor").and_then(Value::as_str).and_then(parse_color) {
         doc.background.preset = BgPreset::nearest(bg.resolve(false));
     }
-    // identifiants pré-alloués : permet de résoudre les liaisons quel que soit l'ordre
+    // pre-allocated ids: lets bindings be resolved whatever the order
     let ids: HashMap<&str, Id> = els.iter().filter_map(|e| text(e, "id").map(|i| (i, Id::new()))).collect();
     let kind_of: HashMap<&str, &str> = els.iter().filter_map(|e| Some((text(e, "id")?, text(e, "type")?))).collect();
     let mut labels: HashMap<&str, &Value> = HashMap::new();
@@ -569,12 +569,12 @@ mod tests {
             assert!(types.contains(&t), "{t} absent de {types:?}");
         }
         assert_eq!(v["files"].as_object().unwrap().len(), 1);
-        // le texte d'un rectangle est lié à son conteneur
+        // a rectangle's text is bound to its container
         let rect = els.iter().find(|e| e["type"] == "rectangle").unwrap();
         let tid = rect["boundElements"][0]["id"].as_str().unwrap();
         let t = els.iter().find(|e| e["id"] == tid).unwrap();
         assert_eq!(t["containerId"], rect["id"]);
-        // le rectangle référence aussi la flèche qui s'y accroche
+        // the rectangle also references the arrow that attaches to it
         assert!(rect["boundElements"].as_array().unwrap().iter().any(|b| b["type"] == "arrow"));
     }
 
@@ -584,16 +584,16 @@ mod tests {
         let r = export_import(&d);
         let p = &r.doc.pages[0];
         let boxes: Vec<&BoxObj> = p.objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some(b) } else { None }).collect();
-        assert!(boxes.iter().any(|b| b.geom == BoxGeom::Rect && b.label.text.to_plain() == "Début\nligne 2"));
-        assert!(boxes.iter().any(|b| b.geom == BoxGeom::Ellipse && b.label.text.to_plain() == "Fin"));
+        assert!(boxes.iter().any(|b| b.geom == BoxGeom::Rect && b.label.text.to_plain() == "Start\nline 2"));
+        assert!(boxes.iter().any(|b| b.geom == BoxGeom::Ellipse && b.label.text.to_plain() == "End"));
         assert!(boxes.iter().any(|b| b.geom == BoxGeom::Triangle), "triangle reconnu");
-        assert!(boxes.iter().any(|b| b.geom == BoxGeom::Text && b.label.text.to_plain() == "Titre libre"));
+        assert!(boxes.iter().any(|b| b.geom == BoxGeom::Text && b.label.text.to_plain() == "Free title"));
         let conns: Vec<&Connector> = p.objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
         assert_eq!(conns.len(), 2);
-        assert!(conns[0].targets().count() == 2, "flèche liée aux deux formes");
+        assert!(conns[0].targets().count() == 2, "arrow bound to both shapes");
         assert!(p.connector_path(conns[0]).is_some());
         assert!(conns[1].targets().count() == 1 && matches!(conns[1].end, End::Free { .. }));
-        assert_eq!(conns[0].label.as_ref().map(|l| l.text.to_plain()), Some("oui".into()));
+        assert_eq!(conns[0].label.as_ref().map(|l| l.text.to_plain()), Some("yes".into()));
         assert!(p.objects.iter().any(|o| matches!(o.kind, Kind::Pen(_))));
         assert_eq!(r.doc.assets.len(), 1);
         assert_eq!(r.report.skipped, 0);
@@ -614,26 +614,26 @@ mod tests {
         let r = import(src, "ext", &ApproxMeasurer).unwrap();
         let p = &r.doc.pages[0];
         assert_eq!(r.doc.background.preset, BgPreset::Black);
-        assert_eq!(r.report.skipped, 1, "embeddable ignoré");
-        assert_eq!(r.report.approximated, 1, "cadre approximé");
+        assert_eq!(r.report.skipped, 1, "embeddable skipped");
+        assert_eq!(r.report.approximated, 1, "frame approximated");
         let rect = p
             .objects
             .iter()
             .find_map(|o| if let Kind::Box(b) = &o.kind { (b.geom == BoxGeom::Rect && b.label.text.to_plain() == "Hello").then_some((o, b)) } else { None })
-            .expect("rectangle avec son texte");
+            .expect("rectangle with its text");
         assert!(rect.0.style.roundness > 0.0);
         assert_eq!(rect.1.label.family, FontFamily::Hand);
         assert_eq!(rect.1.label.align, Align::Center);
         assert!(
             !p.objects.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Text && b.label.text.to_plain() == "Hello")),
-            "le texte lié ne reste pas en double"
+            "the bound text is not left duplicated"
         );
         let conns: Vec<&Connector> = p.objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
         assert_eq!(conns.len(), 2);
         assert_eq!(conns[0].route, Route::Elbow);
         assert_eq!(conns[0].head_end, Arrowhead::Triangle);
         assert_eq!(conns[0].targets().count(), 2);
-        assert_eq!(conns[1].via.len(), 1, "polyligne = connecteur à point de passage");
+        assert_eq!(conns[1].via.len(), 1, "polyline = connector with a waypoint");
         assert_eq!(conns[1].head_end, Arrowhead::None);
         let dashed = p.objects.iter().find(|o| o.style.dash == Dash::Dashed && matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Ellipse)).unwrap();
         assert!((dashed.style.opacity - 0.5).abs() < 1e-6);
@@ -656,10 +656,10 @@ mod tests {
         let els = v["elements"].as_array().unwrap();
         assert_eq!(els[0]["pressures"].as_array().unwrap().len(), 3);
         assert_eq!(els[0]["simulatePressure"], false);
-        assert_eq!(els[1]["simulatePressure"], true, "sans pression : simulée par Excalidraw");
+        assert_eq!(els[1]["simulatePressure"], true, "without pressure: simulated by Excalidraw");
         let back = import(&json, "x", &ApproxMeasurer).unwrap();
         let pens: Vec<&PenObj> = back.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Pen(p) = &o.kind { Some(p) } else { None }).collect();
-        let first = pens[0].pressures.as_ref().expect("pression conservée");
+        let first = pens[0].pressures.as_ref().expect("pressure kept");
         assert!((first[1] - 0.9).abs() < 1e-6);
         assert!(pens[1].pressures.is_none());
     }

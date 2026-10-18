@@ -1,9 +1,9 @@
-//! Thème de l'interface : les couleurs, arrondis, ombres et cartes flottantes du prototype web (clair et sombre).
+//! Interface theme: the colors, rounded corners, shadows and floating cards of the web prototype (light and dark).
 
 use crate::icons;
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontFamily, FontId, Margin, Response, Sense, Shadow, Stroke, TextStyle, Ui, Vec2, vec2};
 
-/// Jeu de couleurs (variables CSS du prototype : `--ui`, `--ui2`, `--bd`, `--tx`, `--mut`, `--ac`, `--acbg`).
+/// Color set (the prototype's CSS variables: `--ui`, `--ui2`, `--bd`, `--tx`, `--mut`, `--ac`, `--acbg`).
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub ui: Color32,
@@ -43,19 +43,19 @@ pub fn palette(dark: bool) -> Palette {
     }
 }
 
-/// Palette du thème courant du contexte.
+/// Palette of the context's current theme.
 pub fn current(ctx: &egui::Context) -> Palette {
     palette(ctx.style().visuals.dark_mode)
 }
 
-/// Rayon des cartes et des menus (`--r`).
+/// Corner radius of cards and menus (`--r`).
 const RADIUS: u8 = 10;
 
 fn shadow(p: &Palette) -> Shadow {
     Shadow { offset: [0, 2], blur: if p.dark { 12 } else { 10 }, spread: 0, color: Color32::from_black_alpha(if p.dark { 140 } else { 36 }) }
 }
 
-/// Applique le thème à tout le contexte (à rappeler quand le fond clair/sombre change).
+/// Applies the theme to the whole context (call again when the light/dark background changes).
 pub fn apply(ctx: &egui::Context, dark: bool) {
     let p = palette(dark);
     let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
@@ -111,7 +111,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     });
 }
 
-/// Carte flottante (`.bar`, `#toolbar`, `#panel`…) : fond, bordure, coins arrondis et ombre.
+/// Floating card (`.bar`, `#toolbar`, `#panel`…): background, border, rounded corners and shadow.
 pub fn card_frame(p: &Palette, margin: i8) -> egui::Frame {
     egui::Frame::new()
         .fill(p.ui)
@@ -121,7 +121,7 @@ pub fn card_frame(p: &Palette, margin: i8) -> egui::Frame {
         .inner_margin(Margin::same(margin))
 }
 
-/// Pose une carte flottante ancrée dans la fenêtre, au-dessus du canevas.
+/// Places a floating card anchored in the window, above the canvas.
 pub fn floating<R>(ctx: &egui::Context, id: &str, anchor: Align2, offset: Vec2, margin: i8, add: impl FnOnce(&mut Ui) -> R) -> R {
     let p = current(ctx);
     egui::Area::new(egui::Id::new(id))
@@ -132,7 +132,7 @@ pub fn floating<R>(ctx: &egui::Context, id: &str, anchor: Align2, offset: Vec2, 
         .inner
 }
 
-/// Bouton à icône de 34 × 34 (`.btn`) : survol gris, actif en couleur d'accent, grisé si désactivé.
+/// 34 × 34 icon button (`.btn`): gray on hover, accent color when active, dimmed when disabled.
 pub fn icon_button(ui: &mut Ui, name: &str, active: bool, enabled: bool) -> Response {
     let p = current(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(34.0, 34.0), if enabled { Sense::click() } else { Sense::hover() });
@@ -146,7 +146,7 @@ pub fn icon_button(ui: &mut Ui, name: &str, active: bool, enabled: bool) -> Resp
     resp
 }
 
-/// Bouton texte compact de la barre du bas (`.btn.txt`).
+/// Compact text button of the bottom bar (`.btn.txt`).
 pub fn text_button(ui: &mut Ui, text: &str) -> Response {
     let p = current(ui.ctx());
     let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::new(13.0, FontFamily::Proportional), p.tx);
@@ -158,20 +158,21 @@ pub fn text_button(ui: &mut Ui, text: &str) -> Response {
     resp
 }
 
-/// Séparateur vertical (`.sep`).
+/// Vertical separator (`.sep`).
 pub fn vsep(ui: &mut Ui) {
     let p = current(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(9.0, 22.0), Sense::hover());
     ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0_f32, p.bd));
 }
 
-/// Style des menus : lignes contiguës (pas d'espace vertical entre deux entrées).
+/// Menu style: contiguous rows (no vertical gap between two entries).
 pub fn menu_style(ui: &mut Ui) {
     ui.spacing_mut().item_spacing.y = 0.0;
 }
 
-/// Ligne de menu (`.menu .it`) : icône, libellé, raccourci à droite ou coche si `on`. Renvoie `true` au clic.
+/// Menu row (`.menu .it`): icon, label, shortcut on the right or a check mark when `on`. Returns `true` on click. The label is translated.
 pub fn menu_item(ui: &mut Ui, icon: Option<&str>, label: &str, key: &str, on: bool, enabled: bool) -> bool {
+    let label = &crate::i18n::t(label);
     let p = current(ui.ctx());
     let font = FontId::new(13.0, FontFamily::Proportional);
     let small = FontId::new(11.0, FontFamily::Proportional);
@@ -197,14 +198,19 @@ pub fn menu_item(ui: &mut Ui, icon: Option<&str>, label: &str, key: &str, on: bo
     resp.clicked()
 }
 
-/// Titre de section de menu ou de panneau (`.lbl` : petit, grisé, majuscules).
+/// Menu or panel section title (`.lbl`: small, dimmed, uppercase). The text is translated.
 pub fn menu_label(ui: &mut Ui, text: &str) {
+    menu_label_raw(ui, &crate::i18n::t(text));
+}
+
+/// Like [`menu_label`] for a text that is already translated (e.g. built with `tr!`).
+pub fn menu_label_raw(ui: &mut Ui, text: &str) {
     let p = current(ui.ctx());
     ui.add_space(4.0);
     ui.label(egui::RichText::new(text.to_uppercase()).size(11.0).color(p.mute));
 }
 
-/// Séparateur de menu (`.menu hr`).
+/// Menu separator (`.menu hr`).
 pub fn menu_sep(ui: &mut Ui) {
     let p = current(ui.ctx());
     ui.add_space(3.0);
@@ -213,14 +219,24 @@ pub fn menu_sep(ui: &mut Ui) {
     ui.add_space(3.0);
 }
 
-/// Étiquette de réglage du panneau (`#panel label` : 11 px grisé).
+/// Panel setting label (`#panel label`: dimmed, 11 px). The text is translated.
 pub fn field_label(ui: &mut Ui, text: &str) {
+    field_label_raw(ui, &crate::i18n::t(text));
+}
+
+/// Like [`field_label`] for a text that is already translated (e.g. built with `tr!`).
+pub fn field_label_raw(ui: &mut Ui, text: &str) {
     let p = current(ui.ctx());
     ui.label(egui::RichText::new(text).size(11.0).color(p.mute));
 }
 
-/// Bouton segmenté (`.seg button`) : 34 × 30, bordé, actif en accent. `content` dessine l'intérieur (icône ou texte).
+/// Segmented button (`.seg button`): 34 × 30, bordered, accent when active. `content` draws the inside (icon or text). The tooltip is translated.
 pub fn seg_button(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&egui::Painter, egui::Rect, Color32)) -> Response {
+    seg_button_raw(ui, on, &crate::i18n::t(tip), content)
+}
+
+/// Like [`seg_button`] for a tooltip that is already translated (e.g. built with `tr!`).
+pub fn seg_button_raw(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&egui::Painter, egui::Rect, Color32)) -> Response {
     let p = current(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(34.0, 30.0), Sense::click());
     let fill = if on {
@@ -235,7 +251,7 @@ pub fn seg_button(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&egui::
     resp.on_hover_text(tip)
 }
 
-/// Pastille de couleur (`.sw .c`) de 22 × 22, contour d'accent si sélectionnée.
+/// 22 × 22 color swatch (`.sw .c`), accent outline when selected.
 pub fn swatch_frame(ui: &mut Ui, selected: bool) -> (Response, egui::Rect) {
     let p = current(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());

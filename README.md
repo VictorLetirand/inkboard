@@ -12,9 +12,9 @@ Draw, diagram and present on a native desktop app, import and export the formats
 
 ![Inkboard](docs/img/interface.png)
 
-> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (245 automated tests), but it has so far been **used by hand on Windows only**.
+> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (252 automated tests), but it has so far been **used by hand on Windows only**.
 > Linux and macOS builds compile and pass the automated tests in CI, yet nobody has used the app there yet — expect rough edges, and please [report them](../../issues).
-> The user interface is currently **in French**; an English interface is on the [roadmap](#roadmap).
+> The interface is available in **English and French**; it follows your system language and can be switched from the menu (*Language*).
 
 ## Why Inkboard?
 
@@ -82,7 +82,9 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 - **Customizable shortcuts** (41 commands, several shortcuts per command, conflict handling) and a **light/dark theme** that follows the board background.
 - **Command line:** `ink convert diagram.mmd diagram.drawio`, `ink convert board.inkboard.json board.png`, `ink info file.drawio`.
 
-![Menu](docs/img/menu.png)
+| Main menu | Dark theme |
+|---|---|
+| ![Menu](docs/img/menu.png) | ![Dark theme](docs/img/theme-dark.png) |
 
 ## Use it with AI agents (MCP)
 
@@ -97,13 +99,13 @@ claude mcp add inkboard -- /path/to/inkboard-mcp --root /path/to/your/boards
 ```
 
 **Always pass `--root`**: it confines every file the agent can read or write to that folder. The server exposes 16 tools (`add_shape`, `add_connector`, `import_mermaid`, `add_formula`, `export`, `board_changes`…) and MCP resources with change notifications.
-Full reference, security notes and limits: [docs/MCP.md](docs/MCP.md) (in French).
+Full reference, security notes and limits: [docs/MCP.md](docs/MCP.md).
 
 ## Platform status
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Builds and passes the 245 automated tests (CI) | ✔ | ✔ | ✔ |
+| Builds and passes the 252 automated tests (CI) | ✔ | ✔ | ✔ |
 | App launched and used by hand | ✔ | not yet | not yet |
 | Installers | built and tested | built in CI, untested | built in CI, untested |
 | Pen eraser end (Windows Pointer API) | ✔ implemented, **not yet validated on real pen hardware** | – | – |
@@ -133,14 +135,14 @@ Reproduce with `ink bench 100000 big.inkboard.json && inkboard --bench big.inkbo
 | [`inkboard-mcp`](crates/inkboard-mcp) | The MCP server. |
 | [`inkboard-pen`](crates/inkboard-pen) | Pen eraser detection on Windows (the only crate with `unsafe` code). |
 
-More: [architecture and design decisions](docs/ARCHITECTURE.md) · [roadmap](docs/ROADMAP.md) · [distribution and signing](docs/DISTRIBUTION.md) (the in-depth docs are currently in French).
+More: [architecture and design decisions](docs/ARCHITECTURE.md) · [roadmap](docs/ROADMAP.md) · [distribution and signing](docs/DISTRIBUTION.md) (French copies in [`docs/fr/`](docs/fr)).
 The original web prototype is kept in [`prototype-web/`](prototype-web/); its `.tableau.json` boards can be opened in Inkboard.
 
 ## Roadmap
 
 Planned or wanted next:
 
-- **English (and other) interface languages** — the UI is French-only for now.
+- **More interface languages** — English and French are built in; adding one means adding a translation table (see `crates/inkboard-app/src/i18n_fr.rs`).
 - Code-signed installers (Windows via SignPath, macOS notarization) and automatic updates.
 - Validation of pen pressure and eraser on real hardware; pen eraser support on macOS/Linux.
 - First real-world usage on Linux and macOS, and fixes that come out of it.

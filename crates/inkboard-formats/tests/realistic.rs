@@ -1,5 +1,5 @@
-//! Fichiers écrits comme le font les vrais outils (champs et réglages typiques d'Excalidraw et d'Obsidian Canvas),
-//! pour vérifier que l'import tolère les champs supplémentaires, les éléments supprimés et les liaisons.
+//! Files written the way the real tools do (typical Excalidraw and Obsidian Canvas fields and settings),
+//! to check that the import tolerates extra fields, deleted elements and bindings.
 
 use inkboard_core::{ApproxMeasurer, Kind};
 use inkboard_formats::import_any;
@@ -16,7 +16,7 @@ const EXCALIDRAW: &str = r##"{
     {"id":"txt1","type":"text","x":130,"y":135,"width":140,"height":25,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent",
      "fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,
      "seed":1,"version":3,"versionNonce":2,"isDeleted":false,"boundElements":null,"updated":1,"link":null,"locked":false,
-     "text":"Bonjour","fontSize":20,"fontFamily":1,"textAlign":"center","verticalAlign":"middle","containerId":"rect1","originalText":"Bonjour","lineHeight":1.25},
+     "text":"Hello","fontSize":20,"fontFamily":1,"textAlign":"center","verticalAlign":"middle","containerId":"rect1","originalText":"Hello","lineHeight":1.25},
     {"id":"ell1","type":"ellipse","x":500,"y":100,"width":120,"height":100,"angle":0.3,"strokeColor":"#e03131","backgroundColor":"transparent",
      "fillStyle":"hachure","strokeWidth":1,"strokeStyle":"dashed","roughness":2,"opacity":80,"groupIds":["g1"],"frameId":null,"roundness":null,
      "seed":2,"version":1,"versionNonce":3,"isDeleted":false,"boundElements":[{"id":"arrow1","type":"arrow"}],"updated":1,"link":null,"locked":false},
@@ -36,7 +36,7 @@ const EXCALIDRAW: &str = r##"{
     {"id":"free_text","type":"text","x":300,"y":300,"width":80,"height":25,"angle":0,"strokeColor":"#1e1e1e","backgroundColor":"transparent",
      "fillStyle":"solid","strokeWidth":1,"strokeStyle":"solid","roughness":1,"opacity":100,"groupIds":[],"frameId":null,"roundness":null,
      "seed":6,"version":1,"versionNonce":7,"isDeleted":false,"boundElements":null,"updated":1,"link":null,"locked":false,
-     "text":"Note libre","fontSize":16,"fontFamily":2,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Note libre","lineHeight":1.25}
+     "text":"Free note","fontSize":16,"fontFamily":2,"textAlign":"left","verticalAlign":"top","containerId":null,"originalText":"Free note","lineHeight":1.25}
   ],
   "appState": {"gridSize":null,"viewBackgroundColor":"#ffffff"},
   "files": {}
@@ -44,7 +44,7 @@ const EXCALIDRAW: &str = r##"{
 
 const OBSIDIAN_CANVAS: &str = r##"{
   "nodes": [
-    {"id":"a1b2c3d4e5f60001","type":"text","text":"# Idée\n\nUn **texte** markdown","x":-200,"y":-100,"width":260,"height":140,"color":"4"},
+    {"id":"a1b2c3d4e5f60001","type":"text","text":"# Idea\n\nSome **text** in markdown","x":-200,"y":-100,"width":260,"height":140,"color":"4"},
     {"id":"a1b2c3d4e5f60002","type":"file","file":"Notes/Projet.md","x":200,"y":-100,"width":300,"height":200},
     {"id":"a1b2c3d4e5f60003","type":"link","url":"https://example.com","x":200,"y":200,"width":300,"height":120},
     {"id":"a1b2c3d4e5f60004","type":"group","label":"Groupe","x":-260,"y":-160,"width":820,"height":520}
@@ -52,7 +52,7 @@ const OBSIDIAN_CANVAS: &str = r##"{
   "edges": [
     {"id":"e1","fromNode":"a1b2c3d4e5f60001","fromSide":"right","toNode":"a1b2c3d4e5f60002","toSide":"left","toEnd":"arrow","label":"vers","color":"1"},
     {"id":"e2","fromNode":"a1b2c3d4e5f60002","fromSide":"bottom","toNode":"a1b2c3d4e5f60003","toSide":"top","fromEnd":"none"},
-    {"id":"e3","fromNode":"a1b2c3d4e5f60002","toNode":"inconnu"}
+    {"id":"e3","fromNode":"a1b2c3d4e5f60002","toNode":"unknown"}
   ]
 }"##;
 
@@ -60,15 +60,15 @@ const OBSIDIAN_CANVAS: &str = r##"{
 fn imports_a_realistic_excalidraw_scene() {
     let imp = import_any("scene.excalidraw", EXCALIDRAW, &ApproxMeasurer).expect("import");
     let page = &imp.doc.pages[0];
-    // l'élément supprimé est ignoré ; le texte lié devient l'étiquette de la forme
+    // the deleted element is ignored; the bound text becomes the shape's label
     let boxes: Vec<_> = page.objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some(b) } else { None }).collect();
-    assert!(boxes.iter().any(|b| b.label.text.to_plain() == "Bonjour"), "texte lié à la forme");
-    assert!(boxes.iter().any(|b| b.label.text.to_plain() == "Note libre"), "texte libre");
-    assert_eq!(page.objects.iter().filter(|o| matches!(o.kind, Kind::Box(_))).count(), 3, "rect, ellipse, texte libre (pas l'élément supprimé)");
-    // la flèche reste liée aux deux formes
-    let conn = page.objects.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).expect("flèche");
-    assert_eq!(conn.targets().count(), 2, "flèche liée aux deux extrémités");
-    assert!(page.objects.iter().any(|o| matches!(o.kind, Kind::Pen(_))), "trait à main levée");
+    assert!(boxes.iter().any(|b| b.label.text.to_plain() == "Hello"), "text bound to the shape");
+    assert!(boxes.iter().any(|b| b.label.text.to_plain() == "Free note"), "free text");
+    assert_eq!(page.objects.iter().filter(|o| matches!(o.kind, Kind::Box(_))).count(), 3, "rect, ellipse, free text (not the deleted element)");
+    // the arrow stays bound to both shapes
+    let conn = page.objects.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).expect("arrow");
+    assert_eq!(conn.targets().count(), 2, "arrow bound at both ends");
+    assert!(page.objects.iter().any(|o| matches!(o.kind, Kind::Pen(_))), "freehand stroke");
 }
 
 #[test]
@@ -84,9 +84,9 @@ fn imports_an_obsidian_style_canvas() {
     let imp = import_any("Plan.canvas", OBSIDIAN_CANVAS, &ApproxMeasurer).expect("import");
     let page = &imp.doc.pages[0];
     let texts: Vec<String> = page.objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some(b.label.text.to_plain()) } else { None }).collect();
-    assert!(texts.iter().any(|t| t.contains("Idée")), "{texts:?}");
-    assert!(texts.iter().any(|t| t.contains("Projet.md")), "le nœud fichier montre son chemin : {texts:?}");
-    assert!(texts.iter().any(|t| t.contains("example.com")), "le nœud lien montre l'URL : {texts:?}");
+    assert!(texts.iter().any(|t| t.contains("Idea")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains("Projet.md")), "the file node shows its path: {texts:?}");
+    assert!(texts.iter().any(|t| t.contains("example.com")), "the link node shows the URL: {texts:?}");
     let links = page.objects.iter().filter(|o| matches!(o.kind, Kind::Connector(_))).count();
-    assert_eq!(links, 2, "l'arête vers un nœud inconnu est ignorée");
+    assert_eq!(links, 2, "the edge to an unknown node is ignored");
 }

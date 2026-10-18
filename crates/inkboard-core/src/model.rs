@@ -1,4 +1,4 @@
-//! Modèle de document : objets, pages, calques, ressources.
+//! Document model: objects, pages, layers, assets.
 
 use crate::connector::Connector;
 use crate::geom::{Frame, Pt, Rect};
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /* ------------------------------------------------------------------ Id */
 
-/// Identifiant opaque d'objet, de page, de calque ou de ressource.
+/// Opaque id of an object, page, layer or asset.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Id(pub String);
@@ -20,7 +20,7 @@ pub struct Id(pub String);
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static ID_SEED: AtomicU64 = AtomicU64::new(0);
 
-/// Initialise la graine des identifiants (utile sur les plateformes sans horloge).
+/// Initializes the id seed (useful on platforms without a clock).
 pub fn seed_ids(seed: u64) {
     ID_SEED.store(seed, Ordering::Relaxed);
 }
@@ -40,7 +40,7 @@ fn next_seed() -> u64 {
 }
 
 impl Id {
-    /// Nouvel identifiant unique (base 36, 10 caractères).
+    /// New unique id (base 36, 10 characters).
     pub fn new() -> Id {
         let mut x = next_seed() ^ ID_COUNTER.fetch_add(1, Ordering::Relaxed).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         x ^= x >> 33;
@@ -82,7 +82,7 @@ pub type AssetId = Id;
 
 /* --------------------------------------------------------------- Texte */
 
-/// Texte d'un objet et sa mise en forme générale.
+/// Text of an object and its general formatting.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Label {
     #[serde(default)]
@@ -118,14 +118,14 @@ pub enum BoxGeom {
     Ellipse,
     Diamond,
     Triangle,
-    /// Note adhésive (fond coloré, ombre).
+    /// Sticky note (colored background, shadow).
     Sticky,
-    /// Texte libre (sans contour ni fond, dimension automatique).
+    /// Free text (no outline or fill, automatic size).
     Text,
 }
 
 impl BoxGeom {
-    /// Forme « contour » utilisée pour les points d'accroche et les tests de clic.
+    /// "Outline" shape used for attachment points and click tests.
     pub fn outline(self) -> Outline {
         match self {
             BoxGeom::Ellipse => Outline::Ellipse,
@@ -145,7 +145,7 @@ pub enum Outline {
 }
 
 impl Outline {
-    /// Polygone du contour dans le repère local (origine au centre).
+    /// Outline polygon in the local frame (origin at the center).
     pub fn polygon(self, w: f64, h: f64) -> Vec<Pt> {
         let (hw, hh) = (w / 2.0, h / 2.0);
         match self {
@@ -156,7 +156,7 @@ impl Outline {
     }
 }
 
-/// Objet « boîte » : forme, note adhésive ou texte libre.
+/// "Box" object: shape, sticky note or free text.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BoxObj {
     pub geom: BoxGeom,
@@ -166,7 +166,7 @@ pub struct BoxObj {
 }
 
 impl BoxObj {
-    /// Zone (repère local) dans laquelle le texte est disposé.
+    /// Area (local frame) in which the text is laid out.
     pub fn label_rect(&self) -> Rect {
         let (w, h) = (self.frame.w, self.frame.h);
         let (hw, hh) = (w / 2.0, h / 2.0);
@@ -180,13 +180,13 @@ impl BoxObj {
         }
     }
 
-    /// Mise en page du texte dans [`BoxObj::label_rect`].
+    /// Text layout inside [`BoxObj::label_rect`].
     pub fn layout(&self, m: &dyn Measurer) -> TextLayout {
         let wrap = (self.geom != BoxGeom::Text).then(|| self.label_rect().w);
         layout_rich(&self.label.text, wrap, m, self.label.family, self.label.size)
     }
 
-    /// Adapte la taille d'un texte libre à son contenu ; agrandit les autres formes si le texte déborde.
+    /// Fits the size of a free text to its content; grows the other shapes when the text overflows.
     pub fn fit(&mut self, m: &dyn Measurer) {
         let lay = self.layout(m);
         if self.geom == BoxGeom::Text {
@@ -206,34 +206,34 @@ impl BoxObj {
     }
 }
 
-/// Image posée sur le tableau.
+/// Image placed on the board.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ImageObj {
     pub frame: Frame,
     pub asset: AssetId,
-    /// Source LaTeX quand l'image est une formule composée (l'image est alors un SVG blanc teinté par la couleur de trait).
+    /// LaTeX source when the image is a typeset formula (the image is then a white SVG tinted by the stroke color).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latex: Option<String>,
 }
 
-/// Trait à main levée (points en coordonnées monde).
+/// Freehand stroke (points in world coordinates).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PenObj {
     pub pts: Arc<Vec<Pt>>,
     #[serde(default)]
     pub highlighter: bool,
-    /// Pression du stylet (0..1) pour chaque point : trait d'épaisseur variable. `None` : épaisseur constante.
+    /// Pen pressure (0..1) for each point: variable-width stroke. `None`: constant width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pressures: Option<Arc<Vec<f32>>>,
 }
 
-/// Tableau de cellules (lignes × colonnes), chaque cellule contenant du texte riche.
+/// Table of cells (rows × columns), each cell containing rich text.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Table {
     pub origin: Pt,
     pub col_w: Vec<f64>,
     pub row_h: Vec<f64>,
-    /// Cellules en ordre ligne par ligne.
+    /// Cells in row-by-row order.
     pub cells: Vec<RichText>,
     #[serde(default)]
     pub header: bool,
@@ -276,7 +276,7 @@ impl Table {
         let y = self.origin.y + self.row_h[..r].iter().sum::<f64>();
         Rect::new(x, y, self.col_w[c], self.row_h[r])
     }
-    /// Cellule située sous un point monde.
+    /// Cell located under a world point.
     pub fn cell_at(&self, p: Pt) -> Option<(usize, usize)> {
         if !self.rect().contains(p) {
             return None;
@@ -351,7 +351,7 @@ pub struct Object {
     pub kind: Kind,
     #[serde(default)]
     pub style: Style,
-    /// Groupe : les objets partageant un identifiant se sélectionnent ensemble.
+    /// Group: objects sharing an id are selected together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<Id>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -365,7 +365,7 @@ impl Object {
         Self { id: Id::new(), kind, style, group: None, locked: false, layer: default_layer() }
     }
 
-    /// Forme, note ou texte.
+    /// Shape, note or text.
     pub fn new_box(geom: BoxGeom, frame: Frame, style: Style, label: Label) -> Self {
         Self::new(Kind::Box(BoxObj { geom, frame, label }), style)
     }
@@ -374,13 +374,13 @@ impl Object {
         Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures: None }), style)
     }
 
-    /// Trait avec pression de stylet (une valeur 0..1 par point ; ignorée si les longueurs diffèrent).
+    /// Stroke with pen pressure (one 0..1 value per point; ignored when the lengths differ).
     pub fn new_pen_with_pressure(pts: Vec<Pt>, pressures: Vec<f32>, highlighter: bool, style: Style) -> Self {
         let pressures = (pressures.len() == pts.len()).then(|| Arc::new(pressures));
         Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures }), style)
     }
 
-    /// Cadre pour les objets rectangulaires (forme, image, tableau).
+    /// Frame for rectangular objects (shape, image, table).
     pub fn frame(&self) -> Option<Frame> {
         match &self.kind {
             Kind::Box(b) => Some(b.frame),
@@ -390,12 +390,12 @@ impl Object {
         }
     }
 
-    /// Les connecteurs peuvent s'accrocher à cet objet.
+    /// Connectors can attach to this object.
     pub fn is_attachable(&self) -> bool {
         self.frame().is_some()
     }
 
-    /// Déplace l'objet. Les extrémités liées d'un connecteur ne bougent pas (elles suivent leur cible).
+    /// Moves the object. The bound ends of a connector do not move (they follow their target).
     pub fn translate(&mut self, d: Pt) {
         match &mut self.kind {
             Kind::Box(b) => {
@@ -412,7 +412,7 @@ impl Object {
         }
     }
 
-    /// Rotation autour de `c`. Renvoie `false` si l'objet ne peut pas tourner (tableau).
+    /// Rotation around `c`. Returns `false` when the object cannot rotate (table).
     pub fn rotate_about(&mut self, c: Pt, a: f64) -> bool {
         match &mut self.kind {
             Kind::Box(BoxObj { frame, .. }) | Kind::Image(ImageObj { frame, .. }) => {
@@ -434,7 +434,7 @@ impl Object {
         }
     }
 
-    /// Mise à l'échelle par rapport à `o` (étirement non uniforme possible).
+    /// Scaling relative to `o` (non-uniform stretching possible).
     pub fn scale_about(&mut self, o: Pt, sx: f64, sy: f64) {
         let map = |p: Pt| Pt::new(o.x + (p.x - o.x) * sx, o.y + (p.y - o.y) * sy);
         match &mut self.kind {
@@ -468,11 +468,11 @@ pub struct Layer {
 
 impl Layer {
     pub fn main() -> Self {
-        Layer { id: default_layer(), name: "Calque 1".into(), visible: true, locked: false }
+        Layer { id: default_layer(), name: "Layer 1".into(), visible: true, locked: false }
     }
 }
 
-/// Position et zoom de la vue sur une page.
+/// Position and zoom of the view on a page.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct View {
     pub x: f64,
@@ -490,7 +490,7 @@ pub struct Page {
     pub id: Id,
     pub name: String,
     pub layers: Vec<Layer>,
-    /// Ordre de dessin : le dernier objet est au premier plan.
+    /// Drawing order: the last object is on top.
     pub objects: Vec<Object>,
     #[serde(default)]
     pub view: View,
@@ -515,7 +515,7 @@ impl Page {
     pub fn is_locked(&self, o: &Object) -> bool {
         o.locked || self.layer(&o.layer).is_some_and(|l| l.locked)
     }
-    /// Identifiants des objets dont le groupe est touché par `ids`.
+    /// Ids of the objects whose group is touched by `ids`.
     pub fn expand_groups(&self, ids: &[Id]) -> Vec<Id> {
         let groups: Vec<&Id> = self.objects.iter().filter(|o| ids.contains(&o.id)).filter_map(|o| o.group.as_ref()).collect();
         self.objects.iter().filter(|o| ids.contains(&o.id) || o.group.as_ref().is_some_and(|g| groups.contains(&g))).map(|o| o.id.clone()).collect()
@@ -556,15 +556,15 @@ impl BgPreset {
     }
     pub fn label(self) -> &'static str {
         match self {
-            BgPreset::White => "Blanc",
-            BgPreset::Cream => "Crème",
-            BgPreset::Gray => "Gris",
-            BgPreset::Slate => "Ardoise",
-            BgPreset::Black => "Noir",
-            BgPreset::Green => "Tableau vert",
+            BgPreset::White => "White",
+            BgPreset::Cream => "Cream",
+            BgPreset::Gray => "Gray",
+            BgPreset::Slate => "Slate",
+            BgPreset::Black => "Black",
+            BgPreset::Green => "Green board",
         }
     }
-    /// Préréglage le plus proche d'une couleur quelconque.
+    /// Preset closest to any color.
     pub fn nearest(rgb: (u8, u8, u8)) -> BgPreset {
         let d = |p: BgPreset| {
             let c = p.rgb();
@@ -595,7 +595,7 @@ impl Default for Background {
     }
 }
 
-/// Ressource binaire (image) stockée une seule fois dans le document.
+/// Binary asset (image) stored only once in the document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Asset {
     pub mime: String,
@@ -628,7 +628,7 @@ pub struct Document {
 
 impl Default for Document {
     fn default() -> Self {
-        Self::new("Sans titre")
+        Self::new("Untitled")
     }
 }
 
@@ -644,7 +644,7 @@ impl Document {
         self.assets.insert(id.clone(), Asset { mime: mime.to_owned(), data: Arc::new(data) });
         id
     }
-    /// Supprime les ressources que plus aucun objet ne référence.
+    /// Removes the assets that no object references any more.
     pub fn prune_assets(&mut self) {
         let used: std::collections::HashSet<&Id> =
             self.pages.iter().flat_map(|p| p.objects.iter()).filter_map(|o| if let Kind::Image(i) = &o.kind { Some(&i.asset) } else { None }).collect();
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn text_box_fits_content() {
-        let mut b = BoxObj { geom: BoxGeom::Text, frame: Frame::new(0.0, 0.0, 1.0, 1.0), label: Label::new("Bonjour\nle monde", 20.0, Align::Left) };
+        let mut b = BoxObj { geom: BoxGeom::Text, frame: Frame::new(0.0, 0.0, 1.0, 1.0), label: Label::new("Hello\nworld", 20.0, Align::Left) };
         b.fit(&ApproxMeasurer);
         assert!(b.frame.w > 40.0);
         assert!((b.frame.h - 2.0 * 26.0).abs() < 1e-9);
@@ -677,7 +677,7 @@ mod tests {
         let mut b = BoxObj {
             geom: BoxGeom::Rect,
             frame: Frame::new(0.0, 0.0, 100.0, 40.0),
-            label: Label::new("un texte vraiment très long qui déborde", 20.0, Align::Center),
+            label: Label::new("a really long text that overflows", 20.0, Align::Center),
         };
         let before = b.frame.h;
         b.fit(&ApproxMeasurer);

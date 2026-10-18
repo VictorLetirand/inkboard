@@ -1,7 +1,7 @@
-//! Serveur MCP (Model Context Protocol) du tableau blanc, niveau A : les outils lisent et écrivent des fichiers `.inkboard.json`.
+//! MCP (Model Context Protocol) server of the whiteboard, level A: the tools read and write `.inkboard.json` files.
 //!
-//! Le protocole est implémenté à la main (JSON-RPC 2.0, un message JSON par ligne sur stdin/stdout) : `initialize`, `ping`, `tools/list`, `tools/call`.
-//! Voir [`tools`] pour la liste des outils.
+//! The protocol is implemented by hand (JSON-RPC 2.0, one JSON message per line on stdin/stdout): `initialize`, `ping`, `tools/list`, `tools/call`.
+//! See [`tools`] for the list of tools.
 
 pub mod live;
 pub mod resources;
@@ -9,19 +9,19 @@ pub mod tools;
 
 use serde_json::{Value, json};
 
-/// Versions du protocole que ce serveur sait parler ; la plus récente est proposée par défaut.
+/// Protocol versions this server can speak; the most recent one is offered by default.
 const PROTOCOL_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
 
-/// Contexte d'exécution : racine optionnelle qui confine tous les chemins de fichiers.
+/// Execution context: optional root that confines all file paths.
 #[derive(Clone, Debug, Default)]
 pub struct Server {
     pub root: Option<std::path::PathBuf>,
-    /// Désactive le mode direct (jamais d'appel à l'application, uniquement les fichiers).
+    /// Disables live mode (never calls the application, files only).
     pub no_live: bool,
-    /// Fichier de découverte de l'application (défaut : `live::discovery_path()`).
+    /// Application discovery file (default: `live::discovery_path()`).
     pub live_file: Option<std::path::PathBuf>,
-    /// Référence des changements par fichier (mode fichier) ; voir `tools::apply_tracked`.
-    /// URI des ressources auxquelles le client est abonné.
+    /// Reference of changes per file (file mode); see `tools::apply_tracked`.
+    /// URIs of the resources the client is subscribed to.
     pub subs: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     pub trackers: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, tools::Snapshot>>>,
 }
@@ -35,9 +35,9 @@ fn err(id: &Value, code: i64, message: &str) -> Value {
 }
 
 impl Server {
-    /// Traite un message JSON-RPC ; renvoie la réponse, ou `None` pour une notification.
+    /// Handles a JSON-RPC message; returns the response, or `None` for a notification.
     pub fn handle(&self, msg: &Value) -> Option<Value> {
-        // réponses et notifications (initialized, cancelled…) : rien à renvoyer
+        // responses and notifications (initialized, cancelled…): nothing to send back
         let method = msg.get("method").and_then(Value::as_str)?;
         let id = msg.get("id")?;
         Some(match method {
@@ -50,9 +50,9 @@ impl Server {
                         "protocolVersion": version,
                         "capabilities": {"tools": {"listChanged": false}, "resources": {"subscribe": true, "listChanged": true}},
                         "serverInfo": {"name": "inkboard-mcp", "title": "Inkboard", "version": env!("CARGO_PKG_VERSION")},
-                        "instructions": "Inkboard, tableau blanc hors ligne. Si l'application est ouverte, les outils agissent en direct sur le tableau affiché (sans `path`) ; sinon ils prennent le chemin `path` d'un fichier .inkboard.json (créé par create_board). board_changes signale ce que l'utilisateur a modifié. \
-                                         les objets créés renvoient leur `id`, à réutiliser pour relier des formes (add_connector) ou les modifier. \
-                                         Sans x/y, un nouvel objet est placé sous le contenu existant. Pour un schéma complet, import_mermaid est le plus rapide."
+                        "instructions": "Inkboard, an offline whiteboard. When the application is open, the tools act live on the displayed board (without `path`); otherwise they take the `path` of an .inkboard.json file (created by create_board). board_changes reports what the user changed. \
+                                         Created objects return their `id`, to reuse for connecting shapes (add_connector) or modifying them. \
+                                         Without x/y, a new object is placed below the existing content. For a complete diagram, import_mermaid is the fastest."
                     }),
                 )
             }
@@ -82,11 +82,11 @@ impl Server {
                 let args = msg.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
                 match tools::call(self, name, &args) {
                     Ok(text) => ok(id, json!({"content": [{"type": "text", "text": text}], "isError": false})),
-                    Err(e) if e.starts_with("outil inconnu") => err(id, -32602, &e),
+                    Err(e) if e.starts_with("unknown tool") => err(id, -32602, &e),
                     Err(e) => ok(id, json!({"content": [{"type": "text", "text": e}], "isError": true})),
                 }
             }
-            _ => err(id, -32601, &format!("méthode inconnue : {method}")),
+            _ => err(id, -32601, &format!("unknown method: {method}")),
         })
     }
 }

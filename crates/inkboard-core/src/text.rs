@@ -1,7 +1,7 @@
-//! Texte riche (spans stylés), mesure abstraite et retour à la ligne.
+//! Rich text (styled spans), abstract measurement and line wrapping.
 //!
-//! Le moteur ne dépend d'aucune police : l'interface fournit un [`Measurer`]
-//! réel (polices de l'application) ; les outils en ligne de commande utilisent
+//! The engine depends on no font: the interface provides a real [`Measurer`]
+//! (the application's fonts); command-line tools use
 //! [`ApproxMeasurer`].
 
 use crate::style::{Color, FontFamily};
@@ -11,7 +11,7 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-/// Mise en forme d'un fragment de texte.
+/// Formatting of a text fragment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpanStyle {
     #[serde(default, skip_serializing_if = "is_false")]
@@ -22,10 +22,10 @@ pub struct SpanStyle {
     pub underline: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub strike: bool,
-    /// Couleur du texte ; `None` : celle de l'objet.
+    /// Text color; `None`: the object's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Color>,
-    /// Surlignage derrière le texte.
+    /// Highlight behind the text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<Color>,
 }
@@ -37,7 +37,7 @@ pub struct Span {
     pub style: SpanStyle,
 }
 
-/// Texte avec mise en forme par fragment (couleur, surlignage, gras…).
+/// Text with per-fragment formatting (color, highlight, bold…).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RichText(pub Vec<Span>);
@@ -53,12 +53,12 @@ impl RichText {
     pub fn is_empty(&self) -> bool {
         self.0.iter().all(|s| s.text.is_empty())
     }
-    /// Remplace le texte entier en conservant le style du premier fragment.
+    /// Replaces the whole text keeping the style of the first fragment.
     pub fn set_plain(&mut self, s: &str) {
         let style = self.0.first().map(|x| x.style).unwrap_or_default();
         self.0 = if s.is_empty() { Vec::new() } else { vec![Span { text: s.to_owned(), style }] };
     }
-    /// Applique `f` au style des caractères `[from, to)` (indices en caractères).
+    /// Applies `f` to the style of characters `[from, to)` (character indices).
     pub fn restyle(&mut self, from: usize, to: usize, f: impl Fn(&mut SpanStyle)) {
         let mut out: Vec<Span> = Vec::new();
         let mut pos = 0usize;
@@ -92,18 +92,18 @@ impl RichText {
         Self(out)
     }
 
-    /// Nombre de caractères.
+    /// Number of characters.
     pub fn len_chars(&self) -> usize {
         self.0.iter().map(|s| s.text.chars().count()).sum()
     }
 
-    /// Style du caractère d'indice `i`.
+    /// Style of the character at index `i`.
     pub fn style_at(&self, i: usize) -> Option<SpanStyle> {
         self.chars_with_style().get(i).map(|c| c.1)
     }
 
-    /// Remplace les caractères `[from, to)` par `text`. Le texte inséré prend le style du premier caractère
-    /// remplacé, sinon celui du caractère précédent (ou suivant en début de texte) : on continue d'écrire « comme avant ».
+    /// Replaces the characters `[from, to)` with `text`. The inserted text takes the style of the first replaced
+    /// character, otherwise that of the previous one (or the next at the start of the text): typing continues "as before".
     pub fn splice(&mut self, from: usize, to: usize, text: &str) {
         let mut v = self.chars_with_style();
         let from = from.min(v.len());
@@ -119,8 +119,8 @@ impl RichText {
         *self = Self::from_chars(v);
     }
 
-    /// Répercute sur les styles une modification du texte brut (`old` → `new`), repérée par préfixe et suffixe communs.
-    /// Si `old` ne correspond plus au contenu (désynchronisation), le texte est simplement reposé avec le premier style.
+    /// Reflects on the styles a modification of the raw text (`old` → `new`), found by common prefix and suffix.
+    /// If `old` no longer matches the content (out of sync), the text is simply set again with the first style.
     pub fn apply_edit(&mut self, old: &str, new: &str) {
         if old == new {
             return;
@@ -137,37 +137,37 @@ impl RichText {
         self.splice(prefix, o.len() - suffix, &inserted);
     }
 
-    /// Vrai si tous les caractères de `[from, to)` vérifient `pred` (faux sur une plage vide).
+    /// True when all the characters of `[from, to)` satisfy `pred` (false on an empty range).
     pub fn all(&self, from: usize, to: usize, pred: impl Fn(&SpanStyle) -> bool) -> bool {
         let v = self.chars_with_style();
         let to = to.min(v.len());
         from < to && v[from..to].iter().all(|c| pred(&c.1))
     }
 
-    /// Bascule un attribut sur `[from, to)` : s'il est déjà partout présent on le retire, sinon on l'applique partout.
+    /// Toggles an attribute on `[from, to)`: when it is already everywhere it is removed, otherwise applied everywhere.
     pub fn toggle(&mut self, from: usize, to: usize, get: fn(&SpanStyle) -> bool, set: fn(&mut SpanStyle, bool)) {
         let on = !self.all(from, to, get);
         self.restyle(from, to, |s| set(s, on));
     }
 }
 
-/// Mise en forme applicable à une portion de texte.
+/// Formatting applicable to a portion of text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Bold,
     Italic,
     Underline,
     Strike,
-    /// Couleur du texte ; `None` : revient à la couleur de l'objet.
+    /// Text color; `None`: back to the object's color.
     Color(Option<Color>),
-    /// Surlignage ; `None` : le retire.
+    /// Highlight; `None`: removes it.
     Highlight(Option<Color>),
-    /// Retire toute mise en forme.
+    /// Removes all formatting.
     Clear,
 }
 
 impl Format {
-    /// Vrai si la plage `[from, to)` porte déjà cette mise en forme sur tous ses caractères.
+    /// True when the range `[from, to)` already carries this formatting on all its characters.
     pub fn is_active(self, rt: &RichText, from: usize, to: usize) -> bool {
         match self {
             Format::Bold => rt.all(from, to, |s| s.bold),
@@ -182,8 +182,8 @@ impl Format {
 }
 
 impl RichText {
-    /// Applique une mise en forme à `[from, to)`. Gras, italique, souligné et barré se basculent ;
-    /// une couleur ou un surlignage identique à l'existant est retiré (même geste = on enlève).
+    /// Applies a format to `[from, to)`. Bold, italic, underline and strikethrough toggle;
+    /// a color or highlight identical to the existing one is removed (same gesture = remove).
     pub fn format(&mut self, from: usize, to: usize, f: Format) {
         let active = f.is_active(self, from, to);
         match f {
@@ -198,7 +198,7 @@ impl RichText {
     }
 }
 
-/// Mesure de la largeur du texte.
+/// Measurement of the text width.
 pub trait Measurer {
     fn width(&self, s: &str, font: FontFamily, size: f64, bold: bool) -> f64;
     fn line_height(&self, size: f64) -> f64 {
@@ -206,7 +206,7 @@ pub trait Measurer {
     }
 }
 
-/// Mesure approximative (sans police) : suffisante pour la mise en page hors interface.
+/// Approximate measurement (no font): enough for layout outside the interface.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ApproxMeasurer;
 
@@ -247,7 +247,7 @@ pub struct Run {
 }
 pub type Line = Vec<Run>;
 
-/// Résultat de la mise en page d'un bloc de texte.
+/// Result of laying out a block of text.
 #[derive(Clone, Debug, Default)]
 pub struct TextLayout {
     pub lines: Vec<Line>,
@@ -285,7 +285,7 @@ fn to_line(chars: &[(char, SpanStyle)]) -> Line {
     line
 }
 
-/// Met en page `rt`. `max_w = None` : aucune césure automatique (seuls les `\n` coupent).
+/// Lays out `rt`. `max_w = None`: no automatic wrapping (only `\n` breaks).
 pub fn layout_rich(rt: &RichText, max_w: Option<f64>, m: &dyn Measurer, font: FontFamily, size: f64) -> TextLayout {
     let chars = rt.chars_with_style();
     let mut rows: Vec<Vec<(char, SpanStyle)>> = Vec::new();
@@ -299,7 +299,7 @@ pub fn layout_rich(rt: &RichText, max_w: Option<f64>, m: &dyn Measurer, font: Fo
             continue;
         }
         let mut cur: Vec<(char, SpanStyle)> = Vec::new();
-        // jetons : mot + espaces qui le suivent
+        // tokens: word + the spaces that follow it
         let mut tokens: Vec<&[(char, SpanStyle)]> = Vec::new();
         let mut start = 0;
         for i in 0..para.len() {
@@ -317,14 +317,14 @@ pub fn layout_rich(rt: &RichText, max_w: Option<f64>, m: &dyn Measurer, font: Fo
             let tok_w = run_width(&tok[..trimmed_len], m, font, size);
             let cur_w = run_width(&cur, m, font, size);
             if !cur.is_empty() && cur_w + tok_w > max {
-                // retire les espaces de fin avant de couper
+                // strip trailing spaces before breaking
                 while cur.last().is_some_and(|(c, _)| *c == ' ') {
                     cur.pop();
                 }
                 rows.push(std::mem::take(&mut cur));
             }
             if tok_w > max && cur.is_empty() {
-                // mot plus large que la ligne : coupe caractère par caractère
+                // word wider than the line: break character by character
                 for item in tok {
                     cur.push(*item);
                     if cur.len() > 1 && run_width(&cur, m, font, size) > max {
@@ -354,8 +354,8 @@ mod tests {
 
     #[test]
     fn plain_roundtrip() {
-        let rt = RichText::plain("Bonjour");
-        assert_eq!(rt.to_plain(), "Bonjour");
+        let rt = RichText::plain("Hello");
+        assert_eq!(rt.to_plain(), "Hello");
         assert!(RichText::plain("").is_empty());
     }
 
@@ -416,9 +416,9 @@ mod tests {
         rt.restyle(6, 10, |s| s.italic = true);
         rt.apply_edit("alpha beta", "alpha XX beta");
         assert_eq!(rt.to_plain(), "alpha XX beta");
-        // « XX » insérés avant « beta » héritent du caractère précédent (sans italique)
+        // "XX" inserted before "beta" inherit the previous character (not italic)
         assert!(!rt.style_at(6).unwrap().italic);
-        assert!(rt.style_at(9).unwrap().italic, "« beta » reste en italique");
+        assert!(rt.style_at(9).unwrap().italic, "\"beta\" stays italic");
     }
 
     #[test]
@@ -457,11 +457,11 @@ mod tests {
         assert!(rt.all(1, 4, |s| s.bold) && !rt.all(0, 6, |s| s.bold));
         rt.toggle(1, 4, |s| s.bold, |s, v| s.bold = v);
         assert!(!rt.all(0, 6, |s| s.bold));
-        // sélection partiellement en gras : on applique partout
+        // selection partly bold: apply everywhere
         rt.restyle(0, 2, |s| s.bold = true);
         rt.toggle(0, 4, |s| s.bold, |s, v| s.bold = v);
         assert!(rt.all(0, 4, |s| s.bold));
-        assert!(!rt.all(0, 0, |s| s.bold), "plage vide : faux");
+        assert!(!rt.all(0, 0, |s| s.bold), "empty range: false");
     }
 
     #[test]
@@ -474,15 +474,15 @@ mod tests {
         rt.format(3, 7, Format::Highlight(Some(yellow)));
         let st = rt.style_at(4).unwrap();
         assert!(st.bold && st.color == Some(red) && st.highlight == Some(yellow));
-        assert_eq!(rt.style_at(2).unwrap(), SpanStyle::default(), "hors sélection : inchangé");
+        assert_eq!(rt.style_at(2).unwrap(), SpanStyle::default(), "outside the selection: unchanged");
         assert_eq!(rt.style_at(7).unwrap(), SpanStyle::default());
-        // même couleur une seconde fois : on la retire
+        // same color a second time: remove it
         rt.format(3, 7, Format::Color(Some(red)));
         assert_eq!(rt.style_at(4).unwrap().color, None);
-        // autre couleur : remplace
+        // another color: replace
         rt.format(3, 7, Format::Color(Some(red)));
         rt.format(3, 7, Format::Color(Some(yellow)));
-        assert_eq!(rt.style_at(4).unwrap().color, Some(yellow), "une autre teinte remplace l'ancienne");
+        assert_eq!(rt.style_at(4).unwrap().color, Some(yellow), "another tint replaces the old one");
     }
 
     #[test]

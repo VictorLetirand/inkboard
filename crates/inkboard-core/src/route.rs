@@ -1,12 +1,12 @@
-//! Routage orthogonal qui contourne les obstacles (recherche A* sur la grille formée par les bords des obstacles).
+//! Orthogonal routing around obstacles (A* search on the grid formed by the obstacle edges).
 
 use crate::geom::{Pt, Rect};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-/// Coût d'un changement de direction : favorise les chemins avec peu de coudes.
+/// Cost of a change of direction: favors paths with few bends.
 const BEND_PENALTY: f64 = 40.0;
-/// Nombre maximal de nœuds explorés avant d'abandonner (le routage de secours prend alors le relais).
+/// Maximum number of nodes explored before giving up (the fallback routing then takes over).
 const MAX_NODES: usize = 60_000;
 
 fn dedup_sorted(mut v: Vec<f64>) -> Vec<f64> {
@@ -15,14 +15,14 @@ fn dedup_sorted(mut v: Vec<f64>) -> Vec<f64> {
     v
 }
 
-/// Le segment horizontal ou vertical `[p, q]` traverse-t-il l'intérieur de `r` ?
+/// Does the horizontal or vertical segment `[p, q]` cross the inside of `r`?
 fn segment_hits(p: Pt, q: Pt, r: &Rect) -> bool {
     const E: f64 = 1e-6;
     let (x0, x1, y0, y1) = (p.x.min(q.x), p.x.max(q.x), p.y.min(q.y), p.y.max(q.y));
     x1 > r.x + E && x0 < r.right() - E && y1 > r.y + E && y0 < r.bottom() - E
 }
 
-/// Vrai si l'un des segments du chemin traverse l'intérieur d'un obstacle (les segments obliques sont testés par échantillonnage).
+/// True when one of the path's segments crosses the inside of an obstacle (oblique segments are tested by sampling).
 pub fn crosses(path: &[Pt], obstacles: &[Rect]) -> bool {
     path.windows(2).any(|w| {
         let axis_aligned = (w[0].x - w[1].x).abs() < 1e-9 || (w[0].y - w[1].y).abs() < 1e-9;
@@ -59,9 +59,9 @@ impl PartialOrd for State {
     }
 }
 
-/// Cherche un chemin orthogonal de `a` à `b` qui évite les `obstacles` (agrandis de `margin`).
-/// `start_horizontal` : direction initiale imposée (sortie d'un côté d'une forme).
-/// Renvoie les coins du chemin, ou `None` si aucun chemin n'existe (ex. départ enfermé).
+/// Looks for an orthogonal path from `a` to `b` avoiding the `obstacles` (grown by `margin`).
+/// `start_horizontal`: imposed initial direction (leaving a side of a shape).
+/// Returns the path corners, or `None` when no path exists (e.g. enclosed start).
 pub fn route_around(a: Pt, b: Pt, start_horizontal: Option<bool>, obstacles: &[Rect], margin: f64) -> Option<Vec<Pt>> {
     let obs: Vec<Rect> = obstacles.iter().map(|r| r.expand(margin)).collect();
     let mut xs = vec![a.x, b.x];
@@ -136,7 +136,7 @@ pub fn route_around(a: Pt, b: Pt, start_horizontal: Option<bool>, obstacles: &[R
         pts.push(node(cur.0, cur.1));
     }
     pts.reverse();
-    // supprime les points alignés et les doublons
+    // remove aligned points and duplicates
     let mut out: Vec<Pt> = Vec::new();
     for p in pts {
         if out.last().is_some_and(|l| l.dist(p) < 1e-6) {
@@ -176,10 +176,10 @@ mod tests {
         assert_eq!(p[0], Pt::new(0.0, 0.0));
         assert_eq!(*p.last().unwrap(), Pt::new(300.0, 0.0));
         assert!(!crosses(&p, &[obstacle]), "{p:?}");
-        assert!(!crosses(&p, &[obstacle.expand(9.0)]), "marge respectée : {p:?}");
+        assert!(!crosses(&p, &[obstacle.expand(9.0)]), "margin respected: {p:?}");
         assert!(bends(&p) <= 4, "{p:?}");
         for w in p.windows(2) {
-            assert!((w[0].x - w[1].x).abs() < 1e-9 || (w[0].y - w[1].y).abs() < 1e-9, "segment oblique");
+            assert!((w[0].x - w[1].x).abs() < 1e-9 || (w[0].y - w[1].y).abs() < 1e-9, "oblique segment");
         }
     }
 
@@ -194,22 +194,22 @@ mod tests {
     #[test]
     fn enclosed_start_or_end_has_no_route() {
         let ring = [Rect::new(-50.0, -50.0, 100.0, 100.0)];
-        assert!(route_around(Pt::new(0.0, 0.0), Pt::new(300.0, 0.0), None, &ring, 5.0).is_none(), "départ à l'intérieur d'un obstacle");
+        assert!(route_around(Pt::new(0.0, 0.0), Pt::new(300.0, 0.0), None, &ring, 5.0).is_none(), "start inside an obstacle");
         let cage = [
             Rect::new(-60.0, -60.0, 120.0, 20.0),
             Rect::new(-60.0, 40.0, 120.0, 20.0),
             Rect::new(-60.0, -60.0, 20.0, 120.0),
             Rect::new(40.0, -60.0, 20.0, 120.0),
         ];
-        assert!(route_around(Pt::new(0.0, 0.0), Pt::new(300.0, 0.0), None, &cage, 5.0).is_none(), "départ enfermé");
+        assert!(route_around(Pt::new(0.0, 0.0), Pt::new(300.0, 0.0), None, &cage, 5.0).is_none(), "enclosed start");
     }
 
     #[test]
     fn prefers_fewer_bends_over_slightly_shorter_paths() {
-        // aller de (0,0) à (200,200) sans obstacle : un seul coude (en L), pas un escalier
+        // from (0,0) to (200,200) without obstacles: a single bend (an L), not a staircase
         let p = route_around(Pt::new(0.0, 0.0), Pt::new(200.0, 200.0), Some(true), &[], 10.0).unwrap();
         assert_eq!(bends(&p), 1, "{p:?}");
-        assert_eq!(p[1], Pt::new(200.0, 0.0), "part horizontalement comme demandé");
+        assert_eq!(p[1], Pt::new(200.0, 0.0), "starts horizontally as requested");
     }
 
     #[test]
@@ -217,7 +217,7 @@ mod tests {
         let r = Rect::new(10.0, 10.0, 20.0, 20.0);
         assert!(crosses(&[Pt::new(0.0, 20.0), Pt::new(50.0, 20.0)], &[r]));
         assert!(!crosses(&[Pt::new(0.0, 5.0), Pt::new(50.0, 5.0)], &[r]));
-        assert!(!crosses(&[Pt::new(0.0, 10.0), Pt::new(50.0, 10.0)], &[r]), "longer un bord n'est pas traverser");
+        assert!(!crosses(&[Pt::new(0.0, 10.0), Pt::new(50.0, 10.0)], &[r]), "running along an edge is not crossing it");
         assert!(crosses(&[Pt::new(0.0, 0.0), Pt::new(40.0, 40.0)], &[r]), "diagonale");
     }
 }

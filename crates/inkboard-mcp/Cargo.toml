@@ -1,6 +1,6 @@
 [package]
 name = "inkboard-mcp"
-description = "Serveur MCP (stdio) du tableau blanc : permet à un agent de créer et modifier des tableaux (fichiers .inkboard.json), d'importer du Mermaid et d'exporter."
+description = "MCP (stdio) server of the whiteboard: lets an agent create and modify boards (.inkboard.json files), import Mermaid and export."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

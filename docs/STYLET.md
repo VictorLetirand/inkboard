@@ -1,33 +1,35 @@
-# Valider le stylet sur du matériel réel
+# Validating the pen on real hardware
 
-La pression et la gomme du stylet sont **implémentées et testées automatiquement, mais jamais essayées avec un vrai stylet** (aucun numériseur n'était
-disponible pendant le développement). Le mode diagnostic permet de le vérifier en deux minutes.
+*Version française : [fr/STYLET.md](fr/STYLET.md)*
 
-## Procédure (Windows)
+Pen pressure and the pen eraser are **implemented and automatically tested, but have never been tried with a real pen** (no digitizer was
+available during development). The diagnostic mode lets you check it in two minutes.
+
+## Procedure (Windows)
 
 ```bash
 inkboard --pen-test
 ```
 
-Un panneau « Diagnostic du stylet » s'affiche à droite. Sur un appareil à stylet (Surface, tablette Wacom, écran tactile à stylet…) :
+A "Pen diagnostics" panel appears on the right. On a pen-enabled device (Surface, Wacom tablet, pen touchscreen…):
 
-1. **Dessinez** avec l'outil Crayon en variant la pression : le trait doit s'épaissir quand vous appuyez. Dans le panneau : « Stylet détecté par Windows »,
-   « Pression variable » et « Pression reçue par l'application (egui) » doivent passer à **OK**.
-2. **Retournez le stylet** (extrémité gomme) et passez sur un dessin : il doit s'effacer, quel que soit l'outil actif. « Extrémité gomme détectée » → OK.
-3. Appuyez sur le **bouton latéral** (« Bouton latéral détecté ») et inclinez le stylet (« Inclinaison détectée ») : informatifs.
-4. Cliquez **Copier le rapport** et collez-le dans un message : il contient les verdicts et les mesures (nombre de niveaux de pression, etc.).
+1. **Draw** with the Pen tool, varying the pressure: the stroke should get thicker as you press. In the panel, "Pen detected by Windows",
+   "Variable pressure" and "Pressure received by the application (egui)" should turn **yes**.
+2. **Flip the pen** (eraser end) and pass over a drawing: it should be erased, whatever the active tool. "Eraser end detected" → yes.
+3. Press the **barrel button** ("Barrel button detected") and tilt the pen ("Tilt detected"): informational.
+4. Click **Copy the report** and paste it into a message: it contains the verdicts and the measurements (number of pressure levels, etc.).
 
-## Lecture des résultats
+## Reading the results
 
-| Observation | Signification |
+| Observation | Meaning |
 |---|---|
-| « Pression reçue par Windows » OK mais « par l'application (egui) » NON | Windows voit la pression mais egui ne la transmet pas : l'épaisseur variable ne marchera pas ; la correction consiste à lire la pression directement depuis `inkboard-pen` (déjà disponible dans `PenSample`). |
-| « Pression variable » NON avec peu de niveaux | Le pilote renvoie une pression binaire (0/1) ou la souris émule le stylet : vérifier le pilote / Windows Ink. |
-| « Extrémité gomme » NON alors que l'extrémité est utilisée | Le pilote ne renseigne pas `PEN_FLAG_INVERTED` / `PEN_FLAG_ERASER` ; certains stylets n'ont pas de gomme matérielle. |
-| Dernier pointeur « souris » alors qu'on utilise le stylet | Windows Ink est désactivé pour l'application ou le pilote émule la souris. |
+| "Pressure received by Windows" yes but "by the application (egui)" NO | Windows sees the pressure but egui does not pass it on: variable width will not work; the fix is to read the pressure directly from `inkboard-pen` (already available in `PenSample`). |
+| "Variable pressure" NO with few levels | The driver returns a binary pressure (0/1) or the mouse is emulating the pen: check the driver / Windows Ink. |
+| "Eraser end" NO although the eraser end is used | The driver does not set `PEN_FLAG_INVERTED` / `PEN_FLAG_ERASER`; some pens have no hardware eraser. |
+| Last pointer "mouse" while using the pen | Windows Ink is disabled for the application or the driver emulates the mouse. |
 
-## Ce qui est vérifié sans matériel
+## What is verified without hardware
 
-- L'interprétation des indicateurs du stylet (`inkboard-pen`) et la construction des verdicts (`inkboard-app/src/pen_test.rs`).
-- L'installation du *subclass* de fenêtre sur une fenêtre factice qui n'altère pas les messages.
-- Le comportement de l'application quand la gomme est détectée (le geste efface quel que soit l'outil actif) et le rendu de l'épaisseur selon la pression.
+- The interpretation of the pen flags (`inkboard-pen`) and the construction of the verdicts (`inkboard-app/src/pen_test.rs`).
+- The installation of the window *subclass* on a dummy window that does not alter the messages.
+- The application's behavior when the eraser is detected (the gesture erases whatever the active tool) and the rendering of width according to pressure.

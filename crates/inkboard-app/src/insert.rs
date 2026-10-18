@@ -1,12 +1,13 @@
-//! Insertion d'éléments préfabriqués : bloc de code, formule (aperçu Unicode), pastille de vote.
+//! Insertion of prefabricated elements: code block, formula, vote dot.
 
 use crate::app::{App, Dialog, FormulaPreview};
+use crate::i18n::t;
 use crate::tools::Tool;
 use inkboard_core::*;
 
-/// Corps du texte d'une formule à l'insertion (unités du tableau).
+/// Text size of a formula when inserted (board units).
 const FORMULA_SIZE: f64 = 36.0;
-const CODE_SAMPLE: &str = "fn main() {\n    println!(\"Bonjour\");\n}";
+const CODE_SAMPLE: &str = "fn main() {\n    println!(\"Hello\");\n}";
 
 impl App {
     fn place_box(&mut self, mut o: Object) {
@@ -21,7 +22,7 @@ impl App {
         self.tool = Tool::Select;
     }
 
-    /// Bloc de code : rectangle sombre, police à chasse fixe, texte aligné à gauche.
+    /// Code block: dark rectangle, monospace font, left-aligned text.
     pub fn insert_code_block(&mut self) {
         let style = Style { stroke: Color::rgb(0xe6, 0xe6, 0xe6), fill: Some(Color::rgb(0x1e, 0x20, 0x2e)), width: 0.0, roundness: 0.1, ..Style::default() };
         let label = Label { text: inkboard_core::highlight::highlight(CODE_SAMPLE), family: FontFamily::Mono, size: 18.0, align: Align::Left };
@@ -32,10 +33,10 @@ impl App {
             b.frame.h = (lay.height + 40.0).max(90.0);
         }
         self.place_box(o);
-        self.toast("Double-clic pour modifier le code");
+        self.toast(&t("Double-click to edit the code"));
     }
 
-    /// Recolore le texte d'une forme à chasse fixe (la mise en forme existante est remplacée par la coloration syntaxique).
+    /// Recolors the text of a monospace shape (existing formatting is replaced by syntax coloring).
     pub fn recolor_code(&mut self, id: &Id) {
         self.ed.update(id, |o| {
             if let Kind::Box(b) = &mut o.kind {
@@ -44,8 +45,8 @@ impl App {
         });
     }
 
-    /// Insère une formule composée (SVG blanc teinté par la couleur de trait, source conservée) ou, avec `editing`, remplace celle d'un objet existant
-    /// en gardant son centre, son angle et son échelle.
+    /// Inserts a typeset formula (white SVG tinted by the stroke color, source kept) or, with `editing`, replaces that of an existing object
+    /// keeping its center, angle and scale.
     pub fn insert_formula(&mut self, latex: &str, editing: Option<&Id>) -> Result<(), String> {
         let f = inkboard_formats::math::render(latex, FORMULA_SIZE).map_err(|e| e.to_string())?;
         let aid = self.ed.doc.add_asset("image/svg+xml", f.svg.into_bytes());
@@ -75,14 +76,14 @@ impl App {
         Ok(())
     }
 
-    /// Ouvre la fenêtre de modification de la formule `id` (sans effet si ce n'est pas une formule).
+    /// Opens the editing window of formula `id` (no effect if it is not a formula).
     pub fn edit_formula(&mut self, id: &Id) -> bool {
         let Some(Kind::Image(ImageObj { latex: Some(src), .. })) = self.ed.page().get(id).map(|o| &o.kind) else { return false };
         self.dialog = Some(Dialog::Formula { src: src.clone(), editing: Some(id.clone()), preview: FormulaPreview::default() });
         true
     }
 
-    /// Pastille de vote numérotée : petit disque coloré, à poser sur les éléments à départager.
+    /// Numbered vote dot: a small colored disc, to drop on the items to be decided.
     pub fn insert_vote_dot(&mut self, at: Pt) {
         let style = Style { stroke: Color::rgb(0xff, 0xff, 0xff), fill: Some(Color::rgb(0xe0, 0x31, 0x31)), width: 0.0, ..Style::default() };
         let label = Label { text: RichText::plain("1"), family: FontFamily::Sans, size: 16.0, align: Align::Center };

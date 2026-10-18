@@ -1,8 +1,8 @@
-//! Couleurs, styles de trait et de texte.
+//! Colors, stroke and text styles.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Couleur : « encre » (noir sur fond clair, blanc sur fond sombre) ou RVB fixe.
+/// Color: "ink" (black on a light background, white on a dark one) or fixed RGB.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Color {
     #[default]
@@ -15,7 +15,7 @@ impl Color {
         Color::Rgb(r, g, b)
     }
 
-    /// Analyse `"ink"`, `"#rgb"` ou `"#rrggbb"` (`#rrggbbaa` : l'alpha est ignoré).
+    /// Parses `"ink"`, `"#rgb"` or `"#rrggbb"` (`#rrggbbaa`: the alpha is ignored).
     pub fn parse(s: &str) -> Option<Color> {
         let s = s.trim();
         if s.eq_ignore_ascii_case("ink") {
@@ -40,7 +40,7 @@ impl Color {
         }
     }
 
-    /// Couleur concrète selon que le fond est sombre ou non.
+    /// Concrete color depending on whether the background is dark.
     pub fn resolve(self, dark_bg: bool) -> (u8, u8, u8) {
         match self {
             Color::Ink if dark_bg => (0xf1, 0xf3, 0xf5),
@@ -63,11 +63,11 @@ impl Serialize for Color {
 impl<'de> Deserialize<'de> for Color {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
-        Color::parse(&s).ok_or_else(|| serde::de::Error::custom(format!("couleur invalide : {s}")))
+        Color::parse(&s).ok_or_else(|| serde::de::Error::custom(format!("invalid color: {s}")))
     }
 }
 
-/// Palette de base proposée dans l'interface.
+/// Base palette offered in the interface.
 pub const PALETTE: [Color; 10] = [
     Color::Ink,
     Color::rgb(0xe0, 0x31, 0x31),
@@ -115,7 +115,7 @@ pub enum FontFamily {
 }
 
 impl FontFamily {
-    /// Pile de polices CSS (guillemets simples, utilisable dans un attribut SVG).
+    /// CSS font stack (single quotes, usable in an SVG attribute).
     pub fn css(self) -> &'static str {
         match self {
             FontFamily::Sans => "'Segoe UI', system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif",
@@ -135,20 +135,20 @@ pub enum Align {
     Right,
 }
 
-/// Aspect graphique commun à tous les objets.
+/// Graphic appearance common to all objects.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Style {
     pub stroke: Color,
     /// `None` : transparent.
     #[serde(default)]
     pub fill: Option<Color>,
-    /// Épaisseur du trait (0 : pas de contour).
+    /// Stroke width (0: no outline).
     pub width: f64,
     #[serde(default)]
     pub dash: Dash,
-    /// 0.0 (invisible) à 1.0 (opaque).
+    /// 0.0 (invisible) to 1.0 (opaque).
     pub opacity: f32,
-    /// Arrondi des coins, de 0.0 (vif) à 1.0 (capsule).
+    /// Corner rounding, from 0.0 (sharp) to 1.0 (capsule).
     #[serde(default)]
     pub roundness: f32,
 }

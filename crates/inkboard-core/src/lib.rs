@@ -1,10 +1,10 @@
-//! `inkboard-core` : moteur du tableau blanc, sans dépendance à une interface.
+//! `inkboard-core`: the whiteboard engine, with no UI dependency.
 //!
-//! - [`model`] : documents, pages, calques, objets.
-//! - [`connector`] : flèches liées aux objets, recalculées à la demande.
-//! - [`hit`] : boîtes englobantes et sélection.
-//! - [`history`] / [`editor`] : modifications annulables.
-//! - [`svg`] : export SVG ; [`layout`] : mise en page automatique de graphes.
+//! - [`model`]: documents, pages, layers, objects.
+//! - [`connector`]: arrows bound to objects, recomputed on demand.
+//! - [`hit`]: bounding boxes and selection.
+//! - [`history`] / [`editor`]: undoable modifications.
+//! - [`svg`]: SVG export; [`layout`]: automatic graph layout.
 
 pub mod connector;
 pub mod editor;

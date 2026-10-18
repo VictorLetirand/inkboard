@@ -10,7 +10,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 
 ## Installer
 
-Des installeurs (Windows `.exe` / `.msi`, Linux `.deb` / `.AppImage`, macOS `.dmg`) sont publiés sur la page *Releases* du dépôt à chaque version (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)) ;
+Des installeurs (Windows `.exe` / `.msi`, Linux `.deb` / `.AppImage`, macOS `.dmg`) sont publiés sur la page *Releases* du dépôt à chaque version (voir [docs/DISTRIBUTION.md](docs/fr/DISTRIBUTION.md)) ;
 ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premier lancement). Seuls les installeurs Windows ont été construits et testés à ce jour.
 
 ## Démarrer
@@ -18,8 +18,8 @@ ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premie
 ```bash
 cargo run --release -p inkboard-app                 # l'application
 cargo run --release -p inkboard-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 245 tests
-cargo packager --release -c Packager.toml    # installeurs (voir docs/DISTRIBUTION.md)
+cargo test --workspace                        # 252 tests
+cargo packager --release -c Packager.toml    # installeurs (voir docs/fr/DISTRIBUTION.md)
 ```
 
 CLI de conversion (utile aux scripts et, plus tard, aux agents) :
@@ -34,7 +34,7 @@ cargo run --release -p inkboard-cli -- info schema.drawio
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Compilation et tests automatiques (245 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
+| Compilation et tests automatiques (252 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
 | Application lancée et utilisée à la main | ✔ | **jamais** | **jamais** |
 | Gomme du stylet (`inkboard-pen`) | ✔ (non validée sur matériel) | – (sans effet) | – (sans effet) |
 | Icône de l'exécutable, archive portable, installation par utilisateur | ✔ (`scripts/*.ps1`) | – | – |
@@ -50,7 +50,7 @@ Le code est portable (Rust + egui, pas d'API propre à un système en dehors de 
 |---|---|
 | [`inkboard-core`](crates/inkboard-core) | Modèle (pages, calques, objets), géométrie, **connecteurs liés**, historique, export SVG, mise en page automatique. Aucune dépendance à une interface. |
 | [`inkboard-formats`](crates/inkboard-formats) | Import/export draw.io, Excalidraw, JSON Canvas ; import Mermaid ; ancien format du prototype ; rendu PNG. |
-| [`inkboard-mcp`](crates/inkboard-mcp) | Serveur MCP (stdio) : un agent crée/modifie des tableaux, importe du Mermaid, exporte. Voir [docs/MCP.md](docs/MCP.md). |
+| [`inkboard-mcp`](crates/inkboard-mcp) | Serveur MCP (stdio) : un agent crée/modifie des tableaux, importe du Mermaid, exporte. Voir [docs/MCP.md](docs/fr/MCP.md). |
 | [`inkboard-pen`](crates/inkboard-pen) | Seul crate contenant du `unsafe` : lecture de l'état de la gomme du stylet (messages `WM_POINTER*` de Windows). |
 | [`inkboard-cli`](crates/inkboard-cli) | `ink convert`, `ink info`, `ink bench`. |
 | [`inkboard-app`](crates/inkboard-app) | Application de bureau (egui) : canvas, outils, panneau de style, pages, calques, texte riche, raccourcis personnalisables, dialogues. |
@@ -61,17 +61,17 @@ L'interface reprend celle du prototype web : un canevas plein écran et des **ca
 outils au centre en haut, réglages de style à gauche (visibles seulement quand il y a quelque chose à régler), annuler / zoom en bas à gauche, pages au centre en bas, aide en bas à droite.
 Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmentés, menu principal à entrées contiguës avec raccourcis, thème **clair et sombre** qui suit le fond du tableau.
 
-![Interface](docs/img/interface.png)
+![Interface](docs/img/fr/interface.png)
 
 | Menu principal | Thème sombre et réglages de style |
 |---|---|
-| ![Menu](docs/img/menu.png) | ![Thème sombre](docs/img/theme-sombre.png) |
+| ![Menu](docs/img/fr/menu.png) | ![Thème sombre](docs/img/fr/theme-sombre.png) |
 
 ## Fonctions notables
 
 - **Connecteurs liés** (droits, coudés, courbes) qui suivent les formes ; les coudés **contournent les formes** rencontrées ; poignées de
   **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
-- **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `inkboard-pen`). **À valider avec un vrai stylet** : `inkboard --pen-test` affiche un diagnostic et produit un rapport ([docs/STYLET.md](docs/STYLET.md)).
+- **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `inkboard-pen`). **À valider avec un vrai stylet** : `inkboard --pen-test` affiche un diagnostic et produit un rapport ([docs/STYLET.md](docs/fr/STYLET.md)).
 - **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
 - **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
   pastilles de vote (outil dédié).
@@ -79,7 +79,7 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
 - **Pointeur laser** (F) : une traînée rouge qui s'efface, pour montrer sans dessiner ; en présentation, F l'active.
 - **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.
 - **Agents (MCP)** : `inkboard-mcp --root <dossier>` expose 16 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). **Ressources MCP** (tableau affiché, fichiers) avec notifications d'abonnement, outil `board_changes` (ce que vous avez modifié depuis le dernier regard de l'agent), insertion d'images. **Mode direct** : application ouverte, l'agent agit sur le tableau affiché (une étape d'annulation par appel, il voit votre sélection) ; sinon il modifie le fichier et l'application le recharge seule.
-- **Distribution** : icône, archive portable et installation par utilisateur (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
+- **Distribution** : icône, archive portable et installation par utilisateur (voir [docs/DISTRIBUTION.md](docs/fr/DISTRIBUTION.md)).
 
 ## Texte riche et raccourcis
 
@@ -121,8 +121,8 @@ L'index n'est utilisé qu'à partir de 400 objets et suspendu pendant les gestes
 
 ## Documentation
 
-- [Architecture et décisions](docs/ARCHITECTURE.md)
-- [Feuille de route et état des « plaintes » des utilisateurs](docs/ROADMAP.md)
+- [Architecture et décisions](docs/fr/ARCHITECTURE.md)
+- [Feuille de route et état des « plaintes » des utilisateurs](docs/fr/ROADMAP.md)
 
 ## Licence
 

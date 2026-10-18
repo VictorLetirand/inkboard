@@ -1,14 +1,15 @@
-//! Presse-papiers : objets du tableau, texte et images du système.
+//! Clipboard: board objects, text and system images.
 
 use crate::app::App;
+use crate::i18n::{t, tr};
 use crate::tools::Tool;
 use inkboard_core::*;
 
-/// Texte placé dans le presse-papiers système pour signaler « le contenu à coller est dans le presse-papiers interne ».
+/// Text placed in the system clipboard to signal "the content to paste is in the internal clipboard".
 pub const MARKER: &str = "__inkboard_objets__";
 
 impl App {
-    /// Copie la sélection (interne) et laisse un repère dans le presse-papiers système.
+    /// Copies the selection (internally) and leaves a marker in the system clipboard.
     pub fn copy_to_system(&mut self, ctx: &eframe::egui::Context) {
         self.copy_selection();
         if !self.clipboard.is_empty() {
@@ -16,7 +17,7 @@ impl App {
         }
     }
 
-    /// Collage : objets internes, sinon image du système, sinon texte (nouvelle zone de texte).
+    /// Paste: internal objects, otherwise the system image, otherwise text (a new text box).
     pub fn paste_event(&mut self, text: &str) {
         if text == MARKER && !self.clipboard.is_empty() {
             return self.paste();
@@ -50,14 +51,14 @@ impl App {
         self.tool = Tool::Select;
     }
 
-    /// Insère une image décrite par ses pixels RGBA, centrée sur `at` (réduite pour tenir dans la vue).
+    /// Inserts an image given by its RGBA pixels, centered on `at` (shrunk to fit the view).
     pub fn insert_rgba(&mut self, w: usize, h: usize, rgba: &[u8], at: Pt) {
         let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, rgba.to_vec()) else {
-            return self.toast("Image du presse-papiers illisible");
+            return self.toast(&t("Clipboard image unreadable"));
         };
         let mut png = Vec::new();
         if img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_err() {
-            return self.toast("Image du presse-papiers illisible");
+            return self.toast(&t("Clipboard image unreadable"));
         }
         let aid = self.ed.doc.add_asset("image/png", png);
         let (fw, fh) = (w as f64, h as f64);
@@ -68,28 +69,28 @@ impl App {
         self.tool = Tool::Select;
     }
 
-    /// Copie la sélection (ou tout le tableau) dans le presse-papiers sous forme d'image.
+    /// Copies the selection (or the whole board) to the clipboard as an image.
     pub fn copy_as_image(&mut self) {
         let page = self.ed.page().clone();
         let ids: Option<Vec<Id>> = (!self.sel.is_empty()).then(|| self.sel.clone());
         let Some(svg) = inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()) else {
-            return self.toast("Rien à copier");
+            return self.toast(&t("Nothing to copy"));
         };
         let png = match inkboard_formats::raster::svg_to_png(&svg, 2.0) {
             Ok(p) => p,
-            Err(e) => return self.toast(&format!("Copie impossible : {e}")),
+            Err(e) => return self.toast(&tr!("Cannot copy: {}", e)),
         };
-        let Ok(img) = image::load_from_memory(&png) else { return self.toast("Copie impossible") };
+        let Ok(img) = image::load_from_memory(&png) else { return self.toast(&t("Cannot copy")) };
         let rgba = img.to_rgba8();
         let data = arboard::ImageData { width: rgba.width() as usize, height: rgba.height() as usize, bytes: rgba.into_raw().into() };
         match arboard::Clipboard::new().and_then(|mut c| c.set_image(data)) {
-            Ok(()) => self.toast("Image copiée"),
-            Err(e) => self.toast(&format!("Presse-papiers indisponible : {e}")),
+            Ok(()) => self.toast(&t("Image copied")),
+            Err(e) => self.toast(&tr!("Clipboard unavailable: {}", e)),
         }
     }
 }
 
-/// Image du presse-papiers système, si elle existe (largeur, hauteur, RGBA).
+/// Image from the system clipboard, if any (width, height, RGBA).
 pub fn system_image() -> Option<(usize, usize, Vec<u8>)> {
     let img = arboard::Clipboard::new().ok()?.get_image().ok()?;
     Some((img.width, img.height, img.bytes.into_owned()))

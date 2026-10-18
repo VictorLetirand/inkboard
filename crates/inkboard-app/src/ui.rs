@@ -1,21 +1,22 @@
-//! Présentation, dialogues et notifications (le cadre de l'application est dans `chrome.rs`, les réglages de style dans `panel.rs`).
+//! Presentation, dialogs and notifications (the application frame is in `chrome.rs`, the style settings in `panel.rs`).
 
 use crate::app::{App, Dialog};
+use crate::i18n::{t, tr};
 use crate::keymap::{Action, Shortcut};
 use eframe::egui::{self, Color32, RichText as ERich, vec2};
 use inkboard_core::*;
 use std::time::{Duration, Instant};
 
-/* ------------------------------------------------------- Présentation */
+/* ------------------------------------------------------- Presentation */
 
-/// Minuteur restant sous la forme « m:ss » ; `None` si aucun minuteur n'est lancé.
+/// Remaining timer as "m:ss"; `None` when no timer is running.
 pub fn timer_text(app: &App) -> Option<(String, bool)> {
     let (end, _) = app.timer?;
     let left = end.saturating_duration_since(Instant::now()).as_secs();
     Some((format!("{}:{:02}", left / 60, left % 60), left == 0))
 }
 
-/// Surimpression discrète du mode présentation : numéro de page et minuteur.
+/// Discreet presentation-mode overlay: page number and timer.
 pub fn present_overlay(app: &mut App, ctx: &egui::Context) {
     let n = app.ed.doc.pages.len();
     let i = app.ed.doc.pages.iter().position(|p| p.id == app.ed.current).unwrap_or(0) + 1;
@@ -39,7 +40,7 @@ pub fn present_overlay(app: &mut App, ctx: &egui::Context) {
 
 /* ------------------------------------------------------------ Dialogues */
 
-/// Fenêtre de dialogue centrée (au-dessus du fond assombri).
+/// Centered dialog window (above the dimmed backdrop).
 fn modal(title: impl Into<egui::WidgetText>) -> egui::Window<'static> {
     egui::Window::new(title)
         .fade_in(false)
@@ -49,7 +50,7 @@ fn modal(title: impl Into<egui::WidgetText>) -> egui::Window<'static> {
         .resizable(false)
 }
 
-/// Fond assombri derrière un dialogue (`#modal`) ; renvoie `true` si on clique dessus (le dialogue se ferme).
+/// Dimmed backdrop behind a dialog (`#modal`); returns `true` when it is clicked (the dialog closes).
 fn backdrop(ctx: &egui::Context) -> bool {
     let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("modal-backdrop"))
@@ -67,22 +68,22 @@ fn backdrop(ctx: &egui::Context) -> bool {
 pub fn dialogs(app: &mut App, ctx: &egui::Context) {
     let Some(dialog) = app.dialog.take() else { return };
     if backdrop(ctx) {
-        return; // clic en dehors : le dialogue est fermé
+        return; // click outside: the dialog is closed
     }
     let mut keep: Option<Dialog> = None;
     match dialog {
         Dialog::Mermaid { mut text, mut new_board, mut error } => {
             let mut open = true;
             let mut generate = false;
-            modal("Importer du Mermaid").open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
-                ui.label("flowchart / graph, stateDiagram ou sequenceDiagram. La mise en page est automatique.");
+            modal(t("Import Mermaid")).open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
+                ui.label(t("flowchart / graph, stateDiagram or sequenceDiagram. The layout is automatic."));
                 ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_rows(14).desired_width(f32::INFINITY));
-                ui.radio_value(&mut new_board, false, "Ajouter à ce tableau");
-                ui.radio_value(&mut new_board, true, "Nouveau tableau");
+                ui.radio_value(&mut new_board, false, t("Add to this board"));
+                ui.radio_value(&mut new_board, true, t("New board"));
                 if let Some(e) = &error {
                     ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), e);
                 }
-                if ui.button("Générer").clicked() {
+                if ui.button(t("Generate")).clicked() {
                     generate = true;
                 }
             });
@@ -98,7 +99,7 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
         }
         Dialog::Formula { mut src, editing, mut preview } => {
             if preview.src.as_deref() != Some(src.as_str()) {
-                // recomposition seulement quand le source change
+                // typeset again only when the source changes
                 match inkboard_formats::math::render(&src, 36.0) {
                     Ok(f) => {
                         let asset = Asset { mime: "image/svg+xml".into(), data: f.svg.into_bytes().into() };
@@ -114,9 +115,9 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
             }
             let mut open = true;
             let mut accepted = false;
-            let title = if editing.is_some() { "Modifier la formule" } else { "Insérer une formule" };
+            let title = if editing.is_some() { t("Edit formula") } else { t("Insert a formula") };
             modal(title).open(&mut open).collapsible(false).default_width(460.0).show(ctx, |ui| {
-                ui.label("Source LaTeX (mode mathématique) : \\frac{a}{b}, x^2, \\sqrt{x}, \\sum, \\int, \\begin{pmatrix}…");
+                ui.label(t("LaTeX source (math mode): \\frac{a}{b}, x^2, \\sqrt{x}, \\sum, \\int, \\begin{pmatrix}…"));
                 ui.add(egui::TextEdit::multiline(&mut src).code_editor().desired_rows(3).desired_width(f32::INFINITY));
                 ui.separator();
                 match (&preview.tex, &preview.error) {
@@ -130,7 +131,7 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
                     }
                     _ => {}
                 }
-                if ui.add_enabled(preview.tex.is_some(), egui::Button::new(if editing.is_some() { "Appliquer" } else { "Insérer" })).clicked() {
+                if ui.add_enabled(preview.tex.is_some(), egui::Button::new(if editing.is_some() { t("Apply") } else { t("Insert") })).clicked() {
                     accepted = true;
                 }
             });
@@ -150,7 +151,7 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
         Dialog::RenamePage { id, mut name } => {
             let mut open = true;
             let mut accepted = false;
-            modal("Renommer la page").open(&mut open).collapsible(false).show(ctx, |ui| {
+            modal(t("Rename page")).open(&mut open).collapsible(false).show(ctx, |ui| {
                 let r = ui.text_edit_singleline(&mut name);
                 r.request_focus();
                 if ui.button("OK").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
@@ -171,10 +172,10 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Fenêtre de réglage des raccourcis : liste par groupe, ajout (enregistrement de la prochaine touche), retrait, réinitialisation.
+/// Shortcut settings window: list by group, adding (records the next key press), removal, reset.
 fn shortcuts_dialog(app: &mut App, ctx: &egui::Context, mut filter: String, mut recording: Option<Action>) -> Option<Dialog> {
     let mut open = true;
-    // enregistrement : la prochaine combinaison pressée est affectée à l'action
+    // recording: the next combination pressed is assigned to the action
     if let Some(a) = recording {
         let pressed = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
@@ -189,7 +190,7 @@ fn shortcuts_dialog(app: &mut App, ctx: &egui::Context, mut filter: String, mut 
                 let sc = Shortcut::new(key, m.command, m.shift, m.alt);
                 match app.keymap.add(a, sc) {
                     Ok(Some(other)) => {
-                        app.toast(&format!("{} retiré de « {} »", sc.label(), other.label()));
+                        app.toast(&tr!("{} removed from \"{}\"", sc.label(), t(other.label())));
                         app.save_keymap();
                     }
                     Ok(None) => app.save_keymap(),
@@ -199,21 +200,19 @@ fn shortcuts_dialog(app: &mut App, ctx: &egui::Context, mut filter: String, mut 
             }
         }
     }
-    modal("Raccourcis clavier").open(&mut open).collapsible(false).default_width(520.0).default_height(560.0).show(ctx, |ui| {
+    modal(t("Keyboard shortcuts")).open(&mut open).collapsible(false).default_width(520.0).default_height(560.0).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Filtrer :");
+            ui.label(t("Filter:"));
             ui.text_edit_singleline(&mut filter);
-            if ui.button("Tout réinitialiser").clicked() {
+            if ui.button(t("Reset all")).clicked() {
                 app.keymap.reset_all();
                 app.save_keymap();
                 recording = None;
             }
         });
-        ui.label(
-            ERich::new("Cliquez sur « + » puis appuyez sur la combinaison voulue (Échap pour annuler). Cliquer sur un raccourci le retire.").small().weak(),
-        );
+        ui.label(ERich::new(t("Click \"+\" then press the combination you want (Escape to cancel). Click a shortcut to remove it.")).small().weak());
         for (sc, x, y) in app.keymap.conflicts() {
-            ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), format!("Conflit : {} est utilisé par « {} » et « {} »", sc.label(), x.label(), y.label()));
+            ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), tr!("Conflict: {} is used by \"{}\" and \"{}\"", sc.label(), t(x.label()), t(y.label())));
         }
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -221,36 +220,36 @@ fn shortcuts_dialog(app: &mut App, ctx: &egui::Context, mut filter: String, mut 
             let f = filter.to_lowercase();
             for a in Action::ALL {
                 let shown =
-                    f.is_empty() || a.label().to_lowercase().contains(&f) || app.keymap.bindings(a).iter().any(|s| s.label().to_lowercase().contains(&f));
+                    f.is_empty() || t(a.label()).to_lowercase().contains(&f) || app.keymap.bindings(a).iter().any(|s| s.label().to_lowercase().contains(&f));
                 if !shown {
                     continue;
                 }
                 if a.group() != group {
                     group = a.group();
                     ui.add_space(6.0);
-                    ui.label(ERich::new(group).strong());
+                    ui.label(ERich::new(t(group)).strong());
                 }
                 ui.horizontal(|ui| {
                     let (cell, _) = ui.allocate_exact_size(vec2(190.0, 22.0), egui::Sense::hover());
                     ui.painter().text(
                         cell.left_center(),
                         egui::Align2::LEFT_CENTER,
-                        a.label(),
+                        t(a.label()),
                         egui::TextStyle::Body.resolve(ui.style()),
                         ui.visuals().text_color(),
                     );
                     for sc in app.keymap.bindings(a).to_vec() {
-                        if ui.button(sc.label()).on_hover_text("Retirer ce raccourci").clicked() {
+                        if ui.button(sc.label()).on_hover_text(t("Remove this shortcut")).clicked() {
                             app.keymap.remove(a, &sc);
                             app.save_keymap();
                         }
                     }
                     if recording == Some(a) {
-                        ui.label(ERich::new("Appuyez sur une touche…").color(crate::theme::current(ctx).ac));
-                    } else if ui.small_button("+").on_hover_text("Ajouter un raccourci").clicked() {
+                        ui.label(ERich::new(t("Press a key…")).color(crate::theme::current(ctx).ac));
+                    } else if ui.small_button("+").on_hover_text(t("Add a shortcut")).clicked() {
                         recording = Some(a);
                     }
-                    if !app.keymap.is_default(a) && ui.small_button("↺").on_hover_text("Rétablir la valeur par défaut").clicked() {
+                    if !app.keymap.is_default(a) && ui.small_button("↺").on_hover_text(t("Restore the default")).clicked() {
                         app.keymap.reset(a);
                         app.save_keymap();
                     }

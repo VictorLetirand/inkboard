@@ -1,4 +1,4 @@
-//! Tests d'interface : on simule la souris et le clavier dans un vrai cycle egui (sans fenêtre).
+//! UI tests: we simulate the mouse and keyboard in a real egui cycle (without a window).
 
 use crate::app::App;
 use crate::tools::Tool;
@@ -14,18 +14,18 @@ impl T {
     fn new() -> Self {
         let mut h = Harness::builder().with_size(vec2(1300.0, 850.0)).build_eframe(|cc| {
             let mut app = App::build(cc, None, None, false);
-            app.system_image = || None; // jamais le vrai presse-papiers dans les tests
+            app.system_image = || None; // never the real clipboard in tests
             app
         });
         h.step();
         h.step();
         let mut t = T { h };
         t.app().fit_pending = false;
-        t.app().set_view(View { x: 300.0, y: 150.0, zoom: 1.0 }); // hors des cartes flottantes (titre, outils, panneau)
+        t.app().set_view(View { x: 300.0, y: 150.0, zoom: 1.0 }); // outside the floating cards (title, tools, panel)
         t.h.step();
         t
     }
-    /// Change d'outil puis laisse le panneau de style (une carte flottante) se stabiliser : ses premières images couvrent une zone trop large.
+    /// Switches tool then lets the style panel (a floating card) settle: its first frames cover too wide an area.
     fn tool(&mut self, tool: Tool) {
         self.app().set_tool(tool);
         for _ in 0..3 {
@@ -35,7 +35,7 @@ impl T {
     fn app(&mut self) -> &mut App {
         self.h.state_mut()
     }
-    /// Position écran d'un point monde (vue à l'échelle 1, origine du canvas).
+    /// Screen position of a world point (view at scale 1, canvas origin).
     fn at(&mut self, x: f64, y: f64) -> Pos2 {
         let r = self.app().canvas_rect;
         let v = self.app().ed.page().view;
@@ -83,7 +83,7 @@ impl T {
         self.app().ed.insert(o)
     }
     fn frame(&mut self, id: &Id) -> Frame {
-        self.app().ed.page().get(id).and_then(Object::frame).expect("objet à cadre")
+        self.app().ed.page().get(id).and_then(Object::frame).expect("object with a frame")
     }
     fn key(&mut self, k: Key) {
         self.h.key_press(k);
@@ -101,7 +101,7 @@ impl T {
 fn app_starts_with_an_empty_page() {
     let mut t = T::new();
     assert!(t.objects().is_empty());
-    assert!(t.app().canvas_rect.width() > 500.0, "le canvas occupe la fenêtre");
+    assert!(t.app().canvas_rect.width() > 500.0, "the canvas fills the window");
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn shift_makes_a_square_and_undo_removes_it() {
     t.tool(Tool::Shape(BoxGeom::Rect));
     t.drag_mods((100.0, 100.0), (300.0, 160.0), Modifiers::SHIFT);
     let f = t.boxes()[0].1.frame;
-    assert!((f.w - f.h).abs() < 1.0, "carré : {f:?}");
+    assert!((f.w - f.h).abs() < 1.0, "square: {f:?}");
     t.key_mod(Modifiers::COMMAND, Key::Z);
     assert!(t.objects().is_empty());
     t.key_mod(Modifiers::COMMAND, Key::Y);
@@ -148,7 +148,7 @@ fn pen_draws_a_stroke_with_several_points() {
     t.drag((100.0, 100.0), (300.0, 160.0));
     let objs = t.objects();
     assert_eq!(objs.len(), 1);
-    let Kind::Pen(p) = &objs[0].kind else { panic!("pas un trait") };
+    let Kind::Pen(p) = &objs[0].kind else { panic!("not a stroke") };
     assert!(p.pts.len() >= 2 && !p.highlighter);
     assert!(p.pts[0].dist(Pt::new(100.0, 100.0)) < 2.0);
 }
@@ -186,9 +186,7 @@ fn arrow_ending_on_empty_space_is_free() {
     t.add_rect(100.0, 100.0, 120.0, 80.0);
     t.tool(Tool::Line);
     t.drag((160.0, 140.0), (600.0, 500.0));
-    let Some(Object { kind: Kind::Connector(c), .. }) = t.objects().into_iter().find(|o| matches!(o.kind, Kind::Connector(_))) else {
-        panic!("pas de connecteur")
-    };
+    let Some(Object { kind: Kind::Connector(c), .. }) = t.objects().into_iter().find(|o| matches!(o.kind, Kind::Connector(_))) else { panic!("no connector") };
     assert!(c.start.target().is_some() && matches!(c.end, End::Free { .. }));
     assert_eq!(c.head_end, Arrowhead::None);
 }
@@ -210,9 +208,9 @@ fn moving_a_shape_drags_its_arrow_along_and_undo_restores_both() {
     let fb = t.frame(&b);
     assert!((fb.y - 300.0).abs() < 1.5, "{fb:?}");
     let after = path_of(&mut t, &c);
-    assert!(after.last().unwrap().y > before.last().unwrap().y + 100.0, "la flèche suit la forme");
+    assert!(after.last().unwrap().y > before.last().unwrap().y + 100.0, "the arrow follows the shape");
     t.key_mod(Modifiers::COMMAND, Key::Z);
-    assert!((t.frame(&b).y - 100.0).abs() < 1e-9, "un seul geste = une seule annulation");
+    assert!((t.frame(&b).y - 100.0).abs() < 1e-9, "one gesture = one undo");
 }
 
 #[test]
@@ -232,10 +230,10 @@ fn resize_handle_changes_size_and_is_one_undo_step() {
     let a = t.add_rect(100.0, 100.0, 120.0, 80.0);
     t.app().sel = vec![a.clone()];
     t.h.step();
-    t.drag((220.0, 180.0), (320.0, 280.0)); // poignée sud-est
+    t.drag((220.0, 180.0), (320.0, 280.0)); // south-east handle
     let f = t.frame(&a);
     assert!((f.w - 220.0).abs() < 1.5 && (f.h - 180.0).abs() < 1.5, "{f:?}");
-    assert!((f.x - 100.0).abs() < 1e-6 && (f.y - 100.0).abs() < 1e-6, "le coin opposé ne bouge pas");
+    assert!((f.x - 100.0).abs() < 1e-6 && (f.y - 100.0).abs() < 1e-6, "the opposite corner does not move");
     t.key_mod(Modifiers::COMMAND, Key::Z);
     assert!((t.frame(&a).w - 120.0).abs() < 1e-9);
 }
@@ -246,7 +244,7 @@ fn rotation_handle_rotates_the_shape() {
     let a = t.add_rect(100.0, 100.0, 120.0, 80.0);
     t.app().sel = vec![a.clone()];
     t.h.step();
-    // poignée de rotation : 28 px au-dessus du bord haut, au milieu (160, 100 - 28)
+    // rotation handle: 28 px above the top edge, in the middle (160, 100 - 28)
     t.drag((160.0, 72.0), (400.0, 140.0));
     let f = t.frame(&a);
     assert!((f.angle - std::f64::consts::FRAC_PI_2).abs() < 0.12, "angle = {}", f.angle);
@@ -262,7 +260,7 @@ fn delete_and_undo_keep_connectors_consistent() {
     t.key(Key::Delete);
     assert!(t.app().ed.page().get(&a).is_none());
     let Kind::Connector(cn) = &t.app().ed.page().get(&c).unwrap().kind else { unreachable!() };
-    assert!(matches!(cn.start, End::Free { .. }), "la flèche est détachée, pas supprimée");
+    assert!(matches!(cn.start, End::Free { .. }), "the arrow is detached, not deleted");
     t.key_mod(Modifiers::COMMAND, Key::Z);
     assert!(t.app().ed.page().get(&a).is_some());
     let Kind::Connector(cn) = &t.app().ed.page().get(&c).unwrap().kind else { unreachable!() };
@@ -286,7 +284,7 @@ fn alt_drag_duplicates_instead_of_moving() {
     let a = t.add_rect(100.0, 100.0, 120.0, 80.0);
     t.drag_mods((110.0, 110.0), (310.0, 110.0), Modifiers::ALT);
     assert_eq!(t.objects().len(), 2);
-    assert!((t.frame(&a).x - 100.0).abs() < 1e-9, "l'original reste en place");
+    assert!((t.frame(&a).x - 100.0).abs() < 1e-9, "the original stays in place");
 }
 
 #[test]
@@ -310,11 +308,11 @@ fn text_editing_commits_text_and_fits_the_box() {
     let a = t.add_rect(100.0, 100.0, 60.0, 30.0);
     t.app().start_editing(&a, None);
     t.h.step();
-    t.app().editing.as_mut().unwrap().buf = "Un texte assez long pour déborder".into();
+    t.app().editing.as_mut().unwrap().buf = "A text long enough to overflow".into();
     t.app().commit_editing();
     let Kind::Box(b) = &t.app().ed.page().get(&a).unwrap().kind else { unreachable!() };
-    assert_eq!(b.label.text.to_plain(), "Un texte assez long pour déborder");
-    assert!(b.frame.h > 30.0, "la forme grandit pour contenir le texte");
+    assert_eq!(b.label.text.to_plain(), "A text long enough to overflow");
+    assert!(b.frame.h > 30.0, "the shape grows to hold the text");
 }
 
 #[test]
@@ -322,10 +320,10 @@ fn empty_fresh_text_is_discarded_without_polluting_history() {
     let mut t = T::new();
     t.tool(Tool::Text);
     t.click((300.0, 300.0));
-    assert!(t.app().editing.is_some(), "l'éditeur s'ouvre");
+    assert!(t.app().editing.is_some(), "the editor opens");
     t.app().commit_editing();
     assert!(t.objects().is_empty());
-    assert!(!t.app().ed.can_undo(), "rien à annuler : création et abandon s'annulent");
+    assert!(!t.app().ed.can_undo(), "nothing to undo: creation and abandonment cancel out");
 }
 
 #[test]
@@ -334,7 +332,7 @@ fn table_tool_inserts_a_table_and_cells_are_editable() {
     t.tool(Tool::Table);
     t.click((400.0, 300.0));
     let objs = t.objects();
-    let Kind::Table(tb) = &objs[0].kind else { panic!("pas de tableau") };
+    let Kind::Table(tb) = &objs[0].kind else { panic!("not a table") };
     assert_eq!((tb.rows(), tb.cols()), (3, 3));
     let id = objs[0].id.clone();
     t.app().start_editing(&id, Some((1, 2)));
@@ -356,13 +354,13 @@ fn copy_paste_and_group_shortcuts() {
     t.app().paste();
     assert_eq!(t.objects().len(), 4);
     let groups: std::collections::HashSet<_> = t.objects().iter().filter_map(|o| o.group.clone()).collect();
-    assert_eq!(groups.len(), 2, "la copie reçoit son propre groupe");
+    assert_eq!(groups.len(), 2, "the copy gets its own group");
 }
 
 #[test]
 fn mermaid_import_adds_bound_objects_and_selects_them() {
     let mut t = T::new();
-    t.app().import_mermaid("graph TD\n A[Un] --> B[Deux]", false).unwrap();
+    t.app().import_mermaid("graph TD\n A[One] --> B[Two]", false).unwrap();
     t.h.step();
     assert_eq!(t.objects().len(), 3);
     assert_eq!(t.app().sel.len(), 3);
@@ -384,10 +382,10 @@ fn save_and_reopen_roundtrip_and_foreign_formats() {
     let mut t2 = T::new();
     t2.app().open_path(&native);
     assert_eq!(t2.objects().len(), 1);
-    assert!(t2.app().path.is_some(), "un fichier natif devient le fichier courant");
+    assert!(t2.app().path.is_some(), "a native file becomes the current file");
     t2.app().open_path(&drawio);
     assert_eq!(t2.objects().len(), 1);
-    assert!(t2.app().path.is_none(), "un format d'échange ne remplace pas le fichier courant");
+    assert!(t2.app().path.is_none(), "an exchange format does not replace the current file");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -400,7 +398,7 @@ fn background_and_pages_are_undoable() {
     assert!(t.app().ed.doc.background.preset.is_dark());
     t.key_mod(Modifiers::COMMAND, Key::Z);
     assert!(!t.app().ed.doc.background.preset.is_dark());
-    t.app().ed.add_page("Deux");
+    t.app().ed.add_page("Two");
     assert_eq!(t.app().ed.doc.pages.len(), 2);
 }
 
@@ -415,10 +413,10 @@ fn zoom_with_pointer_keeps_the_world_point_under_the_cursor() {
     assert!(v.zoom > 1.1, "zoom = {}", v.zoom);
     let r = t.app().canvas_rect;
     let wx = (f64::from(p.x - r.min.x) - v.x) / v.zoom;
-    assert!((wx - 300.0).abs() < 1.0, "le point sous le curseur reste fixe : {wx}");
+    assert!((wx - 300.0).abs() < 1.0, "the point under the cursor stays fixed: {wx}");
 }
 
-/* ------------------------------------------------------------ texte riche */
+/* ------------------------------------------------------------ rich text */
 
 use inkboard_core::text::Format;
 
@@ -445,38 +443,38 @@ fn label_of(t: &mut T, id: &Id) -> RichText {
 fn typing_updates_both_buffer_and_styled_text() {
     let mut t = T::new();
     let a = edited_box(&mut t);
-    type_text(&mut t, "Bonjour monde");
+    type_text(&mut t, "Hello world");
     let e = t.app().editing.as_ref().unwrap();
-    assert_eq!(e.buf, "Bonjour monde");
-    assert_eq!(e.rich.to_plain(), "Bonjour monde");
+    assert_eq!(e.buf, "Hello world");
+    assert_eq!(e.rich.to_plain(), "Hello world");
     t.app().commit_editing();
-    assert_eq!(label_of(&mut t, &a).to_plain(), "Bonjour monde");
+    assert_eq!(label_of(&mut t, &a).to_plain(), "Hello world");
 }
 
 #[test]
 fn keyboard_selection_then_ctrl_b_bolds_only_the_selected_word() {
     let mut t = T::new();
     let a = edited_box(&mut t);
-    type_text(&mut t, "Bonjour monde");
+    type_text(&mut t, "Hello world");
     t.key(Key::Home);
     for _ in 0..7 {
         t.key_mod(Modifiers::SHIFT, Key::ArrowRight);
     }
-    assert_eq!(t.app().editing.as_ref().unwrap().sel, (0, 7), "la sélection au clavier est suivie");
+    assert_eq!(t.app().editing.as_ref().unwrap().sel, (0, 7), "the keyboard selection is followed");
     t.key_mod(Modifiers::COMMAND, Key::B);
     t.h.step();
     t.app().commit_editing();
     let rt = label_of(&mut t, &a);
-    assert_eq!(rt.to_plain(), "Bonjour monde");
-    assert!(rt.all(0, 7, |s| s.bold), "« Bonjour » en gras : {rt:?}");
-    assert!(!rt.all(7, 13, |s| s.bold) && !rt.all(8, 13, |s| s.bold), "« monde » inchangé");
+    assert_eq!(rt.to_plain(), "Hello world");
+    assert!(rt.all(0, 7, |s| s.bold), "\"Hello\" in bold: {rt:?}");
+    assert!(!rt.all(7, 13, |s| s.bold) && !rt.all(8, 13, |s| s.bold), "\"world\" unchanged");
 }
 
 #[test]
 fn color_and_highlight_apply_to_the_selection() {
     let mut t = T::new();
     let a = edited_box(&mut t);
-    type_text(&mut t, "Bonjour monde");
+    type_text(&mut t, "Hello world");
     t.app().editing.as_mut().unwrap().sel = (8, 13);
     let red = Color::rgb(0xe0, 0x31, 0x31);
     let yellow = Color::rgb(0xff, 0xec, 0x99);
@@ -504,7 +502,7 @@ fn text_typed_after_bold_text_stays_bold_and_untouched_words_keep_their_style() 
     t.app().commit_editing();
     let rt = label_of(&mut t, &a);
     assert_eq!(rt.to_plain(), "abc");
-    assert!(rt.all(0, 3, |s| s.bold), "la suite de la frappe hérite du gras : {rt:?}");
+    assert!(rt.all(0, 3, |s| s.bold), "the rest of the typing inherits bold: {rt:?}");
 }
 
 #[test]
@@ -526,7 +524,7 @@ fn editing_the_middle_of_a_styled_text_keeps_other_styles() {
     t.app().commit_editing();
     let rt = label_of(&mut t, &a);
     assert_eq!(rt.to_plain(), "XY alpha beta");
-    assert!(rt.all(9, 13, |s| s.italic), "« beta » reste en italique : {rt:?}");
+    assert!(rt.all(9, 13, |s| s.italic), "\"beta\" stays italic: {rt:?}");
     assert!(!rt.all(0, 9, |s| s.italic));
 }
 
@@ -542,7 +540,7 @@ fn format_buttons_without_editing_apply_to_all_selected_text_consistently() {
             }
         });
     }
-    // b est déjà en gras : l'action doit mettre tout le monde en gras (pas inverser b)
+    // b is already bold: the action must make everything bold (not invert b)
     t.app().ed.update(&b, |o| {
         if let Kind::Box(bx) = &mut o.kind {
             bx.label.text.format(0, 4, Format::Bold);
@@ -556,7 +554,7 @@ fn format_buttons_without_editing_apply_to_all_selected_text_consistently() {
     assert!(!label_of(&mut t, &a).all(0, 2, |s| s.bold) && !label_of(&mut t, &b).all(0, 4, |s| s.bold));
     assert!(t.app().ed.can_undo());
     t.key_mod(Modifiers::COMMAND, Key::Z);
-    assert!(label_of(&mut t, &b).all(0, 4, |s| s.bold), "une annulation = une action de mise en forme");
+    assert!(label_of(&mut t, &b).all(0, 4, |s| s.bold), "one undo = one formatting action");
 }
 
 #[test]
@@ -570,7 +568,7 @@ fn empty_selection_formats_the_whole_text_in_edit_mode() {
     assert!(label_of(&mut t, &a).all(0, 4, |s| s.italic));
 }
 
-/* ------------------------------------------------- raccourcis personnalisés */
+/* ------------------------------------------------- custom shortcuts */
 
 use crate::app::Dialog;
 use crate::keymap::{Action, Shortcut};
@@ -583,7 +581,7 @@ fn rebinding_a_tool_key_takes_effect_immediately() {
     t.app().keymap.add(Action::ToolEllipse, Shortcut::key(Key::R)).unwrap();
     t.tool(Tool::Select);
     t.key(Key::R);
-    assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Ellipse), "R appartient maintenant à l'ellipse");
+    assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Ellipse), "R now belongs to the ellipse");
     t.app().keymap.add(Action::ToolRect, Shortcut::key(Key::K)).unwrap();
     t.key(Key::K);
     assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Rect));
@@ -596,7 +594,7 @@ fn removed_shortcut_does_nothing_and_remaining_one_still_works() {
     t.app().keymap.remove(Action::Delete, &Shortcut::key(Key::Backspace));
     t.app().sel = vec![a.clone()];
     t.key(Key::Backspace);
-    assert!(t.app().ed.page().get(&a).is_some(), "Retour arrière n'est plus lié");
+    assert!(t.app().ed.page().get(&a).is_some(), "Backspace is no longer bound");
     t.key(Key::Delete);
     assert!(t.app().ed.page().get(&a).is_none());
 }
@@ -609,7 +607,7 @@ fn custom_ctrl_shortcut_runs_the_action() {
     t.app().sel = vec![a];
     t.key_mod(Modifiers::COMMAND | Modifiers::ALT, Key::J);
     assert_eq!(t.objects().len(), 2);
-    // l'ancien raccourci par défaut fonctionne toujours (Ctrl+D)
+    // the old default shortcut still works (Ctrl+D)
     t.key_mod(Modifiers::COMMAND, Key::D);
     assert_eq!(t.objects().len(), 3);
 }
@@ -619,7 +617,7 @@ fn custom_bold_shortcut_works_while_editing_text() {
     let mut t = T::new();
     t.app().keymap.add(Action::Bold, Shortcut::ctrl(Key::K)).unwrap();
     let a = edited_box(&mut t);
-    type_text(&mut t, "Bonjour monde");
+    type_text(&mut t, "Hello world");
     t.key(Key::Home);
     for _ in 0..7 {
         t.key_mod(Modifiers::SHIFT, Key::ArrowRight);
@@ -637,14 +635,14 @@ fn shortcut_recording_assigns_the_next_key_and_escape_cancels() {
     t.h.step();
     t.key(Key::K);
     assert_eq!(t.app().keymap.action_for(Key::K, Modifiers::NONE), Some(Action::ToolEllipse));
-    assert!(matches!(t.app().dialog, Some(Dialog::Shortcuts { recording: None, .. })), "l'enregistrement s'arrête après la frappe");
-    // pendant l'enregistrement, la touche ne déclenche pas son ancienne action
+    assert!(matches!(t.app().dialog, Some(Dialog::Shortcuts { recording: None, .. })), "recording stops after the keystroke");
+    // while recording, the key does not trigger its old action
     t.app().dialog = Some(Dialog::Shortcuts { filter: String::new(), recording: Some(Action::ToolPen) });
     t.h.step();
     t.key(Key::V);
     assert_eq!(t.app().tool, Tool::Select);
-    assert_eq!(t.app().keymap.action_for(Key::V, Modifiers::NONE), Some(Action::ToolPen), "V est désormais au crayon, repris à la sélection");
-    // Échap annule sans rien changer
+    assert_eq!(t.app().keymap.action_for(Key::V, Modifiers::NONE), Some(Action::ToolPen), "V now belongs to the pen, taken from selection");
+    // Escape cancels without changing anything
     let before = t.app().keymap.clone();
     t.app().dialog = Some(Dialog::Shortcuts { filter: String::new(), recording: Some(Action::ToolHand) });
     t.h.step();
@@ -676,14 +674,14 @@ fn menu_labels_follow_the_keymap() {
     assert_eq!(t.app().keymap.label(Action::Undo), "Ctrl+Alt+W");
 }
 
-/* ----------------------------------------------------- presse-papiers système */
+/* ----------------------------------------------------- system clipboard */
 
 #[test]
 fn pasting_plain_text_creates_a_text_box_in_the_view() {
     let mut t = T::new();
     t.h.event(Event::Paste(
-        "Une idée
-sur deux lignes"
+        "An idea
+on two lines"
             .into(),
     ));
     t.h.step();
@@ -692,10 +690,10 @@ sur deux lignes"
     assert_eq!(b[0].1.geom, BoxGeom::Text);
     assert_eq!(
         b[0].1.label.text.to_plain(),
-        "Une idée
-sur deux lignes"
+        "An idea
+on two lines"
     );
-    assert!(b[0].1.frame.w > 20.0 && b[0].1.frame.h > 20.0, "dimensionné d'après le texte");
+    assert!(b[0].1.frame.w > 20.0 && b[0].1.frame.h > 20.0, "sized from the text");
     assert_eq!(t.app().sel.len(), 1);
 }
 
@@ -706,12 +704,12 @@ fn pasting_a_system_image_inserts_a_png_asset() {
     t.h.event(Event::Paste(String::new()));
     t.h.step();
     let objs = t.objects();
-    let Kind::Image(i) = &objs[0].kind else { panic!("pas d'image : {objs:?}") };
-    let asset = t.app().ed.doc.assets.get(&i.asset).expect("ressource enregistrée");
+    let Kind::Image(i) = &objs[0].kind else { panic!("not an image: {objs:?}") };
+    let asset = t.app().ed.doc.assets.get(&i.asset).expect("asset registered");
     assert_eq!(asset.mime, "image/png");
     let decoded = image::load_from_memory(&asset.data).unwrap();
     assert_eq!((decoded.width(), decoded.height()), (4, 2));
-    assert!((i.frame.w / i.frame.h - 2.0).abs() < 1e-9, "proportions conservées");
+    assert!((i.frame.w / i.frame.h - 2.0).abs() < 1e-9, "proportions kept");
 }
 
 #[test]
@@ -733,7 +731,7 @@ fn paste_marker_pastes_internal_objects_and_empty_paste_falls_back_to_them() {
     t.app().copy_selection();
     t.h.event(Event::Paste(crate::clipboard::MARKER.into()));
     t.h.step();
-    assert_eq!(t.objects().len(), 2, "objet interne collé, pas une zone de texte avec le repère");
+    assert_eq!(t.objects().len(), 2, "internal object pasted, not a text box with the marker");
     t.h.event(Event::Paste(String::new()));
     t.h.step();
     assert_eq!(t.objects().len(), 3);
@@ -766,7 +764,7 @@ fn rich_format_applies_to_all_cells_of_a_selected_table() {
     assert!(tb.cell(0, 0).unwrap().all(0, 1, |s| s.bold) && tb.cell(1, 1).unwrap().all(0, 1, |s| s.bold));
 }
 
-/* ------------------------------------------------------------ stylet */
+/* ------------------------------------------------------------ pen */
 
 fn touch(t: &mut T, phase: egui::TouchPhase, p: Pos2, force: f32) {
     t.h.event(Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(0), phase, pos: p, force: Some(force) });
@@ -790,12 +788,12 @@ fn pen_pressure_from_touch_events_makes_a_variable_width_stroke() {
     touch(&mut t, egui::TouchPhase::End, last, 0.0);
     t.button(last, false, Modifiers::NONE);
     let objs = t.objects();
-    let Kind::Pen(p) = &objs[0].kind else { panic!("pas de trait") };
-    let pr = p.pressures.as_ref().expect("la pression est conservée");
-    assert_eq!(pr.len(), p.pts.len(), "une pression par point, même après simplification");
+    let Kind::Pen(p) = &objs[0].kind else { panic!("not a stroke") };
+    let pr = p.pressures.as_ref().expect("pressure is kept");
+    assert_eq!(pr.len(), p.pts.len(), "one pressure per point, even after simplification");
     assert!((pr[0] - 0.1).abs() < 1e-6 && (pr[pr.len() - 1] - 1.0).abs() < 1e-6, "{pr:?}");
     assert!(pr.windows(2).all(|w| w[0] <= w[1] + 1e-6), "pressions croissantes : {pr:?}");
-    assert_eq!(t.app().pen_force, None, "la pression est oubliée au relâchement");
+    assert_eq!(t.app().pen_force, None, "pressure is forgotten on release");
 }
 
 #[test]
@@ -818,7 +816,7 @@ fn mouse_strokes_have_constant_width_and_highlighter_ignores_pressure() {
     assert!(matches!(&objs[1].kind, Kind::Pen(p) if p.highlighter && p.pressures.is_none()));
 }
 
-/* ------------------------------------------------------------ grands tableaux */
+/* ------------------------------------------------------------ large boards */
 
 #[test]
 fn spatial_index_keeps_picking_and_moving_correct_on_a_large_board() {
@@ -828,12 +826,12 @@ fn spatial_index_keeps_picking_and_moving_correct_on_a_large_board() {
         ids.push(t.add_rect((i % 30) as f64 * 150.0, (i / 30) as f64 * 130.0, 100.0, 80.0));
     }
     t.h.step();
-    assert!(t.app().caches.spatial.is_some(), "au-delà de 400 objets l'index spatial est actif");
-    let target = ids[35].clone(); // colonne 5, ligne 1
+    assert!(t.app().caches.spatial.is_some(), "beyond 400 objects the spatial index is active");
+    let target = ids[35].clone(); // column 5, row 1
     let f = t.frame(&target);
     t.click((f.x + 50.0, f.y + 40.0));
     assert_eq!(t.app().sel, vec![target.clone()]);
-    // déplacement loin des autres, puis vérification avec l'index reconstruit
+    // move far from the others, then check with the rebuilt index
     t.drag((f.x + 50.0, f.y + 40.0), (f.x + 50.0 + 5000.0, f.y + 40.0 + 3000.0));
     let moved = t.frame(&target);
     assert!((moved.x - (f.x + 5000.0)).abs() < 2.0, "{moved:?}");
@@ -841,23 +839,23 @@ fn spatial_index_keeps_picking_and_moving_correct_on_a_large_board() {
     t.app().set_view(View { x: 500.0 - moved.x, y: 300.0 - moved.y, zoom: 1.0 });
     t.h.step();
     t.click((moved.x + 50.0, moved.y + 40.0));
-    assert_eq!(t.app().sel, vec![target.clone()], "l'objet est retrouvé à sa nouvelle position");
+    assert_eq!(t.app().sel, vec![target.clone()], "the object is found at its new position");
     t.app().sel.clear();
     t.app().set_view(View { x: 500.0 - f.x, y: 300.0 - f.y, zoom: 1.0 });
     t.h.step();
     t.click((f.x + 50.0, f.y + 40.0));
-    assert!(t.app().sel.is_empty(), "plus rien à l'ancienne position");
-    t.app().set_view(View { x: 300.0, y: 150.0, zoom: 1.0 }); // hors des cartes flottantes (titre, outils, panneau)
+    assert!(t.app().sel.is_empty(), "nothing left at the old position");
+    t.app().set_view(View { x: 300.0, y: 150.0, zoom: 1.0 }); // outside the floating cards (title, tools, panel)
     t.h.step();
-    // lasso sur une zone dense
-    t.drag((125.0, 105.0), (480.0, 300.0)); // départ dans un interstice : lasso, pas déplacement
+    // lasso over a dense area
+    t.drag((125.0, 105.0), (480.0, 300.0)); // start in a gap: lasso, not move
     let sel = t.app().sel.len();
     let linear = t.app().ed.page().objects_in_rect(Rect::new(125.0, 105.0, 355.0, 195.0), true).len();
-    assert_eq!(sel, linear, "le lasso donne le même résultat avec ou sans index");
-    assert!(sel >= 2, "{sel} objets attendus au moins");
+    assert_eq!(sel, linear, "the lasso gives the same result with or without the index");
+    assert!(sel >= 2, "at least {sel} objects expected");
 }
 
-/* ------------------------------------------------- points de passage et coudés */
+/* ------------------------------------------------- waypoints and elbows */
 
 fn linked_pair(t: &mut T) -> (Id, Id, Id) {
     let a = t.add_rect(0.0, 100.0, 120.0, 80.0);
@@ -884,7 +882,7 @@ fn dragging_a_segment_midpoint_handle_inserts_a_waypoint_in_one_undo_step() {
     let page = t.app().ed.page();
     let Kind::Connector(cn) = &page.get(&c).unwrap().kind else { unreachable!() };
     let path = page.connector_path(cn).unwrap();
-    assert!(path.iter().any(|p| p.y > 300.0), "la flèche passe par le nouveau point");
+    assert!(path.iter().any(|p| p.y > 300.0), "the arrow goes through the new point");
     t.key_mod(Modifiers::COMMAND, Key::Z);
     assert!(via_of(&mut t, &c).is_empty());
 }
@@ -903,7 +901,7 @@ fn waypoints_can_be_moved_and_removed() {
     t.drag((260.0, 300.0), (300.0, 360.0));
     let via = via_of(&mut t, &c);
     assert!(via[0].dist(Pt::new(300.0, 360.0)) < 2.0, "{via:?}");
-    // Alt + clic sur la poignée : retire le point
+    // Alt + click on the handle: removes the point
     let p = t.at(300.0, 360.0);
     t.h.input_mut().modifiers = Modifiers::ALT;
     t.mv(p);
@@ -928,15 +926,15 @@ fn elbow_connectors_route_around_shapes_placed_in_the_way() {
     let Kind::Connector(cn) = &page.get(&c).unwrap().kind else { unreachable!() };
     let path = page.connector_path(cn).unwrap();
     assert!(!inkboard_core::route::crosses(&path, &[wall_rect]), "{path:?}");
-    // le mur déplacé hors du chemin : le tracé redevient le plus simple
+    // the wall moved out of the way: the route becomes the simplest again
     t.app().ed.update(&wall, |o| o.translate(Pt::new(0.0, 600.0)));
     let page = t.app().ed.page();
     let Kind::Connector(cn) = &page.get(&c).unwrap().kind else { unreachable!() };
     let direct = page.connector_path(cn).unwrap();
-    assert_eq!(direct.len(), 2, "ligne droite quand rien ne gêne : {direct:?}");
+    assert_eq!(direct.len(), 2, "straight line when nothing is in the way: {direct:?}");
 }
 
-/* ------------------------------------------------------ éléments préfabriqués */
+/* ------------------------------------------------------ prefabricated elements */
 
 #[test]
 fn code_block_is_a_dark_monospace_box_in_one_undo_step() {
@@ -959,22 +957,22 @@ fn formula_is_composed_as_a_tinted_svg_image_that_keeps_its_source() {
     t.app().insert_formula(r"\frac{a+b}{2}", None).unwrap();
     t.h.step();
     let o = t.objects().into_iter().next().unwrap();
-    let Kind::Image(i) = &o.kind else { panic!("une formule est une image") };
+    let Kind::Image(i) = &o.kind else { panic!("a formula is an image") };
     assert_eq!(i.latex.as_deref(), Some(r"\frac{a+b}{2}"));
     assert!(i.frame.w > 20.0 && i.frame.h > 20.0);
     let asset = t.app().ed.doc.assets.get(&i.asset).unwrap();
     assert_eq!(asset.mime, "image/svg+xml");
-    // l'export SVG remplace le blanc par la couleur de trait (encre sombre sur fond clair)
+    // SVG export replaces white with the stroke color (dark ink on a light background)
     let page = t.app().ed.page().clone();
     let svg = inkboard_core::svg::export(&t.app().ed.doc, &page, None, &ApproxMeasurer, &Default::default()).unwrap();
-    assert!(!String::from_utf8_lossy(&base64_payload(&svg)).contains("#ffffff"), "formule non teintée à l'export");
-    // une source invalide ne crée rien
+    assert!(!String::from_utf8_lossy(&base64_payload(&svg)).contains("#ffffff"), "formula not tinted on export");
+    // an invalid source creates nothing
     assert!(t.app().insert_formula(r"\notacommand", None).is_err());
     assert!(t.app().insert_formula("  ", None).is_err());
     assert_eq!(t.objects().len(), 1);
 }
 
-/// Première charge utile base64 d'une image `data:` d'un SVG exporté.
+/// First base64 payload of a `data:` image in an exported SVG.
 fn base64_payload(svg: &str) -> Vec<u8> {
     use base64::Engine;
     let b64 = svg.split("base64,").nth(1).unwrap().split('"').next().unwrap();
@@ -986,7 +984,7 @@ fn editing_a_formula_keeps_its_center_and_scale() {
     let mut t = T::new();
     t.app().insert_formula("x^2", None).unwrap();
     let id = t.objects()[0].id.clone();
-    // l'utilisateur agrandit la formule ×2
+    // the user enlarges the formula ×2
     t.app().ed.update(&id, |o| {
         if let Kind::Image(i) = &mut o.kind {
             let c = i.frame.center();
@@ -994,19 +992,19 @@ fn editing_a_formula_keeps_its_center_and_scale() {
         }
     });
     let before = t.frame(&id);
-    assert!(t.app().edit_formula(&id), "une formule s'ouvre en modification");
+    assert!(t.app().edit_formula(&id), "a formula opens for editing");
     t.app().insert_formula(r"\frac{x^2}{3}", Some(&id)).unwrap();
     let after = t.frame(&id);
-    assert!(after.center().dist(before.center()) < 0.5, "centre conservé");
+    assert!(after.center().dist(before.center()) < 0.5, "center kept");
     let plain = inkboard_formats::math::render("x^2", 36.0).unwrap();
-    assert!((before.h / plain.h - 2.0).abs() < 0.05, "agrandissement initial ×2");
+    assert!((before.h / plain.h - 2.0).abs() < 0.05, "initial enlargement ×2");
     let new = inkboard_formats::math::render(r"\frac{x^2}{3}", 36.0).unwrap();
-    assert!((after.h / new.h - 2.0).abs() < 0.05, "échelle conservée : {} / {}", after.h, new.h);
+    assert!((after.h / new.h - 2.0).abs() < 0.05, "scale kept: {} / {}", after.h, new.h);
     let Kind::Image(i) = &t.app().ed.page().get(&id).unwrap().kind else { unreachable!() };
     assert_eq!(i.latex.as_deref(), Some(r"\frac{x^2}{3}"));
     t.key_mod(Modifiers::COMMAND, Key::Z);
     let Kind::Image(i) = &t.app().ed.page().get(&id).unwrap().kind else { unreachable!() };
-    assert_eq!(i.latex.as_deref(), Some("x^2"), "annulation d'une modification en une étape");
+    assert_eq!(i.latex.as_deref(), Some("x^2"), "undoing an edit takes one step");
 }
 
 #[test]
@@ -1031,7 +1029,7 @@ fn vote_tool_drops_one_dot_per_click() {
     assert!(t.boxes().iter().all(|(_, b)| b.geom == BoxGeom::Ellipse));
 }
 
-/* ------------------------------------------------- présentation et minuteur */
+/* ------------------------------------------------- presentation and timer */
 
 fn page_index(t: &mut T) -> usize {
     let app = t.app();
@@ -1041,7 +1039,7 @@ fn page_index(t: &mut T) -> usize {
 #[test]
 fn presentation_mode_hides_the_ui_and_navigates_between_pages() {
     let mut t = T::new();
-    t.app().ed.add_page("Deux");
+    t.app().ed.add_page("Two");
     t.app().ed.add_page("Trois");
     let first = t.app().ed.doc.pages[0].id.clone();
     t.app().ed.current = first.clone();
@@ -1053,7 +1051,7 @@ fn presentation_mode_hides_the_ui_and_navigates_between_pages() {
     t.key(Key::Space);
     assert_eq!(page_index(&mut t), 2);
     t.key(Key::ArrowRight);
-    assert_eq!(page_index(&mut t), 2, "pas de page après la dernière");
+    assert_eq!(page_index(&mut t), 2, "no page after the last one");
     t.key(Key::ArrowLeft);
     assert_eq!(page_index(&mut t), 1);
     t.key(Key::Escape);
@@ -1081,7 +1079,7 @@ fn code_block_is_colored_and_recolor_applies_to_edited_code() {
     t.app().insert_code_block();
     t.h.step();
     let spans = t.boxes()[0].1.label.text.0.clone();
-    assert!(spans.iter().any(|s| s.style.color.is_some()), "le bloc de code est coloré");
+    assert!(spans.iter().any(|s| s.style.color.is_some()), "the code block is colored");
     let id = t.objects()[0].id.clone();
     t.app().ed.update(&id, |o| {
         if let Kind::Box(b) = &mut o.kind {
@@ -1093,7 +1091,7 @@ fn code_block_is_colored_and_recolor_applies_to_edited_code() {
     assert_eq!(t.boxes()[0].1.label.text.to_plain(), "let x = 1;");
 }
 
-/* ------------------------------------------------------------ gomme du stylet */
+/* ------------------------------------------------------------ pen eraser */
 
 #[test]
 fn pen_eraser_end_erases_whatever_the_active_tool() {
@@ -1101,23 +1099,23 @@ fn pen_eraser_end_erases_whatever_the_active_tool() {
     let id = t.add_rect(100.0, 100.0, 200.0, 120.0);
     t.tool(Tool::Pen);
     t.h.step();
-    // sans la gomme : le crayon trace, la forme reste
+    // without the eraser: the pen draws, the shape stays
     t.drag((400.0, 400.0), (450.0, 450.0));
     assert!(t.app().ed.page().get(&id).is_some());
-    // extrémité gomme détectée : le geste efface la forme sous le stylet
+    // eraser end detected: the gesture erases the shape under the pen
     t.app().eraser_probe = || true;
     t.drag((120.0, 160.0), (280.0, 160.0));
-    assert!(t.app().ed.page().get(&id).is_none(), "la forme est effacée");
-    assert_eq!(t.app().tool, Tool::Pen, "l'outil actif n'a pas changé");
+    assert!(t.app().ed.page().get(&id).is_none(), "the shape is erased");
+    assert_eq!(t.app().tool, Tool::Pen, "the active tool did not change");
 }
 
-/* ------------------------------------------------ fichier modifié par un autre programme */
+/* ------------------------------------------------ file modified by another program */
 
 fn external_edit(path: &std::path::Path, text: &str) {
     let mut doc = inkboard_core::serial::load(path).unwrap();
     doc.pages[0].objects.push(Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 100.0, 60.0), Style::default(), Label::new(text, 20.0, Align::Center)));
     inkboard_core::serial::save(&doc, path).unwrap();
-    // l'horloge du système de fichiers peut être grossière : on force une date différente
+    // the filesystem clock can be coarse: we force a different date
     let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
     f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
 }
@@ -1134,11 +1132,11 @@ fn open_file_reloads_when_another_program_changes_it() {
     t.app().save_to(&path);
     t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
     t.h.step();
-    assert_eq!(t.objects().len(), 1, "pas de rechargement tant que rien n'a changé");
-    external_edit(&path, "Ajouté par un agent");
+    assert_eq!(t.objects().len(), 1, "no reload while nothing has changed");
+    external_edit(&path, "Added by an agent");
     t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
     t.h.step();
-    assert_eq!(t.objects().len(), 2, "le tableau est rechargé");
+    assert_eq!(t.objects().len(), 2, "the board is reloaded");
     assert!(!t.app().dirty());
     let _ = std::fs::remove_file(&path);
 }
@@ -1149,16 +1147,16 @@ fn unsaved_local_changes_are_not_overwritten_by_an_external_change() {
     let path = temp_board("dirty");
     t.add_rect(0.0, 0.0, 50.0, 50.0);
     t.app().save_to(&path);
-    t.add_rect(200.0, 0.0, 50.0, 50.0); // modification locale non enregistrée
+    t.add_rect(200.0, 0.0, 50.0, 50.0); // unsaved local change
     external_edit(&path, "Externe");
     t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
     t.h.step();
-    assert_eq!(t.objects().len(), 2, "les 2 formes locales sont conservées");
+    assert_eq!(t.objects().len(), 2, "the 2 local shapes are kept");
     assert!(t.app().dirty());
     let _ = std::fs::remove_file(&path);
 }
 
-/* --------------------------------------------- mode direct (inkboard-mcp pilote l'application) */
+/* --------------------------------------------- live mode (inkboard-mcp drives the application) */
 
 struct Live {
     srv: inkboard_mcp::Server,
@@ -1172,14 +1170,14 @@ fn start_live(t: &mut T, tag: &str) -> Live {
     Live { srv: inkboard_mcp::Server { live_file: Some(file.clone()), ..Default::default() }, file }
 }
 
-/// Appelle un outil MCP depuis un autre thread (comme le fait `inkboard-mcp`) pendant que l'interface tourne.
+/// Calls an MCP tool from another thread (as `inkboard-mcp` does) while the UI runs.
 fn mcp_call(t: &mut T, live: &Live, tool: &str, args: serde_json::Value) -> (bool, serde_json::Value) {
     let srv = live.srv.clone();
     let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}});
     let th = std::thread::spawn(move || srv.handle(&msg).unwrap());
     let start = std::time::Instant::now();
     while !th.is_finished() {
-        assert!(start.elapsed() < std::time::Duration::from_secs(10), "pas de réponse");
+        assert!(start.elapsed() < std::time::Duration::from_secs(10), "no response");
         t.h.step();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -1192,26 +1190,26 @@ fn mcp_call(t: &mut T, live: &Live, tool: &str, args: serde_json::Value) -> (boo
 fn an_agent_edits_the_open_board_live_and_each_call_is_one_undo_step() {
     let mut t = T::new();
     let live = start_live(&mut t, "edit");
-    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Ajouté en direct"}));
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Added live"}));
     assert!(!err, "{r}");
     assert_eq!(t.boxes().len(), 1);
-    assert_eq!(t.boxes()[0].1.label.text.to_plain(), "Ajouté en direct");
-    assert_eq!(t.app().sel.len(), 1, "l'objet créé est sélectionné");
-    assert!(t.app().dirty(), "modification non enregistrée : l'utilisateur garde la main");
+    assert_eq!(t.boxes()[0].1.label.text.to_plain(), "Added live");
+    assert_eq!(t.app().sel.len(), 1, "the created object is selected");
+    assert!(t.app().dirty(), "unsaved change: the user stays in control");
     let (err, r) = mcp_call(&mut t, &live, "add_formula", serde_json::json!({"latex": r"\frac{1}{2}"}));
     assert!(!err, "{r}");
     assert_eq!(t.objects().len(), 2);
-    // Ctrl+Z annule uniquement le dernier appel de l'agent
+    // Ctrl+Z undoes only the agent's last call
     t.key_mod(Modifiers::COMMAND, Key::Z);
     assert_eq!(t.objects().len(), 1);
-    // l'agent voit l'état courant et la sélection de l'utilisateur
+    // the agent sees the current state and the user's selection
     let id = t.objects()[0].id.clone();
     t.app().sel = vec![id.clone()];
     let (err, d) = mcp_call(&mut t, &live, "describe_board", serde_json::json!({}));
     assert!(!err);
     assert_eq!(d["live"], true);
     assert_eq!(d["selection"], serde_json::json!([id.0]));
-    // erreurs d'outil renvoyées à l'agent, sans rien modifier
+    // tool errors returned to the agent, without changing anything
     let (err, e) = mcp_call(&mut t, &live, "add_formula", serde_json::json!({"latex": r"\inconnu"}));
     assert!(err, "{e}");
     assert_eq!(t.objects().len(), 1);
@@ -1225,18 +1223,18 @@ fn live_calls_target_the_open_file_only() {
     let mine = std::env::temp_dir().join(format!("wb-live-mine-{}.inkboard.json", std::process::id()));
     t.add_rect(0.0, 0.0, 50.0, 50.0);
     t.app().save_to(&mine);
-    // même fichier : appliqué dans l'application
+    // same file: applied in the application
     let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"path": mine.to_str().unwrap(), "geom": "ellipse"}));
     assert!(!err, "{r}");
     assert_eq!(t.objects().len(), 2);
-    // autre fichier : l'application n'est pas touchée, le mode fichier prend le relais
+    // other file: the application is untouched, file mode takes over
     let other = std::env::temp_dir().join(format!("wb-live-other-{}.inkboard.json", std::process::id()));
-    inkboard_core::serial::save(&Document::new("Autre"), &other).unwrap();
-    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"path": other.to_str().unwrap(), "geom": "rect", "text": "dans le fichier"}));
+    inkboard_core::serial::save(&Document::new("Other"), &other).unwrap();
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"path": other.to_str().unwrap(), "geom": "rect", "text": "in the file"}));
     assert!(!err, "{r}");
-    assert_eq!(t.objects().len(), 2, "l'application n'a pas changé");
-    assert_eq!(inkboard_core::serial::load(&other).unwrap().pages[0].objects.len(), 1, "le fichier a été modifié");
-    // save_board enregistre le tableau affiché
+    assert_eq!(t.objects().len(), 2, "the application did not change");
+    assert_eq!(inkboard_core::serial::load(&other).unwrap().pages[0].objects.len(), 1, "the file was modified");
+    // save_board saves the displayed board
     assert!(t.app().dirty());
     let (err, r) = mcp_call(&mut t, &live, "save_board", serde_json::json!({}));
     assert!(!err, "{r}");
@@ -1252,28 +1250,28 @@ fn live_server_rejects_a_wrong_token_and_cleans_up_its_discovery_file() {
     use std::io::{BufRead, BufReader, Write};
     let mut t = T::new();
     let live = start_live(&mut t, "token");
-    let info = inkboard_mcp::live::read_info(&live.file).expect("fichier de découverte");
+    let info = inkboard_mcp::live::read_info(&live.file).expect("discovery file");
     let mut s = std::net::TcpStream::connect(("127.0.0.1", info.port)).unwrap();
     writeln!(s, "{}", serde_json::json!({"token": "faux", "tool": "describe_board", "args": {}})).unwrap();
     let mut line = String::new();
     BufReader::new(s).read_line(&mut line).unwrap();
     let r: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(r["ok"], false);
-    assert!(r["error"].as_str().unwrap().contains("jeton"), "{r}");
-    assert!(t.objects().is_empty(), "rien n'est exécuté sans jeton valide");
-    // à la fermeture, le fichier de découverte disparaît
+    assert!(r["error"].as_str().unwrap().contains("token"), "{r}");
+    assert!(t.objects().is_empty(), "nothing is executed without a valid token");
+    // on close, the discovery file disappears
     t.app().live = None;
     assert!(!live.file.exists());
 }
 
-/// Envoie une requête JSON-RPC quelconque au serveur MCP (autre thread) pendant que l'interface tourne.
+/// Sends any JSON-RPC request to the MCP server (another thread) while the UI runs.
 fn mcp_rpc(t: &mut T, live: &Live, method: &str, params: serde_json::Value) -> serde_json::Value {
     let srv = live.srv.clone();
     let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
     let th = std::thread::spawn(move || srv.handle(&msg).unwrap());
     let start = std::time::Instant::now();
     while !th.is_finished() {
-        assert!(start.elapsed() < std::time::Duration::from_secs(10), "pas de réponse");
+        assert!(start.elapsed() < std::time::Duration::from_secs(10), "no response");
         t.h.step();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -1307,9 +1305,9 @@ fn live_board_is_a_resource_and_subscribers_are_notified_when_the_user_edits() {
         }
         None
     };
-    assert!(wait(&mut t, 2).is_none(), "rien ne change : pas de notification");
-    t.add_rect(200.0, 0.0, 80.0, 50.0); // l'utilisateur dessine
-    let n = wait(&mut t, 5).expect("notification après la modification de l'utilisateur");
+    assert!(wait(&mut t, 2).is_none(), "nothing changes: no notification");
+    t.add_rect(200.0, 0.0, 80.0, 50.0); // the user draws
+    let n = wait(&mut t, 5).expect("notification after the user's change");
     assert_eq!(n["method"], "notifications/resources/updated");
     assert_eq!(n["params"]["uri"], inkboard_mcp::resources::LIVE_URI);
     let _ = std::fs::remove_file(&live.file);
@@ -1323,17 +1321,17 @@ fn live_board_changes_and_images() {
     assert!(!err && r["baseline"] == true, "{r}");
     let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Agent"}));
     assert!(!err, "{r}");
-    t.add_rect(300.0, 300.0, 60.0, 40.0); // l'utilisateur ajoute une forme
+    t.add_rect(300.0, 300.0, 60.0, 40.0); // the user adds a shape
     let (err, ch) = mcp_call(&mut t, &live, "board_changes", serde_json::json!({}));
     assert!(!err);
-    assert_eq!(ch["added"].as_array().unwrap().len(), 1, "seule la forme de l'utilisateur est signalée : {ch}");
+    assert_eq!(ch["added"].as_array().unwrap().len(), 1, "only the user's shape is reported: {ch}");
     assert_eq!(ch["selection"].as_array().map(Vec::len), Some(t.app().sel.len()));
-    // le premier objet supprimé par l'utilisateur est signalé
+    // the first object deleted by the user is reported
     let victim = t.objects()[0].id.clone();
     t.app().ed.remove(std::slice::from_ref(&victim));
     let (_, ch) = mcp_call(&mut t, &live, "board_changes", serde_json::json!({}));
     assert_eq!(ch["removed"], serde_json::json!([victim.0]), "{ch}");
-    // image à partir de données base64 : insérée en direct, annulable
+    // image from base64 data: inserted live, undoable
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
     let before = t.objects().len();
     let (err, r) = mcp_call(&mut t, &live, "add_image", serde_json::json!({"data_base64": png, "w": 100}));
@@ -1345,7 +1343,7 @@ fn live_board_changes_and_images() {
     let _ = std::fs::remove_file(&live.file);
 }
 
-/* ---------------------------------------------------- cadre flottant et pointeur laser */
+/* ---------------------------------------------------- floating frame and laser pointer */
 
 #[test]
 fn laser_pointer_leaves_a_fading_trail_and_never_edits_the_board() {
@@ -1354,13 +1352,13 @@ fn laser_pointer_leaves_a_fading_trail_and_never_edits_the_board() {
     let rev = t.app().ed.revision();
     t.tool(Tool::Laser);
     t.drag((50.0, 200.0), (300.0, 260.0));
-    assert!(!t.app().laser.is_empty(), "la traînée est enregistrée");
-    assert_eq!(t.app().ed.revision(), rev, "le laser ne modifie jamais le tableau");
-    assert_eq!(t.app().tool, Tool::Laser, "l'outil reste actif");
-    // les points s'effacent avec le temps
+    assert!(!t.app().laser.is_empty(), "the trail is recorded");
+    assert_eq!(t.app().ed.revision(), rev, "the laser never modifies the board");
+    assert_eq!(t.app().tool, Tool::Laser, "the tool stays active");
+    // the points fade with time
     t.app().laser.iter_mut().for_each(|(_, at)| *at -= std::time::Duration::from_secs(5));
     t.h.step();
-    // seul le point sous le pointeur (fraîchement enregistré) peut subsister
+    // only the point under the pointer (freshly recorded) can remain
     assert!(t.app().laser.len() <= 1, "{}", t.app().laser.len());
 }
 
@@ -1369,12 +1367,12 @@ fn style_panel_is_a_floating_card_shown_only_when_there_is_something_to_set() {
     let mut t = T::new();
     t.h.step();
     let panel = |t: &mut T| t.h.ctx.memory(|m| m.area_rect(egui::Id::new("props")));
-    assert!(panel(&mut t).is_none() || t.app().sel.is_empty() && !crate::panel::visible(t.app()), "rien à régler : pas de panneau");
+    assert!(panel(&mut t).is_none() || t.app().sel.is_empty() && !crate::panel::visible(t.app()), "nothing to adjust: no panel");
     t.tool(Tool::Pen);
     assert!(crate::panel::visible(t.app()));
-    let r = panel(&mut t).expect("panneau visible avec un outil de dessin");
-    assert!(r.left() >= 8.0 && r.width() < 260.0, "carte flottante étroite : {r:?}");
-    // le canevas occupe toute la fenêtre, les cartes flottent au-dessus
+    let r = panel(&mut t).expect("panel visible with a drawing tool");
+    assert!(r.left() >= 8.0 && r.width() < 260.0, "narrow floating card: {r:?}");
+    // the canvas fills the whole window, the cards float above
     assert!(t.app().canvas_rect.width() >= 1299.0 && t.app().canvas_rect.min.x == 0.0);
     t.tool(Tool::Select);
     assert!(!crate::panel::visible(t.app()));
@@ -1407,6 +1405,37 @@ fn every_toolbar_tool_has_an_icon_and_every_icon_is_known() {
         "lock",
         "unlock",
     ] {
-        assert!(crate::icons::texture(&ctx, name).is_some(), "icône d'outil manquante : {name}");
+        assert!(crate::icons::texture(&ctx, name).is_some(), "missing tool icon: {name}");
     }
+}
+
+/* ------------------------------------------------------------ languages */
+
+#[test]
+fn french_mode_renders_every_dialog_and_panel_without_missing_translations() {
+    use crate::app::Dialog;
+    use crate::i18n::{Lang, MISSING, set_for_thread};
+    set_for_thread(Some(Lang::Fr));
+    MISSING.with(|m| m.borrow_mut().clear());
+    let mut t = T::new();
+    let id = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    t.app().sel = vec![id];
+    for tool in [Tool::Select, Tool::Pen, Tool::Shape(BoxGeom::Rect), Tool::Line, Tool::Arrow, Tool::Text, Tool::Table, Tool::Vote, Tool::Laser] {
+        t.tool(tool);
+    }
+    let dialogs = [
+        Dialog::Mermaid { text: String::new(), new_board: false, error: Some("x".into()) },
+        Dialog::Shortcuts { filter: String::new(), recording: None },
+        Dialog::Shortcuts { filter: String::new(), recording: Some(crate::keymap::Action::Delete) },
+        Dialog::Formula { src: "x^2".into(), editing: None, preview: Default::default() },
+    ];
+    for d in dialogs {
+        t.app().dialog = Some(d);
+        for _ in 0..3 {
+            t.h.step();
+        }
+    }
+    let missing: std::collections::BTreeSet<String> = MISSING.with(|m| m.borrow().iter().cloned().collect());
+    set_for_thread(None);
+    assert!(missing.is_empty(), "texts shown in French mode without a translation: {missing:?}");
 }

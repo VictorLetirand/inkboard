@@ -1,12 +1,12 @@
-//! `inkboard-formats` : échanges avec les autres outils.
+//! `inkboard-formats`: exchange with other tools.
 //!
 //! | Format | Import | Export |
 //! |---|---|---|
-//! | Prototype web (`.inkboard.json` v1) | oui | – |
-//! | draw.io (`.drawio`, compressé ou non) | oui | oui |
-//! | Excalidraw (`.excalidraw`) | oui | oui |
-//! | JSON Canvas (`.canvas`) | oui | oui |
-//! | Mermaid (flowchart, stateDiagram, sequenceDiagram) | oui | – |
+//! | Prototype web (`.inkboard.json` v1) | yes | – |
+//! | draw.io (`.drawio`, compressed or not) | yes | yes |
+//! | Excalidraw (`.excalidraw`) | yes | yes |
+//! | JSON Canvas (`.canvas`) | yes | yes |
+//! | Mermaid (flowchart, stateDiagram, sequenceDiagram) | yes | – |
 
 pub mod common;
 pub mod drawio;
@@ -33,7 +33,7 @@ pub enum Format {
     Mermaid,
 }
 
-/// Devine le format d'après le nom du fichier et son début.
+/// Guesses the format from the file name and its beginning.
 pub fn detect(file_name: &str, content: &str) -> Option<Format> {
     let ext = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
@@ -52,7 +52,7 @@ pub fn detect(file_name: &str, content: &str) -> Option<Format> {
         if v.get("type").and_then(|t| t.as_str()) == Some("excalidraw") {
             return Some(Format::Excalidraw);
         }
-        if v.get("format").and_then(|t| t.as_str()) == Some(inkboard_core::serial::FORMAT) {
+        if v.get("format").and_then(|t| t.as_str()).is_some_and(inkboard_core::serial::is_native_format) {
             return Some(Format::Native);
         }
         if v.get("nodes").is_some() && v.get("objects").is_none() {
@@ -67,7 +67,7 @@ pub fn detect(file_name: &str, content: &str) -> Option<Format> {
     ["flowchart", "graph", "stateDiagram", "sequenceDiagram"].iter().any(|k| first.starts_with(k)).then_some(Format::Mermaid)
 }
 
-/// Ouvre un contenu dans n'importe quel format reconnu.
+/// Opens content in any recognized format.
 pub fn import_any(file_name: &str, content: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
     let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
     let base = base.split('.').next().unwrap_or(base);
@@ -83,12 +83,12 @@ pub fn import_any(file_name: &str, content: &str, m: &dyn Measurer) -> Result<Im
     }
 }
 
-/// Documents d'exemple utilisés par les tests.
+/// Example documents used by the tests.
 #[cfg(test)]
 pub(crate) fn sample_document() -> inkboard_core::Document {
     use inkboard_core::*;
-    let mut d = inkboard_core::Document::new("Exemple");
-    let mut lab = Label::new("Début\nligne 2", 20.0, Align::Center);
+    let mut d = inkboard_core::Document::new("Example");
+    let mut lab = Label::new("Start\nline 2", 20.0, Align::Center);
     lab.text.restyle(0, 5, |s| s.bold = true);
     let a = Object::new_box(
         BoxGeom::Rect,
@@ -100,9 +100,9 @@ pub(crate) fn sample_document() -> inkboard_core::Document {
         BoxGeom::Ellipse,
         Frame { x: 400.0, y: 100.0, w: 140.0, h: 90.0, angle: 0.3 },
         Style { dash: Dash::Dashed, ..Default::default() },
-        Label::new("Fin", 20.0, Align::Center),
+        Label::new("End", 20.0, Align::Center),
     );
-    let c = Object::new_box(BoxGeom::Diamond, Frame::new(250.0, 260.0, 140.0, 100.0), Style::default(), Label::new("Choix ?", 20.0, Align::Center));
+    let c = Object::new_box(BoxGeom::Diamond, Frame::new(250.0, 260.0, 140.0, 100.0), Style::default(), Label::new("Choice?", 20.0, Align::Center));
     let t = Object::new_box(
         BoxGeom::Triangle,
         Frame::new(450.0, 260.0, 100.0, 90.0),
@@ -119,13 +119,13 @@ pub(crate) fn sample_document() -> inkboard_core::Document {
         BoxGeom::Text,
         Frame::new(600.0, 100.0, 10.0, 10.0),
         Style { width: 0.0, ..Default::default() },
-        Label::new("Titre libre", 28.0, Align::Left),
+        Label::new("Free title", 28.0, Align::Left),
     );
     if let Kind::Box(bx) = &mut x.kind {
         bx.fit(&ApproxMeasurer);
     }
     let mut conn = Connector::new(End::bound(a.id.clone()), End::bound(b.id.clone()));
-    conn.label = Some(Label::new("oui", 14.0, Align::Center));
+    conn.label = Some(Label::new("yes", 14.0, Align::Center));
     let link = Object::new(Kind::Connector(conn), Style { stroke: Color::rgb(224, 49, 49), width: 2.5, ..Default::default() });
     let free = Object::new(Kind::Connector(Connector::new(End::bound(c.id.clone()), End::free(Pt::new(300.0, 480.0)))), Style::default());
     let pen = Object::new_pen(vec![Pt::new(100.0, 450.0), Pt::new(150.0, 470.0), Pt::new(200.0, 440.0), Pt::new(260.0, 480.0)], false, Style::default());

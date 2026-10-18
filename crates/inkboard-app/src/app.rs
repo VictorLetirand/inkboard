@@ -1,6 +1,7 @@
-//! État de l'application, fichiers, raccourcis clavier et boucle principale.
+//! Application state, files, keyboard shortcuts and the main loop.
 
 use crate::fonts::{self, EguiMeasurer};
+use crate::i18n::{t, tr};
 use crate::keymap::{Action, Keymap};
 use crate::render::TextureCache;
 use crate::tools::{Drag, Editing, Tool};
@@ -25,7 +26,7 @@ pub enum Dialog {
         filter: String,
         recording: Option<Action>,
     },
-    /// Formule LaTeX : insertion, ou modification de l'objet `editing`.
+    /// LaTeX formula: insertion, or editing of the object `editing`.
     Formula {
         src: String,
         editing: Option<Id>,
@@ -33,7 +34,7 @@ pub enum Dialog {
     },
 }
 
-/// Aperçu composé de la formule en cours de saisie (recalculé quand le source change).
+/// Typeset preview of the formula being typed (recomputed when the source changes).
 #[derive(Default)]
 pub struct FormulaPreview {
     pub src: Option<String>,
@@ -41,27 +42,27 @@ pub struct FormulaPreview {
     pub error: Option<String>,
 }
 
-/// Mesure de performance (`--bench`) : temps de construction d'une image, en millisecondes.
+/// Performance measurement (`--bench`): frame build time, in milliseconds.
 #[derive(Default)]
 pub struct Bench {
     pub frame_ms: Vec<f64>,
-    /// Durée d'une recherche d'objet sous le pointeur (survol), en millisecondes.
+    /// Time of an object lookup under the pointer (hover), in milliseconds.
     pub pick_ms: Vec<f64>,
-    /// Vue rapprochée (zoom 100 %) au lieu de « tout afficher ».
+    /// Close-up view (100 % zoom) instead of "fit all".
     pub close_up: bool,
 }
 
-/// Image brute : largeur, hauteur, pixels RGBA.
+/// Raw image: width, height, RGBA pixels.
 pub type RawImage = (usize, usize, Vec<u8>);
 
-/// Caches recalculés quand la révision du document change : positions par identifiant et index spatial.
+/// Caches rebuilt when the document revision changes: positions by id and the spatial index.
 pub struct Caches {
     pub rev: u64,
     pub page: Id,
     pub len: usize,
     pub ids: std::collections::HashMap<Id, usize>,
     pub spatial: Option<inkboard_core::spatial::SpatialIndex>,
-    /// Durée de la dernière reconstruction (ms).
+    /// Duration of the last rebuild (ms).
     pub build_ms: f64,
 }
 
@@ -71,42 +72,44 @@ impl Default for Caches {
     }
 }
 
-/// Sous ce nombre d'objets, le parcours linéaire est plus simple et aussi rapide : pas d'index spatial.
+/// Below this many objects a linear scan is simpler and just as fast: no spatial index.
 const INDEX_MIN_OBJECTS: usize = 400;
 
 pub struct App {
     pub caches: Caches,
     pub bench: Option<Bench>,
     pub keymap: Keymap,
-    /// Dernière pression de stylet reçue (0..1) pendant un contact, si le matériel la fournit.
+    /// Last pen pressure received (0..1) during a contact, when the hardware provides it.
     pub pen_force: Option<f32>,
-    /// Lecture d'une image du presse-papiers système (remplaçable dans les tests).
+    /// Reads an image from the system clipboard (replaceable in tests).
     pub system_image: fn() -> Option<RawImage>,
-    /// Le stylet est-il utilisé côté gomme ? (extrémité gomme, via `inkboard-pen`) ; remplaçable dans les tests.
+    /// Is the pen used on its eraser end? (via `inkboard-pen`); replaceable in tests.
     pub eraser_probe: fn() -> bool,
-    /// Diagnostic du stylet (`--pen-test`).
+    /// Pen diagnostics (`--pen-test`).
     pub pen_test: Option<crate::pen_test::PenReport>,
-    /// Serveur local du mode direct de `inkboard-mcp` (absent dans les tests et les captures).
+    /// Local server of `inkboard-mcp` live mode (absent in tests and screenshots).
     pub live: Option<crate::live::LiveServer>,
-    /// Référence des changements pour l'outil `board_changes` (ce que l'utilisateur a modifié depuis le dernier regard de l'agent).
+    /// Change reference for the `board_changes` tool (what the user changed since the agent last looked).
     pub tracker: Option<inkboard_mcp::tools::Snapshot>,
-    /// Date de modification du fichier ouvert lors de la dernière lecture ou écriture (voir `watch.rs`).
+    /// Modification time of the open file at the last read or write (see `watch.rs`).
     pub disk_mtime: Option<std::time::SystemTime>,
     pub last_watch: Instant,
-    /// Point monde du dernier clic droit (menu contextuel des tableaux).
+    /// World point of the last right click (table context menu).
     pub ctx_pos: Pt,
     pub keymap_path: Option<PathBuf>,
     pub ui_dark: bool,
-    /// Le panneau de droite montre la liste des calques.
+    /// The style panel shows the layer list.
     pub layers_open: bool,
-    /// Traînée du pointeur laser : positions écran et instants.
+    /// Interface language choice (system language, or forced).
+    pub lang_pref: crate::i18n::Pref,
+    /// Laser pointer trail: screen positions and instants.
     pub laser: Vec<(egui::Pos2, Instant)>,
-    /// Identifiant du menu principal (pour l'ouvrir dans les captures `--ui-demo menu`).
+    /// Id of the main menu (to open it in `--ui-demo menu` screenshots).
     pub menu_popup: Option<egui::Id>,
-    /// Démonstration pour les captures : `menu`, `panel`, `dark` (séparés par des virgules).
+    /// Screenshot demo: `menu`, `panel`, `dark` (comma-separated).
     pub ui_demo: String,
     pub edit_demo: bool,
-    /// Démonstration pour les captures : insère quelques formules composées.
+    /// Screenshot demo: inserts a few typeset formulas.
     pub formula_demo: bool,
     pub ed: Editor,
     pub sel: Vec<Id>,
@@ -121,7 +124,7 @@ pub struct App {
     pub textures: TextureCache,
     pub measurer: EguiMeasurer,
     pub editing: Option<Editing>,
-    /// Style appliqué aux nouveaux objets.
+    /// Style applied to new objects.
     pub style: Style,
     pub label: Label,
     pub route: Route,
@@ -133,13 +136,13 @@ pub struct App {
     pub screenshot: Option<PathBuf>,
     pub frames: u32,
     pub fit_pending: bool,
-    /// Mode présentation : plein écran, sans interface, navigation page par page.
+    /// Presentation mode: full screen, no interface, page-by-page navigation.
     pub presenting: bool,
-    /// Demande d'entrée (`true`) ou de sortie (`false`) du mode présentation, traitée à la prochaine image.
+    /// Request to enter (`true`) or leave (`false`) presentation mode, handled on the next frame.
     pub present_req: Option<bool>,
-    /// Outil actif avant la présentation.
+    /// Tool that was active before the presentation.
     pub prev_tool: Tool,
-    /// Minuteur : instant de fin et durée totale.
+    /// Timer: end instant and total duration.
     pub timer: Option<(Instant, Duration)>,
     pub last_autosave: Instant,
     pub last_title: String,
@@ -159,9 +162,17 @@ impl App {
         Self::build(cc, open, screenshot, true)
     }
 
-    /// `restore` : recharge le dernier enregistrement automatique (désactivé dans les tests).
+    /// `restore`: reloads the last autosave (disabled in tests).
     pub fn build(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>, screenshot: Option<PathBuf>, restore: bool) -> Self {
         fonts::install(&cc.egui_ctx);
+        // the language is read from the settings only for the real application (tests stay in English)
+        let lang_pref = if restore {
+            let p = crate::i18n::load_pref();
+            crate::i18n::set(crate::i18n::resolve(p));
+            p
+        } else {
+            crate::i18n::Pref::Lang(crate::i18n::Lang::En)
+        };
         crate::theme::apply(&cc.egui_ctx, false);
         let measurer = EguiMeasurer(cc.egui_ctx.clone());
         let mut app = Self {
@@ -180,6 +191,7 @@ impl App {
             keymap_path: None,
             ui_dark: false,
             layers_open: false,
+            lang_pref,
             laser: Vec::new(),
             menu_popup: None,
             ui_demo: String::new(),
@@ -228,21 +240,21 @@ impl App {
                     Ok((km, ignored)) => {
                         app.keymap = km;
                         if ignored > 0 {
-                            app.toast(&format!("Raccourcis : {ignored} entrée(s) invalide(s) ignorée(s)"));
+                            app.toast(&tr!("Shortcuts: {} invalid entries ignored", ignored));
                         }
                     }
-                    Err(e) => app.toast(&format!("Fichier de raccourcis ignoré : {e}")),
+                    Err(e) => app.toast(&tr!("Shortcuts file ignored: {}", e)),
                 }
             }
             app.keymap_path = Some(kp);
         }
         match open {
-            // les polices n'existent qu'après la première image : l'ouverture est différée
+            // fonts only exist after the first frame: opening is deferred
             Some(p) => app.pending_open = Some(p),
             None if restore && app.screenshot.is_none() => {
                 let a = autosave_path();
                 if a.exists() && inkboard_core::serial::load(&a).map(|d| app.ed.reset(d)).is_ok() {
-                    app.toast("Tableau précédent restauré");
+                    app.toast(&t("Previous board restored"));
                 }
             }
             None => {}
@@ -251,7 +263,7 @@ impl App {
         app
     }
 
-    /// Met à jour les caches si le document a changé depuis leur construction.
+    /// Updates the caches if the document changed since they were built.
     pub fn refresh_caches(&mut self) {
         let page = self.ed.page();
         if self.caches.rev == self.ed.revision() && self.caches.page == page.id && self.caches.len == page.objects.len() {
@@ -264,13 +276,13 @@ impl App {
             Caches { rev: self.ed.revision(), page: page.id.clone(), len: page.objects.len(), ids, spatial, build_ms: t0.elapsed().as_secs_f64() * 1000.0 };
     }
 
-    /// Vrai pendant un geste qui modifie des objets sans passer par l'historique : l'index spatial est alors périmé.
+    /// True during a gesture that modifies objects without going through the history: the spatial index is then stale.
     pub fn objects_moving(&self) -> bool {
         matches!(self.drag, Some(Drag::Move { .. } | Drag::Resize { .. } | Drag::Rotate { .. } | Drag::Endpoint { .. } | Drag::Via { .. }))
             || self.prop_edit.is_some()
     }
 
-    /// Objet le plus au premier plan sous `w` (index spatial quand il est valable).
+    /// Topmost object under `w` (using the spatial index when valid).
     pub fn pick_at(&mut self, w: Pt, tol: f64) -> Option<usize> {
         self.refresh_caches();
         let page = self.ed.page();
@@ -280,7 +292,7 @@ impl App {
         page.pick_with(w, tol, &get, cands.as_deref())
     }
 
-    /// Objets d'un rectangle de sélection (lasso).
+    /// Objects in a selection rectangle (marquee).
     pub fn rect_select(&mut self, r: Rect, contain: bool) -> Vec<Id> {
         self.refresh_caches();
         let page = self.ed.page();
@@ -317,14 +329,14 @@ impl App {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(e) => return self.toast(&format!("Lecture impossible : {e}")),
+            Err(e) => return self.toast(&tr!("Cannot read file: {}", e)),
         };
         match inkboard_formats::import_any(name, &content, &self.measurer) {
             Ok(imp) => {
                 let native = inkboard_formats::detect(name, &content) == Some(inkboard_formats::Format::Native);
                 let mut doc = imp.doc;
                 if !native {
-                    doc.name = path.file_stem().and_then(|n| n.to_str()).unwrap_or("Importé").to_owned();
+                    doc.name = path.file_stem().and_then(|n| n.to_str()).unwrap_or("Imported").to_owned();
                 }
                 self.ed.reset(doc);
                 self.sel.clear();
@@ -334,15 +346,15 @@ impl App {
                 self.disk_mtime = crate::watch::mtime(path);
                 self.saved_rev = self.ed.revision();
                 let note = imp.report.summary();
-                self.toast(&if note.is_empty() { format!("« {name} » ouvert") } else { format!("« {name} » ouvert — {note}") });
+                self.toast(&if note.is_empty() { tr!("\"{}\" opened", name) } else { tr!("\"{}\" opened — {}", name, note) });
             }
-            Err(e) => self.toast(&format!("Ouverture impossible : {e}")),
+            Err(e) => self.toast(&tr!("Cannot open: {}", e)),
         }
     }
 
     pub fn open_dialog(&mut self) {
         if let Some(p) = rfd::FileDialog::new()
-            .add_filter("Tous les tableaux", &["json", "drawio", "excalidraw", "canvas", "mmd", "mermaid", "xml"])
+            .add_filter(t("All boards"), &["json", "drawio", "excalidraw", "canvas", "mmd", "mermaid", "xml"])
             .add_filter("Inkboard", &["json"])
             .pick_file()
         {
@@ -372,13 +384,13 @@ impl App {
                 self.path = Some(p.to_path_buf());
                 self.disk_mtime = crate::watch::mtime(p);
                 self.saved_rev = self.ed.revision();
-                self.toast("Enregistré");
+                self.toast(&t("Saved"));
             }
-            Err(e) => self.toast(&format!("Enregistrement impossible : {e}")),
+            Err(e) => self.toast(&tr!("Cannot save: {}", e)),
         }
     }
 
-    /// Exporte vers un format d'échange ; `ext` : drawio, excalidraw, canvas, svg, png, pdf.
+    /// Exports to an interchange format; `ext`: drawio, excalidraw, canvas, svg, png, pdf.
     pub fn export(&mut self, ext: &str) {
         let page = self.ed.page().clone();
         let ids: Option<Vec<Id>> = (!self.sel.is_empty()).then(|| self.sel.clone());
@@ -388,7 +400,7 @@ impl App {
             "canvas" => {
                 let (json, dropped) = inkboard_formats::jsoncanvas::export(&page);
                 if dropped > 0 {
-                    self.toast(&format!("JSON Canvas : {dropped} élément(s) non représentables ignorés"));
+                    self.toast(&tr!("JSON Canvas: {} elements that cannot be represented were skipped", dropped));
                 }
                 Some(json)
             }
@@ -396,7 +408,7 @@ impl App {
             "png" | "pdf" => inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()),
             _ => None,
         };
-        let Some(text) = text else { return self.toast("Rien à exporter") };
+        let Some(text) = text else { return self.toast(&t("Nothing to export")) };
         let name = format!("{}.{ext}", self.ed.doc.name);
         if let Some(p) = rfd::FileDialog::new().set_file_name(&name).add_filter(ext, &[ext]).save_file() {
             let bytes: Result<Vec<u8>, String> = match ext {
@@ -405,8 +417,8 @@ impl App {
                 _ => Ok(text.into_bytes()),
             };
             match bytes.and_then(|b| std::fs::write(&p, b).map_err(|e| e.to_string())) {
-                Ok(()) => self.toast(&format!("Exporté : {}", p.display())),
-                Err(e) => self.toast(&format!("Export impossible : {e}")),
+                Ok(()) => self.toast(&tr!("Exported: {}", p.display())),
+                Err(e) => self.toast(&tr!("Cannot export: {}", e)),
             }
         }
     }
@@ -444,14 +456,14 @@ impl App {
         Ok(())
     }
 
-    /// Centre de la vue en coordonnées monde (approximé avec la dernière taille connue du canvas).
+    /// Center of the view in world coordinates (approximated with the last known canvas size).
     pub fn view_center(&self) -> Pt {
         let v = self.ed.page().view;
         let (cx, cy) = (f64::from(self.canvas_size.0) / 2.0, f64::from(self.canvas_size.1) / 2.0);
         Pt::new((cx - v.x) / v.zoom, (cy - v.y) / v.zoom)
     }
 
-    /* --------------------------------------------------- Édition */
+    /* --------------------------------------------------- Editing */
 
     pub fn copy_selection(&mut self) {
         let page = self.ed.page();
@@ -545,7 +557,7 @@ impl App {
         matches!(self.dialog, Some(Dialog::Shortcuts { recording: Some(_), .. }))
     }
 
-    /// Passe à la page suivante (`+1`) ou précédente (`-1`) ; sans effet aux extrémités.
+    /// Goes to the next (`+1`) or previous (`-1`) page; no effect at the ends.
     pub fn step_page(&mut self, d: i32) {
         let i = self.ed.doc.pages.iter().position(|p| p.id == self.ed.current).unwrap_or(0) as i32 + d;
         if let Some(p) = usize::try_from(i).ok().and_then(|i| self.ed.doc.pages.get(i)) {
@@ -575,7 +587,7 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
     }
 
-    /// Touches du mode présentation : flèches / espace / pages pour naviguer, Échap ou F5 pour quitter.
+    /// Presentation-mode keys: arrows / space / page keys to navigate, Escape or F5 to quit.
     fn present_keys(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.key_pressed(Key::F)) {
             self.tool = if self.tool == Tool::Laser { Tool::Hand } else { Tool::Laser };
@@ -647,7 +659,7 @@ impl App {
         self.sel.retain(|id| self.ed.page().get(id).is_some());
     }
 
-    /// Exécute une commande (raccourci clavier, menu ou bouton).
+    /// Runs a command (keyboard shortcut, menu or button).
     pub fn run_action(&mut self, a: Action) {
         let sel = self.sel.clone();
         match a {
@@ -697,7 +709,7 @@ impl App {
         self.sel.retain(|id| self.ed.page().get(id).is_some());
     }
 
-    /// Zoom centré sur le milieu du canvas.
+    /// Zoom centered on the middle of the canvas.
     pub fn zoom_by(&mut self, k: f64) {
         let v = self.ed.page().view;
         let (cx, cy) = (f64::from(self.canvas_size.0) / 2.0, f64::from(self.canvas_size.1) / 2.0);
@@ -705,14 +717,14 @@ impl App {
         self.set_view(View { x: cx - (cx - v.x) * nz / v.zoom, y: cy - (cy - v.y) * nz / v.zoom, zoom: nz });
     }
 
-    /// Enregistre les raccourcis personnalisés (sans effet dans les tests : pas de fichier).
+    /// Saves the custom shortcuts (no effect in tests: no file).
     pub fn save_keymap(&mut self) {
         let Some(p) = self.keymap_path.clone() else { return };
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Err(e) = std::fs::write(&p, self.keymap.to_json()) {
-            self.toast(&format!("Raccourcis non enregistrés : {e}"));
+            self.toast(&tr!("Shortcuts not saved: {}", e));
         }
     }
 
@@ -755,7 +767,7 @@ impl App {
             self.fit_pending = true;
         }
         if n == 5 && close_up {
-            // vue rapprochée : zoom 100 % centré sur le milieu du contenu
+            // close-up view: 100 % zoom centered on the middle of the content
             if let Some(b) = self.ed.page().content_bounds() {
                 let (w, h) = (f64::from(self.canvas_size.0), f64::from(self.canvas_size.1));
                 self.set_view(View { x: w / 2.0 - b.center().x, y: h / 2.0 - b.center().y, zoom: 1.0 });
@@ -774,12 +786,12 @@ impl App {
         }
         ctx.request_repaint();
         if let Some((avg, med, p95, worst)) = report {
-            println!("objets : {}", self.ed.page().objects.len());
-            println!("image (CPU) : moyenne {avg:.2} ms · médiane {med:.2} ms · p95 {p95:.2} ms · pire {worst:.2} ms");
-            println!("reconstruction des caches (une fois par modification) : {:.1} ms", self.caches.build_ms);
+            println!("objects: {}", self.ed.page().objects.len());
+            println!("frame (CPU): mean {avg:.2} ms · median {med:.2} ms · p95 {p95:.2} ms · worst {worst:.2} ms");
+            println!("cache rebuild (once per modification): {:.1} ms", self.caches.build_ms);
             let picks = self.bench.as_ref().map(|b| b.pick_ms.clone()).unwrap_or_default();
             if !picks.is_empty() {
-                println!("survol (recherche sous le pointeur) : moyenne {:.3} ms", picks.iter().sum::<f64>() / picks.len() as f64);
+                println!("hover (lookup under the pointer): mean {:.3} ms", picks.iter().sum::<f64>() / picks.len() as f64);
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -826,7 +838,7 @@ impl App {
             self.fit_pending = true;
         }
         if self.edit_demo && self.frames == 3 {
-            // démonstration pour les captures : ouvre l'édition du premier texte et met quelques mots en forme
+            // screenshot demo: opens editing of the first text and formats a few words
             let first = self.ed.page().objects.iter().find(|o| matches!(&o.kind, Kind::Box(b) if !b.label.text.is_empty())).map(|o| o.id.clone());
             if let Some(id) = first {
                 self.sel = vec![id.clone()];
@@ -893,7 +905,7 @@ impl eframe::App for App {
         self.autosave();
         self.screenshot_step(ctx);
         if ctx.input(|i| i.viewport().close_requested()) && self.dirty() && self.screenshot.is_none() {
-            // l'enregistrement automatique conserve le travail : on laisse fermer
+            // autosave keeps the work: we let the window close
             let _ = inkboard_core::serial::save(&self.ed.doc, &autosave_path());
         }
         ctx.request_repaint_after(Duration::from_millis(500));

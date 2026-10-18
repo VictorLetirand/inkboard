@@ -1,6 +1,6 @@
 [package]
 name = "inkboard-core"
-description = "Moteur du tableau blanc : modèle, géométrie, connecteurs liés, historique, SVG, mise en page."
+description = "Whiteboard engine: model, geometry, bound connectors, history, SVG, layout."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

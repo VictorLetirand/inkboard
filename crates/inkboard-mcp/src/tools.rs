@@ -1,4 +1,4 @@
-//! Outils MCP : chaque outil ouvre le fichier `path`, applique une modification par l'`Editor` du moteur et réenregistre (atomiquement).
+//! MCP tools: each tool opens the file `path`, applies a change through the engine's `Editor` and saves it again (atomically).
 
 use crate::Server;
 use inkboard_core::layout::{Direction, auto_layout};
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 type Res<T> = Result<T, String>;
 
-/// Extensions de fichiers que les outils acceptent d'écrire.
+/// File extensions the tools accept to write.
 const EXPORTS: [&str; 8] = [".inkboard.json", ".drawio", ".excalidraw", ".canvas", ".svg", ".png", ".pdf", ".json"];
 
 fn obj(props: Value, required: &[&str]) -> Value {
@@ -17,65 +17,65 @@ fn obj(props: Value, required: &[&str]) -> Value {
 }
 
 fn path_prop() -> Value {
-    json!({"type": "string", "description": "Chemin du fichier tableau (.inkboard.json). Facultatif quand l'application est ouverte : l'outil agit alors en direct sur le tableau affiché (annulable avec Ctrl+Z)."})
+    json!({"type": "string", "description": "Path of the board file (.inkboard.json). Optional when the application is open: the tool then acts live on the displayed board (undoable with Ctrl+Z)."})
 }
 
 fn page_prop() -> Value {
-    json!({"description": "Page : numéro (à partir de 1) ou nom. Par défaut, la première.", "oneOf": [{"type": "integer"}, {"type": "string"}]})
+    json!({"description": "Page: number (from 1) or name. Defaults to the first.", "oneOf": [{"type": "integer"}, {"type": "string"}]})
 }
 
 fn pos_props(mut p: Value) -> Value {
-    let m = p.as_object_mut().expect("objet");
+    let m = p.as_object_mut().expect("object");
     m.insert("path".into(), path_prop());
     m.insert("page".into(), page_prop());
-    m.insert("x".into(), json!({"type": "number", "description": "Abscisse du coin supérieur gauche. Par défaut : sous le contenu existant."}));
-    m.insert("y".into(), json!({"type": "number", "description": "Ordonnée du coin supérieur gauche."}));
+    m.insert("x".into(), json!({"type": "number", "description": "X of the top-left corner. Defaults to below the existing content."}));
+    m.insert("y".into(), json!({"type": "number", "description": "Y of the top-left corner."}));
     p
 }
 
-/// Description des outils (nom, description, schéma d'entrée) pour `tools/list`.
+/// Description of the tools (name, description, input schema) for `tools/list`.
 pub fn list() -> Vec<Value> {
-    let color = json!({"type": "string", "description": "Couleur « #rrggbb » ou « ink » (couleur du texte du thème)."});
+    let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
     vec![
-        json!({"name": "create_board", "description": "Crée un tableau vide (fichier .inkboard.json).",
+        json!({"name": "create_board", "description": "Creates an empty board (.inkboard.json file).",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
-        json!({"name": "save_board", "description": "Enregistre le tableau affiché dans l'application (mode direct ; il doit déjà avoir un fichier). Sans effet en mode fichier : chaque outil y enregistre déjà.",
+        json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
             "inputSchema": obj(json!({}), &[])}),
-        json!({"name": "describe_board", "description": "Liste les pages et les objets d'un tableau (id, type, texte, position, liens des connecteurs). En mode direct, indique aussi la sélection de l'utilisateur (`selection`). Accepte aussi les fichiers draw.io, Excalidraw, JSON Canvas et Mermaid en lecture.",
+        json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop()}), &[])}),
-        json!({"name": "board_changes", "description": "Signale ce que l'UTILISATEUR a modifié dans le tableau depuis votre dernier regard (describe_board ou board_changes) : objets ajoutés, modifiés, supprimés. Vos propres modifications ne sont pas signalées. Le premier appel enregistre une référence.",
+        json!({"name": "board_changes", "description": "Reports what the USER changed on the board since your last look (describe_board or board_changes): objects added, modified, deleted. Your own changes are not reported. The first call records a baseline.",
             "inputSchema": obj(json!({"path": path_prop()}), &[])}),
-        json!({"name": "add_image", "description": "Ajoute une image (PNG, JPEG, GIF, WebP ou SVG, 15 Mio au plus) à partir d'un fichier (`source`, sous la racine autorisée) ou de données base64 (`data_base64`). La taille naturelle est réduite à 600 au plus ; w et/ou h la remplacent.",
-            "inputSchema": obj(pos_props(json!({"source": {"type": "string", "description": "Chemin du fichier image."}, "data_base64": {"type": "string"}, "w": {"type": "number"}, "h": {"type": "number"}})), &[])}),
-        json!({"name": "add_shape", "description": "Ajoute une forme avec du texte (rect, ellipse, diamond, triangle, sticky = note adhésive, text = texte libre). Renvoie l'id.",
+        json!({"name": "add_image", "description": "Adds an image (PNG, JPEG, GIF, WebP or SVG, 15 MiB at most) from a file (`source`, under the allowed root) or from base64 data (`data_base64`). The natural size is reduced to at most 600; w and/or h override it.",
+            "inputSchema": obj(pos_props(json!({"source": {"type": "string", "description": "Path of the image file."}, "data_base64": {"type": "string"}, "w": {"type": "number"}, "h": {"type": "number"}})), &[])}),
+        json!({"name": "add_shape", "description": "Adds a shape with text (rect, ellipse, diamond, triangle, sticky = sticky note, text = free text). Returns the id.",
             "inputSchema": obj(pos_props(json!({
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
                 "text": {"type": "string"}, "w": {"type": "number"}, "h": {"type": "number"},
                 "font_size": {"type": "number"}, "fill": color.clone(), "stroke": color.clone()})), &["geom"])}),
-        json!({"name": "add_connector", "description": "Relie deux objets par une flèche qui les suit quand ils bougent (ids renvoyés par add_shape ou describe_board).",
+        json!({"name": "add_connector", "description": "Connects two objects with an arrow that follows them when they move (ids returned by add_shape or describe_board).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "from": {"type": "string"}, "to": {"type": "string"},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"]},
-                "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Pointes de flèche (défaut : end)."},
+                "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Arrowheads (default: end)."},
                 "label": {"type": "string"}, "stroke": color.clone()}), &["from", "to"])}),
-        json!({"name": "add_table", "description": "Ajoute un tableau de cellules ; `rows` est une liste de lignes (listes de textes). La première ligne est l'en-tête.",
+        json!({"name": "add_table", "description": "Adds a table of cells; `rows` is a list of rows (lists of texts). The first row is the header.",
             "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}})), &["rows"])}),
-        json!({"name": "add_code_block", "description": "Ajoute un bloc de code (police à chasse fixe, fond sombre, coloration syntaxique).",
+        json!({"name": "add_code_block", "description": "Adds a code block (monospace font, dark background, syntax highlighting).",
             "inputSchema": obj(pos_props(json!({"code": {"type": "string"}})), &["code"])}),
-        json!({"name": "add_formula", "description": "Ajoute une formule LaTeX (mode mathématique) composée comme en TeX. Erreur si le LaTeX n'est pas géré.",
+        json!({"name": "add_formula", "description": "Adds a LaTeX formula (math mode) typeset the way TeX does. Errors if the LaTeX is not supported.",
             "inputSchema": obj(pos_props(json!({"latex": {"type": "string"}, "color": color.clone()})), &["latex"])}),
-        json!({"name": "import_mermaid", "description": "Ajoute un diagramme Mermaid (flowchart/graph, stateDiagram, sequenceDiagram) avec mise en page automatique. Renvoie les ids créés.",
-            "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Créer une nouvelle page pour le diagramme."}})), &["mermaid"])}),
-        json!({"name": "update_object", "description": "Modifie un objet : texte, position (coin supérieur gauche), taille (formes), couleurs.",
+        json!({"name": "import_mermaid", "description": "Adds a Mermaid diagram (flowchart/graph, stateDiagram, sequenceDiagram) with automatic layout. Returns the ids created.",
+            "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Create a new page for the diagram."}})), &["mermaid"])}),
+        json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string"},
                 "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
                 "fill": color.clone(), "stroke": color.clone()}), &["id"])}),
-        json!({"name": "delete_object", "description": "Supprime un objet (les connecteurs qui y étaient liés restent, détachés).",
+        json!({"name": "delete_object", "description": "Deletes an object (connectors that were bound to it remain, detached).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}}), &["id"])}),
-        json!({"name": "auto_layout", "description": "Réorganise les formes reliées par des connecteurs en graphe en couches.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Défaut : TB."}}), &[])}),
-        json!({"name": "add_page", "description": "Ajoute une page. Renvoie son numéro.",
+        json!({"name": "auto_layout", "description": "Rearranges the shapes joined by connectors into a layered graph.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."}}), &[])}),
+        json!({"name": "add_page", "description": "Adds a page. Returns its number.",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
-        json!({"name": "export", "description": "Exporte une page vers un fichier ; le format est choisi par l'extension de `output` : .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard.json.",
+        json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard.json.",
             "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop()}), &["output"])}),
     ]
 }
@@ -83,7 +83,7 @@ pub fn list() -> Vec<Value> {
 /* ------------------------------------------------------------ arguments */
 
 fn s<'a>(a: &'a Value, k: &str) -> Res<&'a str> {
-    a.get(k).and_then(Value::as_str).ok_or_else(|| format!("paramètre texte « {k} » manquant"))
+    a.get(k).and_then(Value::as_str).ok_or_else(|| format!("missing text parameter \"{k}\""))
 }
 fn os<'a>(a: &'a Value, k: &str) -> Option<&'a str> {
     a.get(k).and_then(Value::as_str)
@@ -94,25 +94,25 @@ fn of(a: &Value, k: &str) -> Option<f64> {
 fn ocolor(a: &Value, k: &str) -> Res<Option<Color>> {
     match os(a, k) {
         None => Ok(None),
-        Some(c) => Color::parse(c).map(Some).ok_or_else(|| format!("couleur invalide « {c} » (attendu #rrggbb ou ink)")),
+        Some(c) => Color::parse(c).map(Some).ok_or_else(|| format!("invalid color \"{c}\" (expected #rrggbb or ink)")),
     }
 }
 
-/// Résout un chemin, confiné à la racine du serveur si elle est définie (les liens et `..` sont neutralisés par canonicalisation du dossier parent).
+/// Resolves a path, confined to the server root when one is set (links and `..` are neutralized by canonicalizing the parent folder).
 fn resolve(srv: &Server, p: &str) -> Res<PathBuf> {
     let path = PathBuf::from(p);
     let Some(root) = &srv.root else { return Ok(path) };
-    let root = root.canonicalize().map_err(|e| format!("racine inaccessible : {e}"))?;
+    let root = root.canonicalize().map_err(|e| format!("root not accessible: {e}"))?;
     let abs = if path.is_absolute() { path } else { root.join(path) };
-    let parent = abs.parent().ok_or("chemin invalide")?;
-    let parent = parent.canonicalize().map_err(|e| format!("dossier inaccessible ({}) : {e}", parent.display()))?;
+    let parent = abs.parent().ok_or("invalid path")?;
+    let parent = parent.canonicalize().map_err(|e| format!("folder not accessible ({}): {e}", parent.display()))?;
     if !parent.starts_with(&root) {
-        return Err(format!("chemin hors de la racine autorisée ({})", root.display()));
+        return Err(format!("path outside the allowed root ({})", root.display()));
     }
-    Ok(parent.join(abs.file_name().ok_or("chemin invalide")?))
+    Ok(parent.join(abs.file_name().ok_or("invalid path")?))
 }
 
-/// Nom d'un fichier natif : `.inkboard.json` (ou l'ancien `.tableau.json`).
+/// Name of a native file: `.inkboard.json` (or the legacy `.tableau.json`).
 pub fn is_native_name(lower: &str) -> bool {
     lower.ends_with(".inkboard.json") || lower.ends_with(".tableau.json")
 }
@@ -122,18 +122,18 @@ fn lower_name(p: &Path) -> String {
 }
 
 fn load(path: &Path) -> Res<Document> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("lecture de {} : {e}", path.display()))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    inkboard_formats::import_any(name, &content, &ApproxMeasurer).map(|i| i.doc).map_err(|e| format!("ouverture de {name} : {e}"))
+    inkboard_formats::import_any(name, &content, &ApproxMeasurer).map(|i| i.doc).map_err(|e| format!("opening {name}: {e}"))
 }
 
-/// Enregistrement : uniquement le format natif, pour ne jamais écraser un fichier d'un autre outil avec un autre contenu.
+/// Saving: native format only, so a file from another tool is never overwritten with different content.
 fn save(doc: &Document, path: &Path) -> Res<()> {
-    // `.tableau.json` : ancien nom (avant « Inkboard »), toujours accepté pour les fichiers existants
+    // `.tableau.json`: legacy name (before "Inkboard"), still accepted for existing files
     if !is_native_name(&lower_name(path)) {
-        return Err("les modifications s'enregistrent dans un fichier .inkboard.json (utilisez `export` pour les autres formats)".into());
+        return Err("changes are saved to an .inkboard.json file (use `export` for other formats)".into());
     }
-    inkboard_core::serial::save(doc, path).map_err(|e| format!("écriture de {} : {e}", path.display()))
+    inkboard_core::serial::save(doc, path).map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
 fn select_page(ed: &mut Editor, spec: Option<&Value>) -> Res<()> {
@@ -144,7 +144,7 @@ fn select_page(ed: &mut Editor, spec: Option<&Value>) -> Res<()> {
         Value::String(name) => pages.iter().find(|p| &p.name == name),
         _ => None,
     };
-    let id = found.ok_or_else(|| format!("page introuvable ({spec}) ; le tableau a {} page(s)", pages.len()))?.id.clone();
+    let id = found.ok_or_else(|| format!("page not found ({spec}); the board has {} page(s)", pages.len()))?.id.clone();
     ed.current = id;
     Ok(())
 }
@@ -157,15 +157,15 @@ fn origin(ed: &Editor, a: &Value) -> Pt {
 }
 
 fn find<'a>(ed: &'a Editor, id: &str) -> Res<&'a Object> {
-    ed.page().get(&Id(id.to_owned())).ok_or_else(|| format!("objet introuvable : {id}"))
+    ed.page().get(&Id(id.to_owned())).ok_or_else(|| format!("object not found: {id}"))
 }
 
 /* ----------------------------------------------------------------- appel */
 
-/// Outils qui ne modifient pas le tableau (le fichier n'est pas réécrit).
+/// Tools that do not modify the board (the file is not rewritten).
 const READ_ONLY: [&str; 3] = ["describe_board", "export", "board_changes"];
 
-/// Outils qui s'appliquent à un tableau ouvert (fichier ou application) ; `create_board` ne crée que des fichiers.
+/// Tools that apply to an open board (file or application); `create_board` only creates files.
 const EDITOR_TOOLS: [&str; 14] = [
     "describe_board",
     "board_changes",
@@ -183,20 +183,20 @@ const EDITOR_TOOLS: [&str; 14] = [
     "export",
 ];
 
-/// Applique un outil à un tableau en mémoire. Utilisé tel quel par le mode fichier et par l'application (mode direct, avec son historique d'annulation).
+/// Applies a tool to an in-memory board. Used as is by file mode and by the application (live mode, with its undo history).
 pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name == "save_board" {
         return Ok(json!({"saved": true}));
     }
     if !EDITOR_TOOLS.contains(&name) {
-        return Err(format!("outil inconnu : {name}"));
+        return Err(format!("unknown tool: {name}"));
     }
     if name != "add_page" {
         select_page(ed, a.get("page"))?;
     }
     match name {
         "describe_board" => describe(ed, a),
-        "board_changes" => Err("board_changes n'a de sens qu'avec le suivi des changements (apply_tracked)".into()),
+        "board_changes" => Err("board_changes only makes sense with change tracking (apply_tracked)".into()),
         "add_image" => add_image(ed, a),
         "add_shape" => add_shape(ed, a),
         "add_connector" => add_connector(ed, a),
@@ -216,7 +216,7 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
                 "LR" => Direction::LeftRight,
                 "BT" => Direction::BottomUp,
                 "RL" => Direction::RightLeft,
-                d => return Err(format!("direction inconnue « {d} » (TB, LR, BT, RL)")),
+                d => return Err(format!("unknown direction \"{d}\" (TB, LR, BT, RL)")),
             };
             let ids: Vec<Id> = ed.page().objects.iter().map(|o| o.id.clone()).collect();
             auto_layout(ed, &ids, dir);
@@ -228,18 +228,18 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
             Ok(json!({"page": n, "pages": n}))
         }
         "export" => export(ed, a),
-        _ => unreachable!("outil vérifié ci-dessus"),
+        _ => unreachable!("tool checked above"),
     }
 }
 
-/// Exécute l'outil `name` : dans l'application ouverte si elle est joignable et affiche ce tableau (mode direct), sinon sur le fichier `path`.
-/// Le résultat est un texte JSON destiné à l'agent.
+/// Runs the tool `name`: in the open application if it is reachable and shows this board (live mode), otherwise on the file `path`.
+/// The result is a JSON text intended for the agent.
 pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     if name != "create_board" && name != "save_board" && !EDITOR_TOOLS.contains(&name) {
-        return Err(format!("outil inconnu : {name}"));
+        return Err(format!("unknown tool: {name}"));
     }
     let mut a = a.clone();
-    // les chemins sont résolus (et confinés à la racine) ici, jamais dans l'application
+    // paths are resolved (and confined to the root) here, never in the application
     for key in ["path", "output"] {
         if let Some(p) = os(&a, key) {
             let abs = resolve(srv, p)?;
@@ -249,7 +249,7 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     if name == "add_image"
         && let Some(src) = os(&a, "source").map(str::to_owned)
     {
-        // le fichier est lu ici (confiné à la racine) ; seules les données sont transmises à l'application
+        // the file is read here (confined to the root); only the data is passed to the application
         let abs = resolve(srv, &src)?;
         let meta = std::fs::metadata(&abs).map_err(|e| format!("lecture de {} : {e}", abs.display()))?;
         if meta.len() as usize > IMAGE_MAX_BYTES {
@@ -269,16 +269,14 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     if name == "create_board" {
         let path = PathBuf::from(s(&a, "path")?);
         if path.exists() {
-            return Err(format!("{} existe déjà", path.display()));
+            return Err(format!("{} already exists", path.display()));
         }
-        let doc = Document::new(os(&a, "name").unwrap_or("Tableau"));
+        let doc = Document::new(os(&a, "name").unwrap_or("Board"));
         save(&doc, &path)?;
         return Ok(json!({"path": path.display().to_string(), "pages": 1}).to_string());
     }
     let Some(path) = os(&a, "path").map(PathBuf::from) else {
-        return Err(
-            "paramètre « path » manquant : aucun tableau n'est ouvert dans l'application (ou elle est fermée) ; indiquez le fichier .inkboard.json".into()
-        );
+        return Err("missing \"path\" parameter: no board is open in the application (or it is closed); give the .inkboard.json file".into());
     };
     let mut ed = Editor::new(load(&path)?);
     let mut tracker = srv.trackers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&path);
@@ -301,7 +299,7 @@ fn geom_of(g: &str) -> Res<BoxGeom> {
         "triangle" => BoxGeom::Triangle,
         "sticky" => BoxGeom::Sticky,
         "text" => BoxGeom::Text,
-        other => return Err(format!("forme inconnue « {other} » (rect, ellipse, diamond, triangle, sticky, text)")),
+        other => return Err(format!("unknown shape \"{other}\" (rect, ellipse, diamond, triangle, sticky, text)")),
     })
 }
 
@@ -330,10 +328,10 @@ fn end_json(e: &connector::End) -> Value {
     }
 }
 
-/// Résumé JSON d'un objet (id, type, position, texte, liens).
+/// JSON summary of an object (id, type, position, text, links).
 pub fn summary(o: &Object) -> Value {
     let mut v = json!({"id": o.id.0, "type": kind_name(o)});
-    let m = v.as_object_mut().expect("objet");
+    let m = v.as_object_mut().expect("object");
     if let Some(f) = o.frame() {
         m.insert("x".into(), json!(f.x.round()));
         m.insert("y".into(), json!(f.y.round()));
@@ -379,14 +377,14 @@ fn describe(ed: &mut Editor, _a: &Value) -> Res<Value> {
 
 /* ------------------------------------------------- changements faits par l'utilisateur */
 
-/// Empreinte du contenu d'un tableau : une valeur par objet, pour détecter ce qui a été ajouté, supprimé ou modifié.
+/// Fingerprint of a board's content: one value per object, to detect what was added, deleted or modified.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     objects: std::collections::HashMap<String, u64>,
     pages: Vec<(String, String)>,
 }
 
-/// Au-delà, le suivi des changements est désactivé (le coût est linéaire à chaque appel d'outil).
+/// Beyond that, change tracking is disabled (the cost is linear on every tool call).
 const TRACK_MAX_OBJECTS: usize = 20_000;
 
 impl Snapshot {
@@ -412,7 +410,7 @@ fn find_anywhere<'a>(ed: &'a Editor, id: &str) -> Option<&'a Object> {
     ed.doc.pages.iter().find_map(|p| p.objects.iter().find(|o| o.id.0 == id))
 }
 
-/// Différences entre la référence `old` et l'état courant.
+/// Differences between the baseline `old` and the current state.
 fn diff(old: &Snapshot, ed: &Editor) -> Value {
     let now = Snapshot::of(ed);
     let (mut added, mut modified, mut removed) = (Vec::new(), Vec::new(), Vec::new());
@@ -435,7 +433,7 @@ fn diff(old: &Snapshot, ed: &Editor) -> Value {
     })
 }
 
-/// Intègre à la référence les seules modifications faites par l'agent (`before` → `after`), pour que celles de l'utilisateur restent à signaler.
+/// Folds into the baseline only the changes made by the agent (`before` → `after`), so the user's changes remain to be reported.
 fn absorb(reference: &mut Snapshot, before: &Snapshot, after: &Snapshot) {
     for (id, h) in &after.objects {
         if before.objects.get(id) != Some(h) {
@@ -450,16 +448,16 @@ fn absorb(reference: &mut Snapshot, before: &Snapshot, after: &Snapshot) {
     }
 }
 
-/// Comme [`apply`], en suivant les changements : `board_changes` rapporte ce que l'utilisateur a modifié depuis le dernier regard de l'agent
-/// (appel de `describe_board` ou de `board_changes`) ; les modifications de l'agent lui-même ne sont pas rapportées.
+/// Like [`apply`], while tracking changes: `board_changes` reports what the user modified since the agent's last look
+/// (a `describe_board` or `board_changes` call); the agent's own changes are not reported.
 pub fn apply_tracked(ed: &mut Editor, name: &str, a: &Value, tracker: &mut Option<Snapshot>) -> Res<Value> {
     if Snapshot::too_big(ed) {
-        return if name == "board_changes" { Err("tableau trop volumineux pour le suivi des changements".into()) } else { apply(ed, name, a) };
+        return if name == "board_changes" { Err("board too large for change tracking".into()) } else { apply(ed, name, a) };
     }
     if name == "board_changes" {
         let out = match tracker {
             None => {
-                json!({"baseline": true, "message": "Référence enregistrée : les prochains appels signaleront les modifications faites ensuite par l'utilisateur."})
+                json!({"baseline": true, "message": "Baseline recorded: the next calls will report the changes the user makes afterwards."})
             }
             Some(old) => diff(old, ed),
         };
@@ -469,7 +467,7 @@ pub fn apply_tracked(ed: &mut Editor, name: &str, a: &Value, tracker: &mut Optio
     let before = Snapshot::of(ed);
     let r = apply(ed, name, a)?;
     let after = Snapshot::of(ed);
-    // première observation ou regard complet : l'état courant devient la référence ; sinon seules les modifications de l'agent sont absorbées
+    // first observation or full look: the current state becomes the baseline; otherwise only the agent's changes are absorbed
     match tracker.as_mut() {
         Some(t) if name != "describe_board" => absorb(t, &before, &after),
         _ => *tracker = Some(after),
@@ -479,10 +477,10 @@ pub fn apply_tracked(ed: &mut Editor, name: &str, a: &Value, tracker: &mut Optio
 
 /* ------------------------------------------------------------------ images */
 
-/// Taille maximale d'une image insérée.
+/// Maximum size of an inserted image.
 const IMAGE_MAX_BYTES: usize = 15 << 20;
 
-/// Type d'image reconnu d'après les premiers octets (le type annoncé par l'appelant n'est jamais cru).
+/// Image type recognized from the first bytes (the type declared by the caller is never trusted).
 fn sniff_image(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(&[0x89, b'P', b'N', b'G']) {
         Some("image/png")
@@ -499,7 +497,7 @@ fn sniff_image(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// Dimensions naturelles d'une image (pixels, ou unités du `viewBox` pour un SVG).
+/// Natural dimensions of an image (pixels, or `viewBox` units for an SVG).
 fn image_size(mime: &str, data: &[u8]) -> Option<(f64, f64)> {
     if mime == "image/svg+xml" {
         let t = std::str::from_utf8(data).ok()?;
@@ -513,14 +511,14 @@ fn image_size(mime: &str, data: &[u8]) -> Option<(f64, f64)> {
 
 fn add_image(ed: &mut Editor, a: &Value) -> Res<Value> {
     use base64::Engine;
-    let b64 = s(a, "data_base64").map_err(|_| "paramètre « source » (fichier image) ou « data_base64 » manquant".to_owned())?;
+    let b64 = s(a, "data_base64").map_err(|_| "missing \"source\" (image file) or \"data_base64\" parameter".to_owned())?;
     let data = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| format!("base64 invalide : {e}"))?;
     if data.len() > IMAGE_MAX_BYTES {
         return Err(format!("image trop volumineuse ({} Mio, maximum {})", data.len() >> 20, IMAGE_MAX_BYTES >> 20));
     }
-    let mime = sniff_image(&data).ok_or("format d'image non reconnu (PNG, JPEG, GIF, WebP ou SVG)")?;
+    let mime = sniff_image(&data).ok_or("unrecognized image format (PNG, JPEG, GIF, WebP or SVG)")?;
     let (nw, nh) = image_size(mime, &data).ok_or("image illisible (dimensions introuvables)")?;
-    // taille d'affichage : demandée (le rapport est conservé si une seule dimension est donnée), sinon naturelle réduite à 600 au plus
+    // display size: requested (the ratio is kept when only one dimension is given), otherwise natural, reduced to at most 600
     let (w, h) = match (of(a, "w"), of(a, "h")) {
         (Some(w), Some(h)) => (w, h),
         (Some(w), None) => (w, w * nh / nw),
@@ -531,7 +529,7 @@ fn add_image(ed: &mut Editor, a: &Value) -> Res<Value> {
         }
     };
     if w < 1.0 || h < 1.0 || w > 20_000.0 || h > 20_000.0 {
-        return Err("taille d'affichage invalide (entre 1 et 20 000)".into());
+        return Err("invalid display size (between 1 and 20,000)".into());
     }
     let aid = ed.doc.add_asset(mime, data);
     let at = origin(ed, a);
@@ -567,7 +565,7 @@ fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
         b.fit(&ApproxMeasurer);
     }
     let id = ed.insert(o);
-    let f = ed.page().get(&id).and_then(Object::frame).ok_or("objet non créé")?;
+    let f = ed.page().get(&id).and_then(Object::frame).ok_or("object not created")?;
     Ok(json!({"id": id.0, "x": f.x.round(), "y": f.y.round(), "w": f.w.round(), "h": f.h.round()}))
 }
 
@@ -575,7 +573,7 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
     let (from, to) = (find(ed, s(a, "from")?)?, find(ed, s(a, "to")?)?);
     for o in [from, to] {
         if !o.is_attachable() {
-            return Err(format!("l'objet {} ne peut pas être relié (formes, tableaux et images seulement)", o.id.0));
+            return Err(format!("object {} cannot be connected (shapes, tables and images only)", o.id.0));
         }
     }
     let mut c = Connector::new(End::bound(from.id.clone()), End::bound(to.id.clone()));
@@ -583,14 +581,14 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
         "straight" => Route::Straight,
         "elbow" => Route::Elbow,
         "curve" => Route::Curve,
-        r => return Err(format!("tracé inconnu « {r} » (straight, elbow, curve)")),
+        r => return Err(format!("unknown route \"{r}\" (straight, elbow, curve)")),
     };
     (c.head_start, c.head_end) = match os(a, "arrow").unwrap_or("end") {
         "end" => (Arrowhead::None, Arrowhead::Arrow),
         "start" => (Arrowhead::Arrow, Arrowhead::None),
         "both" => (Arrowhead::Arrow, Arrowhead::Arrow),
         "none" => (Arrowhead::None, Arrowhead::None),
-        r => return Err(format!("pointe inconnue « {r} » (end, start, both, none)")),
+        r => return Err(format!("unknown arrowhead \"{r}\" (end, start, both, none)")),
     };
     if let Some(l) = os(a, "label").filter(|l| !l.is_empty()) {
         c.label = Some(Label::new(l, 16.0, Align::Center));
@@ -604,17 +602,17 @@ fn add_table(ed: &mut Editor, a: &Value) -> Res<Value> {
     let rows: Vec<Vec<String>> = a
         .get("rows")
         .and_then(Value::as_array)
-        .ok_or("paramètre « rows » manquant")?
+        .ok_or("missing \"rows\" parameter")?
         .iter()
         .map(|r| {
             r.as_array()
                 .map(|r| r.iter().map(|c| c.as_str().map_or_else(|| c.to_string(), str::to_owned)).collect())
-                .ok_or("chaque ligne de « rows » doit être une liste")
+                .ok_or("each row of \"rows\" must be a list")
         })
         .collect::<Result<_, _>>()?;
     let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
     if rows.is_empty() || cols == 0 || rows.len() > 200 || cols > 50 {
-        return Err("« rows » doit contenir de 1 à 200 lignes et de 1 à 50 colonnes".into());
+        return Err("\"rows\" must contain 1 to 200 rows and 1 to 50 columns".into());
     }
     let at = origin(ed, a);
     let mut t = Table::new(at, rows.len(), cols);
@@ -626,7 +624,7 @@ fn add_table(ed: &mut Editor, a: &Value) -> Res<Value> {
             }
         }
     }
-    // largeur de colonne d'après le texte le plus long (au moins la largeur par défaut)
+    // column width from the longest text (at least the default width)
     for c in 0..cols {
         let widest = rows.iter().filter_map(|r| r.get(c)).map(|t| ApproxMeasurer.width(t, FontFamily::Sans, 18.0, true)).fold(0.0, f64::max);
         t.col_w[c] = t.col_w[c].max((widest + 28.0).ceil());
@@ -664,7 +662,7 @@ fn add_formula(ed: &mut Editor, a: &Value) -> Res<Value> {
 fn import_mermaid(ed: &mut Editor, a: &Value) -> Res<Value> {
     let mut objs = inkboard_formats::mermaid::to_objects(s(a, "mermaid")?, &ApproxMeasurer).map_err(|e| e.to_string())?;
     if objs.is_empty() {
-        return Err("le diagramme Mermaid est vide".into());
+        return Err("the Mermaid diagram is empty".into());
     }
     if a.get("new_page").and_then(Value::as_bool).unwrap_or(false) {
         let n = ed.doc.pages.len() + 1;
@@ -712,14 +710,14 @@ fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
                     c.label = (!t.is_empty()).then(|| Label::new(t, 16.0, Align::Center));
                 }
             }
-            _ if text.is_some() => warn.push("le texte n'est modifiable que pour les formes et les connecteurs"),
+            _ if text.is_some() => warn.push("text can only be changed on shapes and connectors"),
             _ => {}
         }
         if x.is_some() || y.is_some() {
             if let Some(f) = o.frame().map(|f| f.aabb()).or_else(|| matches!(o.kind, Kind::Table(_)).then(|| table_rect(o))) {
                 o.translate(Pt::new(x.map_or(0.0, |x| x - f.x), y.map_or(0.0, |y| y - f.y)));
             } else {
-                warn.push("cet objet ne peut pas être déplacé par x/y");
+                warn.push("this object cannot be moved with x/y");
             }
         }
     });
@@ -737,11 +735,11 @@ fn export(ed: &mut Editor, a: &Value) -> Res<Value> {
     let output = PathBuf::from(s(a, "output")?);
     let name = lower_name(&output);
     if !EXPORTS.iter().any(|e| name.ends_with(e)) {
-        return Err(format!("extension de sortie non gérée (attendu : {})", EXPORTS.join(", ")));
+        return Err(format!("unsupported output extension (expected: {})", EXPORTS.join(", ")));
     }
     let doc = &ed.doc;
     let page = ed.page();
-    let svg = || export_svg(doc, page, None, &ApproxMeasurer, &SvgOptions::default()).ok_or_else(|| "la page est vide : rien à exporter".to_owned());
+    let svg = || export_svg(doc, page, None, &ApproxMeasurer, &SvgOptions::default()).ok_or_else(|| "the page is empty: nothing to export".to_owned());
     let bytes: Vec<u8> = if name.ends_with(".svg") {
         svg()?.into_bytes()
     } else if name.ends_with(".png") {
@@ -757,6 +755,6 @@ fn export(ed: &mut Editor, a: &Value) -> Res<Value> {
     } else {
         inkboard_core::serial::to_json(doc, true).into_bytes()
     };
-    std::fs::write(&output, &bytes).map_err(|e| format!("écriture de {} : {e}", output.display()))?;
+    std::fs::write(&output, &bytes).map_err(|e| format!("writing {}: {e}", output.display()))?;
     Ok(json!({"output": output.display().to_string(), "bytes": bytes.len()}))
 }

@@ -1,4 +1,4 @@
-//! Mathématiques des poignées : redimensionner, tourner, magnétisme. Testées hors interface.
+//! Handle math: resizing, rotating, snapping. Tested outside the interface.
 
 use crate::geom::{Frame, Pt, Rect};
 use crate::model::Object;
@@ -32,15 +32,15 @@ impl Handle {
             Handle::NW => (-1, -1),
         }
     }
-    /// Position de la poignée dans le repère local (origine au centre).
+    /// Handle position in the local frame (origin at the center).
     pub fn local(self, w: f64, h: f64) -> Pt {
         let (dx, dy) = self.dirs();
         Pt::new(f64::from(dx) * w / 2.0, f64::from(dy) * h / 2.0)
     }
 }
 
-/// Nouveau cadre après avoir tiré la poignée `h` jusqu'au point monde `pointer`.
-/// Le côté ou le coin opposé reste fixe ; fonctionne aussi pour un cadre tourné.
+/// New frame after dragging handle `h` to the world point `pointer`.
+/// The opposite side or corner stays fixed; also works for a rotated frame.
 pub fn resize_frame(orig: &Frame, h: Handle, pointer: Pt, keep_ratio: bool, min: f64) -> Frame {
     let p = orig.to_local(pointer);
     let (dx, dy) = h.dirs();
@@ -71,37 +71,37 @@ pub fn resize_frame(orig: &Frame, h: Handle, pointer: Pt, keep_ratio: bool, min:
     Frame { x: c.x - nw / 2.0, y: c.y - nh / 2.0, w: nw, h: nh, angle: orig.angle }
 }
 
-/// Même opération pour une boîte non tournée (sélection multiple).
+/// Same operation for a non-rotated box (multiple selection).
 pub fn resize_rect(orig: Rect, h: Handle, pointer: Pt, keep_ratio: bool, min: f64) -> Rect {
     resize_frame(&Frame::from_rect(orig), h, pointer, keep_ratio, min).rect()
 }
 
-/// Redimensionne un ensemble d'objets d'une boîte `from` vers une boîte `to`.
+/// Resizes a set of objects from a box `from` to a box `to`.
 pub fn scale_objects(objs: &mut [Object], from: Rect, to: Rect) {
     let (sx, sy) = (to.w / from.w.max(1e-9), to.h / from.h.max(1e-9));
     for o in objs {
-        // mise à l'échelle autour du coin haut-gauche de l'ancienne boîte, puis translation
+        // scale around the top-left corner of the old box, then translate
         o.scale_about(Pt::new(from.x, from.y), sx, sy);
         o.translate(Pt::new(to.x - from.x, to.y - from.y));
     }
 }
 
-/// Angle tel que la poignée de rotation (au-dessus du cadre) suive le pointeur.
+/// Angle such that the rotation handle (above the frame) follows the pointer.
 pub fn rotation_toward(center: Pt, pointer: Pt) -> f64 {
     (pointer.y - center.y).atan2(pointer.x - center.x) + std::f64::consts::FRAC_PI_2
 }
 
-/// Arrondit un angle au multiple de `step` le plus proche.
+/// Rounds an angle to the nearest multiple of `step`.
 pub fn snap_angle(a: f64, step: f64) -> f64 {
     (a / step).round() * step
 }
 
-/// Arrondit un point sur une grille.
+/// Snaps a point to a grid.
 pub fn snap_point(p: Pt, grid: f64) -> Pt {
     Pt::new((p.x / grid).round() * grid, (p.y / grid).round() * grid)
 }
 
-/// Contraint un déplacement à un angle multiple de `step` (ex. 15°) depuis `from`.
+/// Constrains a move to an angle that is a multiple of `step` (e.g. 15°) from `from`.
 pub fn constrain_angle(from: Pt, to: Pt, step: f64) -> Pt {
     let d = to - from;
     let a = snap_angle(d.y.atan2(d.x), step);
@@ -150,12 +150,12 @@ mod tests {
     #[test]
     fn rotated_frame_resizes_along_its_own_axes() {
         let f = Frame { x: 0.0, y: 0.0, w: 100.0, h: 50.0, angle: std::f64::consts::FRAC_PI_2 };
-        // tourné de 90° : l'axe local x pointe vers le bas ; tirer E vers (cx, cy + 100) allonge la largeur
+        // rotated by 90°: the local x axis points down; dragging E to (cx, cy + 100) lengthens the width
         let c = f.center();
         let n = resize_frame(&f, Handle::E, Pt::new(c.x, c.y + 100.0), false, 4.0);
         assert!((n.w - 150.0).abs() < 1e-9, "w = {}", n.w);
         assert!((n.h - 50.0).abs() < 1e-9);
-        // le bord opposé (ouest local = haut à l'écran) n'a pas bougé
+        // the opposite edge (local west = top on screen) has not moved
         let west_before = f.to_world(Pt::new(-50.0, 0.0));
         let west_after = n.to_world(Pt::new(-n.w / 2.0, 0.0));
         assert!(west_before.dist(west_after) < 1e-9);
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn rotation_handle_math() {
         let c = Pt::new(0.0, 0.0);
-        assert!(rotation_toward(c, Pt::new(0.0, -100.0)).abs() < 1e-9, "poignée au-dessus = angle nul");
+        assert!(rotation_toward(c, Pt::new(0.0, -100.0)).abs() < 1e-9, "handle above = zero angle");
         assert!((rotation_toward(c, Pt::new(100.0, 0.0)) - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
         assert!((snap_angle(0.30, std::f64::consts::PI / 12.0) - std::f64::consts::PI / 12.0).abs() < 1e-9);
     }

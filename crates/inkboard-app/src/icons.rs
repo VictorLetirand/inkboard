@@ -1,11 +1,11 @@
-//! Icônes de l'interface : le jeu d'icônes SVG (trait de 1,8 px, bouts arrondis) du prototype web, rastérisé une fois en texture blanche
-//! puis teinté à l'affichage avec la couleur voulue (texte, accent, grisé…).
+//! Interface icons: the web prototype's SVG icon set (1.8 px stroke, rounded caps), rasterized once into a white texture
+//! then tinted when drawn with the wanted color (text, accent, dimmed…).
 
 use eframe::egui::{self, Color32, Rect, TextureHandle, TextureOptions, pos2};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Contenu SVG (viewBox 24×24) de chaque icône.
+/// SVG content (24×24 viewBox) of each icon.
 const ICONS: &[(&str, &str)] = &[
     ("menu", r#"<path d="M4 7h16M4 12h16M4 17h16"/>"#),
     ("select", r#"<path d="M5 3l14 8-6 2-3 6z"/>"#),
@@ -80,7 +80,7 @@ const ICONS: &[(&str, &str)] = &[
     ("check", r#"<path d="M5 12.5l4.5 4.5L19 7.5"/>"#),
 ];
 
-/// Définition de rastérisation : 3 pixels par unité du viewBox (net jusqu'à une icône de 72 px).
+/// Rasterization resolution: 3 pixels per viewBox unit (sharp up to a 72 px icon).
 const SCALE: f32 = 3.0;
 
 fn svg_of(inner: &str) -> String {
@@ -89,11 +89,11 @@ fn svg_of(inner: &str) -> String {
     )
 }
 
-/// Textures déjà créées (une par contexte egui : un contexte de test ne partage rien avec la fenêtre réelle).
+/// Textures already created (one per egui context: a test context shares nothing with the real window).
 #[derive(Clone, Default)]
 struct Cache(Arc<Mutex<HashMap<&'static str, TextureHandle>>>);
 
-/// Texture blanche de l'icône `name` (`None` si le nom est inconnu).
+/// White texture of icon `name` (`None` when the name is unknown).
 pub fn texture(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
     let (key, inner) = ICONS.iter().find(|(n, _)| *n == name)?;
     let cache: Cache = ctx.data_mut(|d| d.get_temp_mut_or_default::<Cache>(egui::Id::new("wb-icons")).clone());
@@ -108,14 +108,14 @@ pub fn texture(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
     Some(t)
 }
 
-/// Dessine l'icône `name` dans `rect`, teintée de `color`.
+/// Draws icon `name` in `rect`, tinted with `color`.
 pub fn paint(painter: &egui::Painter, name: &str, rect: Rect, color: Color32) {
     if let Some(t) = texture(painter.ctx(), name) {
         painter.image(t.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), color);
     }
 }
 
-/// Noms des icônes disponibles (pour les tests).
+/// Names of the available icons (for tests).
 #[cfg(test)]
 pub fn names() -> impl Iterator<Item = &'static str> {
     ICONS.iter().map(|(n, _)| *n)
@@ -131,7 +131,7 @@ mod tests {
             let r = inkboard_formats::raster::svg_to_raster(&svg_of(inner), SCALE, false).unwrap_or_else(|e| panic!("{name} : {e}"));
             assert_eq!((r.width, r.height), (72, 72), "{name}");
             let opaque = r.rgba_premultiplied.chunks(4).filter(|p| p[3] > 0).count();
-            assert!(opaque > 60, "{name} : icône vide ({opaque} pixels)");
+            assert!(opaque > 60, "{name}: empty icon ({opaque} pixels)");
         }
     }
 

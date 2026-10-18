@@ -1,4 +1,4 @@
-//! Export SVG d'une page (ou d'une sélection), sans dépendance à une interface.
+//! SVG export of a page (or a selection), with no UI dependency.
 
 use crate::connector::{Arrowhead, head_points, path_midpoint};
 use crate::geom::{Pt, Rect};
@@ -60,7 +60,7 @@ impl Ctx<'_> {
         c.map_or_else(|| "none".to_owned(), |c| self.col(c))
     }
 
-    /// Bloc de texte : lignes centrées verticalement dans `area` (repère courant).
+    /// Text block: lines vertically centered in `area` (current frame).
     fn text(&self, lay: &TextLayout, area: Rect, label: &Label, color: Color, bold_all: bool) -> String {
         let mut out = String::new();
         let li = lay.line_h;
@@ -183,7 +183,7 @@ impl Ctx<'_> {
         format!(r#"<g transform="translate({} {}){rot}"{op}>{inner}</g>"#, n(c.x), n(c.y))
     }
 
-    /// Trait à pression de stylet : polygone plein dont la largeur suit la pression.
+    /// Pen-pressure stroke: a filled polygon whose width follows the pressure.
     fn pressure_pen(&self, o: &Object, pts: &[Pt], pressures: &[f32]) -> String {
         let st = &o.style;
         let (p, q) = crate::pen::smooth(pts, Some(pressures), 4);
@@ -336,7 +336,7 @@ impl Ctx<'_> {
             Kind::Image(i) => {
                 let Some(a) = self.doc.assets.get(&i.asset) else { return String::new() };
                 let f = i.frame;
-                // formule : SVG blanc qu'on teinte avec la couleur de trait de l'objet
+                // formula: white SVG tinted with the object's stroke color
                 let tinted;
                 let data: &[u8] = if i.latex.is_some() && a.mime == "image/svg+xml" {
                     let (r, g, b) = o.style.stroke.resolve(self.dark);
@@ -364,7 +364,7 @@ impl Ctx<'_> {
     }
 }
 
-/// Exporte une page (ou seulement `ids`) en SVG. `None` si rien à exporter.
+/// Exports a page (or only `ids`) to SVG. `None` when there is nothing to export.
 pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer, opts: &SvgOptions) -> Option<String> {
     let objs: Vec<&Object> = page.objects.iter().filter(|o| page.is_visible(o) && ids.is_none_or(|ids| ids.contains(&o.id))).collect();
     let mut bounds = objs.iter().map(|o| page.bounds(o)).reduce(|a, b| a.union(&b))?;
@@ -395,7 +395,7 @@ pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer,
     Some(s)
 }
 
-/// Version rapide avec la mesure approximative (outils en ligne de commande, tests).
+/// Quick version with the approximate measurer (command-line tools, tests).
 pub fn export_approx(doc: &Document, page: &Page) -> Option<String> {
     export(doc, page, None, &crate::text::ApproxMeasurer, &SvgOptions::default())
 }
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn exports_wellformed_svg_with_all_kinds() {
-        let mut label = Label::new("Bonjour <&> \"monde\"", 20.0, Align::Center);
+        let mut label = Label::new("Hello <&> \"world\"", 20.0, Align::Center);
         label.text.restyle(0, 3, |s| {
             s.bold = true;
             s.highlight = Some(Color::rgb(255, 236, 153));
@@ -440,11 +440,11 @@ mod tests {
         );
         let mut conn = Connector::new(End::bound(a.id.clone()), End::bound(b.id.clone()));
         conn.head_start = Arrowhead::Dot;
-        conn.label = Some(Label::new("oui", 14.0, Align::Center));
+        conn.label = Some(Label::new("yes", 14.0, Align::Center));
         let c = Object::new(Kind::Connector(conn), Style::default());
         let pen = Object::new_pen(vec![Pt::new(0.0, 200.0), Pt::new(20.0, 230.0), Pt::new(50.0, 190.0)], false, Style::default());
         let mut t = Table::new(Pt::new(0.0, 300.0), 2, 2);
-        t.cell_mut(0, 0).unwrap().set_plain("Titre");
+        t.cell_mut(0, 0).unwrap().set_plain("Title");
         let tb = Object::new(Kind::Table(t), Style { width: 2.0, ..Default::default() });
         let d = doc_with(vec![a, b, c, pen, tb]);
         let svg = export_approx(&d, &d.pages[0]).unwrap();
@@ -455,7 +455,7 @@ mod tests {
         assert!(svg.contains("paint-order=\"stroke\""));
         assert!(svg.contains("rotate("));
         assert!(svg.ends_with("</svg>"));
-        // équilibrage des balises <g>
+        // balanced <g> tags
         assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
     }
 
@@ -469,7 +469,7 @@ mod tests {
         let svg = export(&d, &d.pages[0], Some(&[ida]), &crate::text::ApproxMeasurer, &SvgOptions { padding: 10.0, transparent: true }).unwrap();
         assert_eq!(svg.matches("<rect").count(), 1);
         assert!(svg.contains("#f1f3f5"));
-        assert!(!svg.contains("#101114"), "fond transparent : pas de rectangle de fond");
+        assert!(!svg.contains("#101114"), "transparent background: no background rectangle");
     }
 
     #[test]
@@ -488,7 +488,7 @@ mod tests {
         let d = doc_with(vec![o]);
         let svg = export_approx(&d, &d.pages[0]).unwrap();
         assert!(svg.contains("<path d=\"M") && svg.contains("Z\"/>") && svg.contains("<circle"), "{svg}");
-        assert!(!svg.contains("stroke-width"), "plein, pas de trait de largeur constante");
+        assert!(!svg.contains("stroke-width"), "filled, no constant-width stroke");
         let d2 = doc_with(vec![plain]);
         assert!(export_approx(&d2, &d2.pages[0]).unwrap().contains("stroke-width"));
     }

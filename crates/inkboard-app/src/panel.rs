@@ -1,8 +1,9 @@
-//! Panneau de style flottant (à gauche), comme `#panel` du prototype web : pastilles de couleur, boutons segmentés, curseur d'opacité,
-//! actions sur la sélection. Il n'apparaît que lorsqu'il y a quelque chose à régler (outil de dessin ou objets sélectionnés).
+//! Floating style panel (on the left), like `#panel` of the web prototype: color swatches, segmented buttons, opacity slider,
+//! actions on the selection. It only appears when there is something to set (a drawing tool or selected objects).
 
 use crate::app::App;
 use crate::fonts;
+use crate::i18n::{t, tr};
 use crate::icons;
 use crate::theme::{self, Palette};
 use crate::tools::Tool;
@@ -13,10 +14,10 @@ use inkboard_core::style::{FILLS, PALETTE};
 use inkboard_core::text::Format;
 use inkboard_core::*;
 
-/// Largeur du panneau (`#panel{width:226px}`).
+/// Panel width (`#panel{width:226px}`).
 const WIDTH: f32 = 226.0;
 
-/// Tracé d'une ligne d'épaisseur `w` (aperçu des boutons d'épaisseur et de style).
+/// Draws a line of thickness `w` (preview for the thickness and style buttons).
 fn line_preview(p: &Painter, r: ERect, w: f32, dash: Dash, color: Color32) {
     let (a, b) = (r.center() - vec2(8.0, 0.0), r.center() + vec2(8.0, 0.0));
     let stroke = Stroke::new(w.clamp(0.8, 9.0), color);
@@ -43,7 +44,7 @@ fn text_in(p: &Painter, text: &str, r: ERect, c: Color32, font: egui::FontId) {
     p.text(r.center(), Align2::CENTER_CENTER, text, font, c);
 }
 
-/// Pastille de couleur du prototype : coins de 6 px, bordure, cas spéciaux « aucune » (barre rouge) et « encre » (diagonale sombre / claire).
+/// The prototype's color swatch: 6 px corners, border, special cases "none" (red bar) and "ink" (dark / light diagonal).
 fn swatch(ui: &mut Ui, c: Option<Color>, selected: bool, dark: bool) -> Response {
     let p = theme::current(ui.ctx());
     let (resp, r) = theme::swatch_frame(ui, selected);
@@ -66,11 +67,11 @@ fn swatch(ui: &mut Ui, c: Option<Color>, selected: bool, dark: bool) -> Response
     resp
 }
 
-/// Pastille « couleur personnalisée » (arc-en-ciel) ouvrant un sélecteur de couleur ; renvoie la couleur choisie à chaque modification.
+/// "Custom color" swatch (rainbow) opening a color picker; returns the chosen color on every change.
 fn custom_swatch(ui: &mut Ui, current: [u8; 3]) -> Option<[u8; 3]> {
     let p = theme::current(ui.ctx());
     let (resp, r) = theme::swatch_frame(ui, false);
-    // disque arc-en-ciel : 6 secteurs
+    // rainbow disc: 6 sectors
     let c = r.center();
     let radius = 10.0;
     let cols = [(255, 0, 0), (255, 255, 0), (0, 255, 0), (0, 255, 255), (0, 0, 255), (255, 0, 255)];
@@ -88,7 +89,7 @@ fn custom_swatch(ui: &mut Ui, current: [u8; 3]) -> Option<[u8; 3]> {
     }
     ui.painter().circle_stroke(c, radius, Stroke::new(1.0_f32, p.bd));
     let mut out = None;
-    egui::Popup::from_toggle_button_response(&resp.clone().on_hover_text("Couleur personnalisée"))
+    egui::Popup::from_toggle_button_response(&resp.clone().on_hover_text(t("Custom color")))
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             let mut rgb = current;
@@ -103,7 +104,7 @@ fn custom_swatch(ui: &mut Ui, current: [u8; 3]) -> Option<[u8; 3]> {
     out
 }
 
-/// Ligne de réglage : étiquette grisée au-dessus du contenu.
+/// Setting row: dimmed label above the content.
 fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
     theme::field_label(ui, label);
     ui.add_space(-2.0);
@@ -114,7 +115,7 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
     ui.add_space(6.0);
 }
 
-/// Réglages d'une rangée de pastilles de couleur.
+/// Settings of a row of color swatches.
 struct Swatches<'a> {
     label: &'a str,
     none: bool,
@@ -129,11 +130,14 @@ fn swatches(ui: &mut Ui, set: Swatches, mut pick: impl FnMut(Option<Color>), mut
     ui.add_space(-2.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
-        if none && swatch(ui, None, current.is_none(), dark).on_hover_text("Aucune").clicked() {
+        if none && swatch(ui, None, current.is_none(), dark).on_hover_text(t("None")).clicked() {
             pick(None);
         }
         for c in list {
-            if swatch(ui, Some(*c), current == Some(*c), dark).on_hover_text(if *c == Color::Ink { "Encre (suit le thème)" } else { "" }).clicked() {
+            if swatch(ui, Some(*c), current == Some(*c), dark)
+                .on_hover_text(if *c == Color::Ink { t("Ink (follows the theme)") } else { String::new() })
+                .clicked()
+            {
                 pick(Some(*c));
             }
         }
@@ -148,7 +152,7 @@ fn swatches(ui: &mut Ui, set: Swatches, mut pick: impl FnMut(Option<Color>), mut
     ui.add_space(6.0);
 }
 
-/// Le panneau a-t-il quelque chose à montrer ?
+/// Does the panel have anything to show?
 pub fn visible(app: &App) -> bool {
     app.layers_open || !app.sel.is_empty() || drawing_tool(app.tool) || app.editing.is_some()
 }
@@ -157,7 +161,7 @@ fn drawing_tool(t: Tool) -> bool {
     matches!(t, Tool::Pen | Tool::Highlighter | Tool::Shape(_) | Tool::Line | Tool::Arrow | Tool::Text | Tool::Sticky | Tool::Table)
 }
 
-/// Affiche le panneau flottant s'il y a quelque chose à régler.
+/// Shows the floating panel when there is something to set.
 pub fn show(app: &mut App, ctx: &egui::Context, narrow: bool) {
     if !visible(app) {
         return;
@@ -203,11 +207,11 @@ fn props(app: &mut App, ui: &mut Ui) {
     if has_sel || drawing {
         // ---- couleurs
         let stroke_label = if only_text || (!has_sel && app.tool == Tool::Text) {
-            "Couleur du texte"
+            "Text color"
         } else if only_pen || matches!(app.tool, Tool::Pen | Tool::Highlighter) {
-            "Couleur"
+            "Color"
         } else {
-            "Contour"
+            "Outline"
         };
         let mut set_stroke: Option<Color> = None;
         swatches(
@@ -225,9 +229,9 @@ fn props(app: &mut App, ui: &mut Ui) {
             app.ed.update_many(&sel_ids, |o| o.style.stroke = c);
         }
         let fill_label = if matches!(app.tool, Tool::Sticky) || (has_sel && objs.iter().all(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky))) {
-            "Couleur de la note"
+            "Note color"
         } else {
-            "Remplissage"
+            "Fill"
         };
         if !only_pen && !highlighter && !matches!(app.tool, Tool::Pen | Tool::Highlighter | Tool::Line | Tool::Arrow) && !connectors_only(&objs) {
             let mut set_fill: Option<Option<Color>> = None;
@@ -247,7 +251,7 @@ fn props(app: &mut App, ui: &mut Ui) {
             }
         }
 
-        // ---- épaisseur et style de trait
+        // ---- thickness and stroke style
         if !only_text {
             let widths: &[f32] = if highlighter {
                 &[10.0, 18.0, 28.0, 40.0]
@@ -256,14 +260,14 @@ fn props(app: &mut App, ui: &mut Ui) {
             } else {
                 &[0.0, 1.5, 3.0, 6.0, 10.0]
             };
-            theme::field_label(ui, "Épaisseur");
+            theme::field_label(ui, "Thickness");
             ui.add_space(-2.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
                 for &w in widths {
                     let on = (style.width as f32 - w).abs() < 0.26;
-                    let tip = if w == 0.0 { "Sans contour".to_owned() } else { format!("Épaisseur {w}") };
-                    let resp = theme::seg_button(ui, on, &tip, |p, r, c| {
+                    let tip = if w == 0.0 { t("No outline") } else { tr!("Thickness {}", w) };
+                    let resp = theme::seg_button_raw(ui, on, &tip, |p, r, c| {
                         if w == 0.0 {
                             p.circle_stroke(r.center(), 6.0, Stroke::new(1.3_f32, c));
                             p.line_segment([r.center() + vec2(-5.0, 5.0), r.center() + vec2(5.0, -5.0)], Stroke::new(1.3_f32, c));
@@ -279,8 +283,8 @@ fn props(app: &mut App, ui: &mut Ui) {
             });
             ui.add_space(6.0);
             if !highlighter && !matches!(app.tool, Tool::Pen) && !only_pen {
-                row(ui, "Style de trait", |ui| {
-                    for (d, tip) in [(Dash::Solid, "Continu"), (Dash::Dashed, "Tirets"), (Dash::Dotted, "Pointillés")] {
+                row(ui, "Stroke style", |ui| {
+                    for (d, tip) in [(Dash::Solid, "Solid"), (Dash::Dashed, "Dashed"), (Dash::Dotted, "Dotted")] {
                         if theme::seg_button(ui, style.dash == d, tip, |p, r, c| line_preview(p, r, 2.2, d, c)).clicked() {
                             app.style.dash = d;
                             app.ed.update_many(&sel_ids, |o| o.style.dash = d);
@@ -289,10 +293,10 @@ fn props(app: &mut App, ui: &mut Ui) {
                 });
             }
         }
-        // ---- coins
+        // ---- corners
         if shapes_selected || matches!(app.tool, Tool::Shape(BoxGeom::Rect) | Tool::Sticky) {
-            row(ui, "Coins", |ui| {
-                for (rd, tip, rx) in [(0.0f32, "Angles vifs", 0.0f32), (0.25, "Arrondis", 4.0)] {
+            row(ui, "Corners", |ui| {
+                for (rd, tip, rx) in [(0.0f32, "Sharp corners", 0.0f32), (0.25, "Rounded corners", 4.0)] {
                     let on = if rd == 0.0 { style.roundness < 0.05 } else { style.roundness >= 0.05 };
                     if theme::seg_button(ui, on, tip, |p, r, c| {
                         p.rect_stroke(ERect::from_center_size(r.center(), vec2(16.0, 12.0)), rx, Stroke::new(1.8_f32, c), egui::StrokeKind::Middle);
@@ -310,8 +314,8 @@ fn props(app: &mut App, ui: &mut Ui) {
     // ---- connecteurs
     if connectors || matches!(app.tool, Tool::Line | Tool::Arrow) {
         let cur = objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
-        row(ui, "Tracé", |ui| {
-            for (r, name) in [(Route::Straight, "Droit"), (Route::Elbow, "Coudé"), (Route::Curve, "Courbe")] {
+        row(ui, "Path", |ui| {
+            for (r, name) in [(Route::Straight, "Straight"), (Route::Elbow, "Elbow"), (Route::Curve, "Curve")] {
                 let on = cur.as_ref().map_or(app.route == r, |c| c.route == r);
                 if ui.selectable_label(on, name).clicked() {
                     app.route = r;
@@ -324,7 +328,7 @@ fn props(app: &mut App, ui: &mut Ui) {
             }
         });
         if let Some(c) = cur {
-            for (title, is_start) in [("Pointe au début", true), ("Pointe à la fin", false)] {
+            for (title, is_start) in [("Arrowhead at the start", true), ("Arrowhead at the end", false)] {
                 let now = if is_start { c.head_start } else { c.head_end };
                 row(ui, title, |ui| {
                     for (h, name) in [(Arrowhead::None, "—"), (Arrowhead::Arrow, "→"), (Arrowhead::Triangle, "▶"), (Arrowhead::Dot, "●"), (Arrowhead::Bar, "|")]
@@ -342,11 +346,10 @@ fn props(app: &mut App, ui: &mut Ui) {
         }
     }
 
-    // ---- texte
+    // ---- text
     if shapes_selected || matches!(app.tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
-        row(ui, "Police", |ui| {
-            for (f, tip) in
-                [(FontFamily::Sans, "Sans empattement"), (FontFamily::Hand, "Manuscrit"), (FontFamily::Serif, "Serif"), (FontFamily::Mono, "Chasse fixe")]
+        row(ui, "Font", |ui| {
+            for (f, tip) in [(FontFamily::Sans, "Sans serif"), (FontFamily::Hand, "Handwriting"), (FontFamily::Serif, "Serif"), (FontFamily::Mono, "Monospace")]
             {
                 if theme::seg_button(ui, label.family == f, tip, |p, r, c| text_in(p, "Aa", r, c, fonts::font_id(f, 15.0, false))).clicked() {
                     app.label.family = f;
@@ -360,7 +363,7 @@ fn props(app: &mut App, ui: &mut Ui) {
                 }
             }
         });
-        row(ui, "Taille du texte", |ui| {
+        row(ui, "Text size", |ui| {
             for (s, name) in [(16.0, "S"), (22.0, "M"), (32.0, "L"), (48.0, "XL")] {
                 if theme::seg_button(ui, (label.size - s).abs() < 0.5, "", |p, r, c| text_in(p, name, r, c, egui::FontId::proportional(13.0))).clicked() {
                     app.label.size = s;
@@ -374,7 +377,7 @@ fn props(app: &mut App, ui: &mut Ui) {
                 }
             }
         });
-        row(ui, "Alignement", |ui| {
+        row(ui, "Alignment", |ui| {
             for (a, icon) in [(Align::Left, "alignL"), (Align::Center, "alignC"), (Align::Right, "alignR")] {
                 if theme::seg_button(ui, label.align == a, "", |p, r, c| icon_in(p, icon, r, c)).clicked() {
                     app.label.align = a;
@@ -391,10 +394,10 @@ fn props(app: &mut App, ui: &mut Ui) {
         rich_section(app, ui, dark);
     }
 
-    // ---- opacité
+    // ---- opacity
     if has_sel || drawing {
         let mut op = style.opacity;
-        theme::field_label(ui, &format!("Opacité {} %", (op * 100.0).round()));
+        theme::field_label_raw(ui, &tr!("Opacity {} %", (op * 100.0).round()));
         if ui.add(egui::Slider::new(&mut op, 0.05..=1.0).show_value(false)).changed() {
             app.style.opacity = op;
             app.live_apply(&move |o| o.style.opacity = op);
@@ -406,7 +409,7 @@ fn props(app: &mut App, ui: &mut Ui) {
         organisation(app, ui, &objs, &sel_ids, &pal);
     }
     let locked: Vec<Id> = app.selected_locked();
-    if !locked.is_empty() && ui.button("Déverrouiller la sélection").clicked() {
+    if !locked.is_empty() && ui.button(t("Unlock the selection")).clicked() {
         app.ed.set_locked(&locked, false);
     }
     if app.layers_open {
@@ -418,9 +421,9 @@ fn connectors_only(objs: &[Object]) -> bool {
     !objs.is_empty() && objs.iter().all(|o| matches!(o.kind, Kind::Connector(_)))
 }
 
-/// B / I / U / S, couleur des mots et surlignage (texte riche).
+/// B / I / U / S, word color and highlight (rich text).
 fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
-    row(ui, if app.editing.is_some() { "Mise en forme de la sélection" } else { "Mise en forme de tout le texte" }, |ui| {
+    row(ui, if app.editing.is_some() { "Format of the selection" } else { "Format of all the text" }, |ui| {
         for (name, f) in [("B", Format::Bold), ("I", Format::Italic), ("U", Format::Underline), ("S", Format::Strike)] {
             let on = app.format_active(f);
             let clicked = theme::seg_button(ui, on, "", |p, r, c| {
@@ -446,11 +449,11 @@ fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
                 app.apply_format(f);
             }
         }
-        if ui.small_button("Effacer").clicked() {
+        if ui.small_button(t("Clear")).clicked() {
             app.apply_format(Format::Clear);
         }
     });
-    theme::field_label(ui, "Couleur des mots");
+    theme::field_label(ui, "Word color");
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
         for c in PALETTE.iter().skip(1) {
@@ -460,7 +463,7 @@ fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
         }
     });
     ui.add_space(6.0);
-    theme::field_label(ui, "Surlignage");
+    theme::field_label(ui, "Highlight");
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
         for c in FILLS.iter().take(8) {
@@ -472,14 +475,14 @@ fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
     ui.add_space(6.0);
 }
 
-/// Ordre, alignement, actions, mise en page automatique et opérations sur un tableau.
+/// Order, alignment, actions, automatic layout and table operations.
 fn organisation(app: &mut App, ui: &mut Ui, objs: &[Object], sel_ids: &[Id], pal: &Palette) {
-    row(ui, "Ordre", |ui| {
+    row(ui, "Order", |ui| {
         for (icon, tip, o) in [
-            ("front", "Premier plan", Order::Front),
-            ("forward", "Avancer", Order::Forward),
-            ("backward", "Reculer", Order::Backward),
-            ("back", "Arrière-plan", Order::Back),
+            ("front", "Bring to front", Order::Front),
+            ("forward", "Bring forward", Order::Forward),
+            ("backward", "Send backward", Order::Backward),
+            ("back", "Send to back", Order::Back),
         ] {
             if theme::seg_button(ui, false, tip, |p, r, c| icon_in(p, icon, r, c)).clicked() {
                 app.ed.reorder(sel_ids, o);
@@ -487,34 +490,34 @@ fn organisation(app: &mut App, ui: &mut Ui, objs: &[Object], sel_ids: &[Id], pal
         }
     });
     if sel_ids.len() > 1 {
-        row(ui, "Alignement", |ui| {
+        row(ui, "Alignment", |ui| {
             for (icon, tip, m) in [
-                ("al", "Aligner à gauche", AlignMode::Left),
-                ("ac", "Centrer horizontalement", AlignMode::CenterX),
-                ("ar", "Aligner à droite", AlignMode::Right),
-                ("at", "Aligner en haut", AlignMode::Top),
-                ("am", "Centrer verticalement", AlignMode::CenterY),
-                ("ab", "Aligner en bas", AlignMode::Bottom),
+                ("al", "Align left", AlignMode::Left),
+                ("ac", "Center horizontally", AlignMode::CenterX),
+                ("ar", "Align right", AlignMode::Right),
+                ("at", "Align top", AlignMode::Top),
+                ("am", "Center vertically", AlignMode::CenterY),
+                ("ab", "Align bottom", AlignMode::Bottom),
             ] {
                 if theme::seg_button(ui, false, tip, |p, r, c| icon_in(p, icon, r, c)).clicked() {
                     app.ed.align(sel_ids, m);
                 }
             }
             if sel_ids.len() > 2 {
-                if theme::seg_button(ui, false, "Répartir horizontalement", |p, r, c| icon_in(p, "dh", r, c)).clicked() {
+                if theme::seg_button(ui, false, "Distribute horizontally", |p, r, c| icon_in(p, "dh", r, c)).clicked() {
                     app.ed.distribute(sel_ids, Axis::Horizontal);
                 }
-                if theme::seg_button(ui, false, "Répartir verticalement", |p, r, c| icon_in(p, "dv", r, c)).clicked() {
+                if theme::seg_button(ui, false, "Distribute vertically", |p, r, c| icon_in(p, "dv", r, c)).clicked() {
                     app.ed.distribute(sel_ids, Axis::Vertical);
                 }
             }
         });
-        row(ui, "Mise en page automatique", |ui| {
+        row(ui, "Automatic layout", |ui| {
             for (glyph, tip, d) in [
-                ("↓", "De haut en bas", Direction::TopDown),
-                ("→", "De gauche à droite", Direction::LeftRight),
-                ("↑", "De bas en haut", Direction::BottomUp),
-                ("←", "De droite à gauche", Direction::RightLeft),
+                ("↓", "Top to bottom", Direction::TopDown),
+                ("→", "Left to right", Direction::LeftRight),
+                ("↑", "Bottom to top", Direction::BottomUp),
+                ("←", "Right to left", Direction::RightLeft),
             ] {
                 if theme::seg_button(ui, false, tip, |p, r, c| text_in(p, glyph, r, c, egui::FontId::proportional(15.0))).clicked() {
                     auto_layout(&mut app.ed, sel_ids, d);
@@ -525,14 +528,12 @@ fn organisation(app: &mut App, ui: &mut Ui, objs: &[Object], sel_ids: &[Id], pal
     let all_locked = sel_ids.iter().all(|i| app.ed.page().get(i).is_some_and(|o| o.locked));
     let grouped = objs.iter().any(|o| o.group.is_some());
     row(ui, "Actions", |ui| {
-        if theme::seg_button(ui, false, "Dupliquer", |p, r, c| icon_in(p, "copy", r, c)).clicked() {
+        if theme::seg_button(ui, false, "Duplicate", |p, r, c| icon_in(p, "copy", r, c)).clicked() {
             app.sel = app.ed.duplicate(sel_ids, Pt::new(24.0, 24.0));
         }
         if (sel_ids.len() > 1 || grouped)
-            && theme::seg_button(ui, false, if grouped { "Dégrouper" } else { "Grouper" }, |p, r, c| {
-                icon_in(p, if grouped { "ungroup" } else { "group" }, r, c)
-            })
-            .clicked()
+            && theme::seg_button(ui, false, if grouped { "Ungroup" } else { "Group" }, |p, r, c| icon_in(p, if grouped { "ungroup" } else { "group" }, r, c))
+                .clicked()
         {
             if grouped {
                 app.ed.ungroup(sel_ids);
@@ -540,23 +541,21 @@ fn organisation(app: &mut App, ui: &mut Ui, objs: &[Object], sel_ids: &[Id], pal
                 app.ed.group(sel_ids);
             }
         }
-        if theme::seg_button(ui, false, if all_locked { "Déverrouiller" } else { "Verrouiller" }, |p, r, c| {
-            icon_in(p, if all_locked { "unlock" } else { "lock" }, r, c)
-        })
-        .clicked()
+        if theme::seg_button(ui, false, if all_locked { "Unlock" } else { "Lock" }, |p, r, c| icon_in(p, if all_locked { "unlock" } else { "lock" }, r, c))
+            .clicked()
         {
             app.ed.set_locked(sel_ids, !all_locked);
         }
         let danger = Color32::from_rgb(0xe0, 0x31, 0x31);
-        if theme::seg_button(ui, false, "Supprimer", |p, r, _| icon_in(p, "trash", r, danger)).clicked() {
+        if theme::seg_button(ui, false, "Delete", |p, r, _| icon_in(p, "trash", r, danger)).clicked() {
             app.delete_selection();
         }
     });
     if let [o] = objs
         && matches!(o.kind, Kind::Table(_))
     {
-        row(ui, "Tableau", |ui| {
-            for (name, f) in [("+ ligne", 0), ("+ colonne", 1), ("− ligne", 2), ("− colonne", 3)] {
+        row(ui, "Table", |ui| {
+            for (name, f) in [("+ row", 0), ("+ column", 1), ("− row", 2), ("− column", 3)] {
                 if ui.small_button(name).clicked() {
                     app.ed.update(&o.id, |o| {
                         if let Kind::Table(t) = &mut o.kind {
@@ -575,30 +574,30 @@ fn organisation(app: &mut App, ui: &mut Ui, objs: &[Object], sel_ids: &[Id], pal
     let _ = pal;
 }
 
-/// Liste des calques de la page (visibilité, verrou, nom, déplacement de la sélection).
+/// The page's layer list (visibility, lock, name, moving the selection).
 fn layers(app: &mut App, ui: &mut Ui, has_sel: bool, sel_ids: &[Id]) {
     theme::menu_sep(ui);
-    theme::field_label(ui, "Calques");
+    theme::field_label(ui, "Layers");
     let mut layers = app.ed.page().layers.clone();
     let mut changed = false;
     for l in &mut layers {
         ui.horizontal(|ui| {
-            changed |= ui.checkbox(&mut l.visible, "").on_hover_text("Visible").changed();
+            changed |= ui.checkbox(&mut l.visible, "").on_hover_text(t("Visible")).changed();
             let mut locked = l.locked;
-            if ui.toggle_value(&mut locked, "Verr.").on_hover_text("Verrouillé").changed() {
+            if ui.toggle_value(&mut locked, t("Lock")).on_hover_text(t("Locked")).changed() {
                 l.locked = locked;
                 changed = true;
             }
             let r = ui.add(egui::TextEdit::singleline(&mut l.name).desired_width(80.0));
             changed |= r.lost_focus() && r.changed();
-            if has_sel && ui.small_button("→").on_hover_text("Y déplacer la sélection").clicked() {
+            if has_sel && ui.small_button("→").on_hover_text(t("Move the selection here")).clicked() {
                 let id = l.id.clone();
                 app.ed.update_many(sel_ids, |o| o.layer = id.clone());
             }
         });
     }
-    if ui.small_button("+ calque").clicked() {
-        layers.push(Layer { id: Id::new(), name: format!("Calque {}", layers.len() + 1), visible: true, locked: false });
+    if ui.small_button(t("+ layer")).clicked() {
+        layers.push(Layer { id: Id::new(), name: tr!("Layer {}", layers.len() + 1), visible: true, locked: false });
         changed = true;
     }
     if changed {

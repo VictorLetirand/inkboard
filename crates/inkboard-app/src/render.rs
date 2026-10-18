@@ -1,4 +1,4 @@
-//! Dessin d'une page avec egui : même logique que l'export SVG du moteur.
+//! Drawing of a page with egui: same logic as the engine's SVG export.
 
 use crate::fonts::{EguiMeasurer, font_id};
 use eframe::egui::epaint::{Mesh, TextShape, Vertex};
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 pub const GRID: f32 = 24.0;
 
-/// Caméra : position écran de l'origine du monde et zoom.
+/// Camera: screen position of the world origin, and zoom.
 #[derive(Clone, Copy, Debug)]
 pub struct Cam {
     pub origin: Pos2,
@@ -37,10 +37,10 @@ pub fn col(c: Color, dark: bool, opacity: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, (opacity.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
-/// Définition de rastérisation des formules (SVG) : les formules restent nettes jusqu'à un fort zoom.
+/// Rasterization resolution of formulas (SVG): formulas stay sharp up to a high zoom.
 const FORMULA_SCALE: f32 = 4.0;
 
-/// Image décodée d'une ressource ; les SVG (formules) sont rastérisés.
+/// Decoded image of an asset; SVGs (formulas) are rasterized.
 pub fn decode_asset(asset: &Asset) -> Option<egui::ColorImage> {
     let png;
     let bytes: &[u8] = if asset.mime == "image/svg+xml" {
@@ -53,7 +53,7 @@ pub fn decode_asset(asset: &Asset) -> Option<egui::ColorImage> {
     Some(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()))
 }
 
-/// Textures des images du document, décodées à la demande.
+/// Textures of the document's images, decoded on demand.
 #[derive(Default)]
 pub struct TextureCache {
     map: HashMap<Id, Option<TextureHandle>>,
@@ -83,9 +83,9 @@ pub struct Renderer<'a> {
     pub measurer: &'a EguiMeasurer,
     pub textures: &'a mut TextureCache,
     pub bg: Color32,
-    /// Table identifiant → position (en cache dans l'application) ; calculée à la volée si absente.
+    /// Id → position table (cached in the application); computed on the fly when absent.
     pub ids: Option<&'a HashMap<Id, usize>>,
-    /// Index spatial à jour (absent pendant les gestes qui déplacent des objets).
+    /// Up-to-date spatial index (absent during gestures that move objects).
     pub index: Option<&'a inkboard_core::spatial::SpatialIndex>,
 }
 
@@ -135,7 +135,7 @@ impl Renderer<'_> {
         }
     }
 
-    /// Dessine les objets visibles ; `skip` : identifiants à ne pas dessiner (texte en cours d'édition…).
+    /// Draws the visible objects; `skip`: ids not to draw (text being edited…).
     pub fn page(&mut self, clip: egui::Rect, skip_text: Option<&Id>, ghost: &[Id]) {
         let clip = clip.expand(60.0);
         let page: &Page = self.page;
@@ -173,7 +173,7 @@ impl Renderer<'_> {
         }
     }
 
-    /// Niveau de détail : un objet de moins de 3 px est réduit à un point de couleur.
+    /// Level of detail: an object smaller than 3 px is reduced to a colored dot.
     fn speck(&self, o: &Object, b: egui::Rect) {
         let color = match &o.kind {
             Kind::Connector(_) => return,
@@ -183,7 +183,7 @@ impl Renderer<'_> {
         self.painter.rect_filled(b.expand(0.6), 0.0, color);
     }
 
-    /// Dessine un seul objet (brouillon, aperçu).
+    /// Draws a single object (draft, preview).
     pub fn draw_one(&mut self, o: &Object) {
         let page: &Page = self.page;
         self.object(o, false, 1.0, &|id| page.get(id));
@@ -295,7 +295,7 @@ impl Renderer<'_> {
         }
     }
 
-    /// Dessine un bloc de texte déjà mis en page (une galerie de texte par ligne).
+    /// Draws an already laid-out block of text (one text galley per line).
     #[allow(clippy::too_many_arguments)]
     pub fn paint_lines(&self, lay: &TextLayout, label: &Label, area: Rect, to_world: &dyn Fn(Pt) -> Pt, angle: f32, base: Color32, bold_all: bool) {
         let size = label.size as f32 * self.cam.zoom;
@@ -352,7 +352,7 @@ impl Renderer<'_> {
         }
     }
 
-    /// Trait d'épaisseur variable : bande de triangles dont la largeur suit la pression, avec embouts arrondis.
+    /// Variable-width stroke: a triangle strip whose width follows the pressure, with rounded caps.
     fn pressure_stroke(&self, pts: &[Pt], pressures: &[f32], base: f64, color: Color32) {
         let widths: Vec<f64> = pressures.iter().map(|p| inkboard_core::pen::pressure_width(base, *p)).collect();
         let (left, right) = inkboard_core::pen::stroke_sides(pts, &widths);
@@ -466,7 +466,7 @@ impl Renderer<'_> {
     }
 }
 
-/// Rectangle d'une forme « boîte » en coordonnées écran pour superposer un éditeur de texte.
+/// Rectangle of a "box" shape in screen coordinates, to overlay a text editor.
 pub fn label_screen_rect(cam: &Cam, frame: &Frame, area: Rect) -> egui::Rect {
     let tl = cam.s(frame.to_world(Pt::new(area.x, area.y)));
     let br = cam.s(frame.to_world(Pt::new(area.right(), area.bottom())));

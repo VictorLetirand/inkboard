@@ -1,4 +1,4 @@
-//! Implémentation Windows : subclass de fenêtre qui observe les messages `WM_POINTER*`.
+//! Windows implementation: a window subclass that observes the `WM_POINTER*` messages.
 
 use crate::{PenSample, PointerKind, record, set_eraser};
 use std::num::NonZeroIsize;
@@ -7,9 +7,9 @@ use windows_sys::Win32::UI::Input::Pointer::{GetPointerPenInfo, GetPointerType, 
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{PT_PEN, PT_TOUCH, WM_POINTERDOWN, WM_POINTERLEAVE, WM_POINTERUP, WM_POINTERUPDATE};
 
-const SUBCLASS_ID: usize = 0x5742_5045; // « WBPE »
+const SUBCLASS_ID: usize = 0x5742_5045; // "WBPE"
 
-/// Identifiant du pointeur : mot de poids faible de `wParam` (`GET_POINTERID_WPARAM`).
+/// Pointer id: low word of `wParam` (`GET_POINTERID_WPARAM`).
 fn pointer_id(wparam: WPARAM) -> u32 {
     (wparam & 0xffff) as u32
 }
@@ -21,11 +21,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             set_eraser(false);
         } else {
             let mut kind = 0;
-            // SAFETY : `kind` est un entier valide pour toute la durée de l'appel ; un identifiant invalide fait simplement échouer l'appel.
+            // SAFETY: `kind` is a valid integer for the whole call; an invalid id simply makes the call fail.
             let ok = unsafe { GetPointerType(id, &mut kind) } != 0;
             if ok && kind == PT_PEN {
                 let mut info = POINTER_PEN_INFO::default();
-                // SAFETY : structure de sortie valide pour la durée de l'appel.
+                // SAFETY: output structure valid for the duration of the call.
                 if unsafe { GetPointerPenInfo(id, &mut info) } != 0 {
                     record(PenSample {
                         kind: PointerKind::Pen,
@@ -36,20 +36,20 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                     });
                 }
             } else if ok {
-                // souris ou doigt : plus de gomme
+                // mouse or finger: no more eraser
                 record(PenSample { kind: if kind == PT_TOUCH { PointerKind::Touch } else { PointerKind::Mouse }, ..PenSample::NONE });
             }
         }
     }
-    // les messages ne sont jamais consommés : winit/egui continuent de les traiter
-    // SAFETY : transmission des arguments reçus tels quels à la procédure suivante de la chaîne.
+    // messages are never consumed: winit/egui keep processing them
+    // SAFETY: the received arguments are passed unchanged to the next procedure in the chain.
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
-/// Installe l'observation des messages stylet sur la fenêtre. `hwnd` doit être le handle d'une fenêtre de **ce** processus et de ce thread
-/// (obtenu via `raw-window-handle`) ; renvoie `false` si le système refuse.
+/// Installs the observation of pen messages on the window. `hwnd` must be the handle of a window of **this** process and thread
+/// (obtained through `raw-window-handle`); returns `false` when the system refuses.
 pub fn install(hwnd: NonZeroIsize) -> bool {
-    // SAFETY : `proc` a la signature `SUBCLASSPROC` attendue ; le handle est celui d'une fenêtre vivante appartenant au thread appelant.
+    // SAFETY: `proc` has the expected `SUBCLASSPROC` signature; the handle is that of a live window owned by the calling thread.
     unsafe { SetWindowSubclass(hwnd.get() as HWND, Some(proc), SUBCLASS_ID, 0) != 0 }
 }
 
@@ -60,7 +60,7 @@ mod tests {
 
     fn dummy_window() -> HWND {
         let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
-        // SAFETY : fenêtre « STATIC » (classe système) créée sans parent ; détruite à la fin du test.
+        // SAFETY: "STATIC" window (system class) created without a parent; destroyed at the end of the test.
         unsafe {
             CreateWindowExW(
                 0,
@@ -83,14 +83,14 @@ mod tests {
     fn subclass_installs_and_ignores_unknown_pointers_without_consuming_messages() {
         let _g = crate::TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let hwnd = dummy_window();
-        assert!(!hwnd.is_null(), "fenêtre factice créée");
+        assert!(!hwnd.is_null(), "dummy window created");
         assert!(install(NonZeroIsize::new(hwnd as isize).unwrap()));
         set_eraser(true);
-        // pointeur inexistant : l'état n'est pas modifié (GetPointerType échoue) et le message traverse sans erreur
-        // SAFETY : fenêtre valide du thread courant.
+        // nonexistent pointer: the state is unchanged (GetPointerType fails) and the message passes through without error
+        // SAFETY: valid window of the current thread.
         unsafe { SendMessageW(hwnd, WM_POINTERUPDATE, 0xffff, 0) };
-        assert!(crate::eraser_active(), "un pointeur inconnu ne change pas l'état");
-        // POINTERLEAVE efface l'état
+        assert!(crate::eraser_active(), "an unknown pointer does not change the state");
+        // POINTERLEAVE clears the state
         unsafe { SendMessageW(hwnd, WM_POINTERLEAVE, 0xffff, 0) };
         assert!(!crate::eraser_active());
         unsafe { DestroyWindow(hwnd) };

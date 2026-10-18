@@ -1,49 +1,52 @@
-# Feuille de route
+# Roadmap
 
-## Plaintes d'utilisateurs → état
+*Version française : [fr/ROADMAP.md](fr/ROADMAP.md)*
 
-Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excalidraw, fils Hacker News).
+## User complaints → status
 
-| Plainte | Outils | État |
+Research done in October 2026 (G2/Capterra/GetApp reviews, Excalidraw GitHub issues, Hacker News threads).
+
+| Complaint | Tools | Status |
 |---|---|---|
-| Lag sur grands tableaux | Miro, Whiteboard, Excalidraw | ✔ mesuré : 100 000 objets en 4,5 ms/image (index spatial, niveau de détail) |
-| Connecteurs fragiles / qui ne suivent pas | draw.io, Excalidraw | ✔ connecteurs **liés**, droits/coudés/courbes, tests |
-| Pas de mise en page automatique | Excalidraw | ✔ commande « mise en page automatique » + import Mermaid |
-| Tableaux de cellules | Excalidraw (n°1 par commentaires) | ✔ insertion, édition des cellules, lignes/colonnes ; mise en forme à venir |
-| Calques | Excalidraw, Whiteboard | ✔ visibilité, verrouillage, déplacement de la sélection |
-| Plusieurs pages / onglets | Excalidraw | ✔ |
-| Arrondi réglable des coins, surligneur, grille type cahier | Excalidraw | ✔ |
-| Export lisible dans d'autres outils | Whiteboard, Miro | ✔ draw.io, Excalidraw, JSON Canvas, SVG, PNG |
-| Hors ligne, sans compte, sans limite de tableaux | Miro | ✔ par construction |
-| Colorer / surligner des mots d'un paragraphe | Excalidraw | ✔ sélection de mots, gras/italique/souligné/barré, couleur, surlignage (jalon 2) |
-| Raccourcis personnalisables | Excalidraw | ✔ 41 commandes, plusieurs raccourcis, fichier JSON, conflits gérés (jalon 2) |
-| Stylet : pression | Excalidraw | ◐ largeur variable ; **non validé sur du matériel réel** (mode `--pen-test`) |
-| Stylet : gomme (extrémité) | Excalidraw | ◐ implémenté via l'API Pointer de Windows ; **non validé sur du matériel réel** (mode `--pen-test` pour le valider : docs/STYLET.md) |
-| Blocs de code | Excalidraw | ✔ coloration syntaxique minimale (commentaires, chaînes, nombres, mots-clés ; menu « Colorer le code ») |
-| LaTeX | Excalidraw | ✔ composition TeX (STIX Two Math), formule modifiable, couleur suivie |
-| Présentation, minuteur, vote | Excalidraw | ✔ plein écran page par page, minuteur, pastilles, pointeur laser |
-| Interface soignée (cartes flottantes, thème sombre) | – | ✔ identique au prototype web |
-| Connecteurs qui évitent les formes | draw.io | ✔ routage A*, points de passage |
-| Presse-papiers (images, texte) | tous | ✔ |
-| Pilotage par des agents (MCP) | – | ✔ `inkboard-mcp` : fichiers et mode direct (application ouverte, annulable, sélection visible) |
-| Export PDF | Whiteboard | ✔ vectoriel |
+| Lag on large boards | Miro, Whiteboard, Excalidraw | ✔ measured: 100,000 objects at 4.5 ms/frame (spatial index, level of detail) |
+| Fragile connectors / that don't follow | draw.io, Excalidraw | ✔ **bound** connectors, straight/elbow/curved, tests |
+| No automatic layout | Excalidraw | ✔ "auto layout" command + Mermaid import |
+| Tables of cells | Excalidraw (#1 by comments) | ✔ insertion, cell editing, rows/columns; formatting to come |
+| Layers | Excalidraw, Whiteboard | ✔ visibility, locking, moving the selection |
+| Several pages / tabs | Excalidraw | ✔ |
+| Adjustable corner rounding, highlighter, notebook-style grid | Excalidraw | ✔ |
+| Export readable in other tools | Whiteboard, Miro | ✔ draw.io, Excalidraw, JSON Canvas, SVG, PNG |
+| Offline, no account, no limit on boards | Miro | ✔ by construction |
+| Color / highlight words in a paragraph | Excalidraw | ✔ word selection, bold/italic/underline/strikethrough, color, highlight (milestone 2) |
+| Customizable shortcuts | Excalidraw | ✔ 41 commands, several shortcuts, JSON file, conflicts handled (milestone 2) |
+| Pen: pressure | Excalidraw | ◐ variable width; **not validated on real hardware** (`--pen-test` mode) |
+| Pen: eraser (end) | Excalidraw | ◐ implemented through the Windows Pointer API; **not validated on real hardware** (`--pen-test` mode to validate it: docs/STYLET.md) |
+| Code blocks | Excalidraw | ✔ minimal syntax coloring (comments, strings, numbers, keywords; "Color the code" menu) |
+| LaTeX | Excalidraw | ✔ TeX typesetting (STIX Two Math), editable formula, color follows |
+| Presentation, timer, voting | Excalidraw | ✔ full-screen page by page, timer, dots, laser pointer |
+| Polished interface (floating cards, dark theme) | – | ✔ identical to the web prototype |
+| Connectors that avoid shapes | draw.io | ✔ A* routing, waypoints |
+| Clipboard (images, text) | all | ✔ |
+| Driving by agents (MCP) | – | ✔ `inkboard-mcp`: files and live mode (application open, undoable, selection visible) |
+| PDF export | Whiteboard | ✔ vector |
+| Interface in several languages | – | ✔ English and French, detected from the system, switchable in the menu |
 
-## Reste à faire
+## To do
 
-- **Interface en plusieurs langues** (anglais d'abord) : l'interface est aujourd'hui uniquement en français ; la documentation approfondie (`docs/`) aussi.
-- `inkboard-mcp` : vérifier ce que les clients réels (Claude Code, Claude Desktop) font des notifications de ressources ; notifications avec le détail du changement ; lecture du contenu des images.
-- Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
-- Coloration par langage (la coloration actuelle est générique) ; texte (`\text`) et environnements avancés de la bibliothèque de composition au-delà de ses capacités.
-- **Validation de la pression et de la gomme du stylet sur du matériel réel** (procédure : docs/STYLET.md) ; gomme sous macOS/Linux (non gérée).
-- Alignement par ligne dans le champ de saisie pendant l'édition d'un texte centré multiligne.
-- Version WASM du moteur (même code) si un usage web est souhaité.
+- More interface languages: add a table next to `i18n_fr.rs` (contributions welcome).
+- `inkboard-mcp`: check what real clients (Claude Code, Claude Desktop) do with resource notifications; notifications with the detail of the change; reading image content.
+- **Signed** Windows installer (needs a code-signing certificate; the `scripts/` folder provides the portable archive and a per-user install).
+- Per-language syntax coloring (current coloring is generic); text (`\text`) and advanced environments of the typesetting library beyond its capabilities.
+- **Validation of pen pressure and eraser on real hardware** (procedure: docs/STYLET.md); eraser on macOS/Linux (not handled).
+- Per-line alignment in the input field while editing multi-line centered text.
+- WASM build of the engine (same code) if a web use is wanted.
 
-## Limites connues
+## Known limits
 
-- Pas de tests visuels automatisés (la capture d'écran `--screenshot` sert au contrôle manuel).
-- Les traits au crayon sont exportés en images vers draw.io (pas d'équivalent éditable).
-- Les formats d'échange n'ont été confrontés qu'à leurs propres exports et à des fichiers écrits à la main, à l'exception de
-  l'export draw.io vérifié dans le visualiseur officiel ; des fichiers Excalidraw et Obsidian Canvas écrits comme les vrais outils (`inkboard-formats/tests/realistic.rs`) s'importent correctement, mais aucun fichier réel d'utilisateur n'a été testé.
-- Le workflow CI (`.github/workflows/ci.yml`, Windows + Linux + macOS) est vert. Linux et macOS : les tests automatiques passent, mais l'application n'y a jamais été lancée à la main ; le workflow de publication (installeurs) n'a jamais été exécuté.
-- Le routage coudé avec contournement est désactivé au-delà de 5 000 objets (coût linéaire par connecteur).
-- Les formules dépendent du crate `latex-rust` 2.1.1 (récent, peu éprouvé ; la 3.x exige Rust 1.99) : une commande non gérée est signalée dans la fenêtre de saisie. Une formule est rastérisée à l'écran (×4) mais reste vectorielle dans les exports SVG et PDF.
+- No automated visual tests (the `--screenshot` capture is for manual checking).
+- Pen strokes are exported as images to draw.io (no editable equivalent).
+- The exchange formats have only been checked against their own exports and hand-written files, except for the
+  draw.io export verified in the official viewer; Excalidraw and Obsidian Canvas files written like the real tools do (`inkboard-formats/tests/realistic.rs`) import correctly, but no real user file has been tested.
+- The CI workflow (`.github/workflows/ci.yml`, Windows + Linux + macOS) is green. On Linux and macOS the automated tests pass, but the application has never been launched by hand there; the release workflow (installers) has not yet completed a full run.
+- Elbow routing with avoidance is disabled beyond 5,000 objects (linear cost per connector).
+- Formulas depend on the `latex-rust` 2.1.1 crate (recent, little battle-tested; 3.x requires Rust 1.99): an unsupported command is reported in the input window. A formula is rasterized on screen (×4) but stays vector in SVG and PDF exports.

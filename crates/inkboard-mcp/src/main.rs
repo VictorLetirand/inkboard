@@ -1,11 +1,11 @@
-//! `inkboard-mcp` : serveur MCP du tableau blanc sur stdin/stdout.
+//! `inkboard-mcp`: MCP server of the whiteboard on stdin/stdout.
 //!
 //! ```text
-//! inkboard-mcp [--root DOSSIER] [--no-live] [--live-file FICHIER]
+//! inkboard-mcp [--root FOLDER] [--no-live] [--live-file FILE]
 //! ```
 //!
-//! `--root` confine tous les fichiers lus et écrits sous ce dossier (recommandé quand un agent pilote le serveur).
-//! `--no-live` désactive le mode direct (application ouverte) ; `--live-file` change le fichier de découverte.
+//! `--root` confines all files read and written under this folder (recommended when an agent drives the server).
+//! `--no-live` disables live mode (open application); `--live-file` changes the discovery file.
 
 use inkboard_mcp::Server;
 use std::io::{BufRead, Write};
@@ -17,18 +17,18 @@ fn main() {
         match a.as_str() {
             "--root" => match args.next() {
                 Some(dir) => server.root = Some(dir.into()),
-                None => return eprintln!("--root attend un dossier"),
+                None => return eprintln!("--root expects a folder"),
             },
             "--no-live" => server.no_live = true,
             "--live-file" => match args.next() {
                 Some(f) => server.live_file = Some(f.into()),
-                None => return eprintln!("--live-file attend un fichier"),
+                None => return eprintln!("--live-file expects a file"),
             },
-            "-h" | "--help" => return println!("inkboard-mcp [--root DOSSIER] [--no-live] [--live-file FICHIER] — serveur MCP (stdio) du tableau blanc"),
-            other => return eprintln!("argument inconnu : {other}"),
+            "-h" | "--help" => return println!("inkboard-mcp [--root FOLDER] [--no-live] [--live-file FILE] — MCP (stdio) server of the whiteboard"),
+            other => return eprintln!("unknown argument: {other}"),
         }
     }
-    // toutes les sorties (réponses et notifications) passent par un seul fil d'écriture ; `Null` le termine
+    // all outputs (responses and notifications) go through a single writer thread; `Null` ends it
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
     let writer = std::thread::spawn(move || {
         let mut out = std::io::stdout().lock();

@@ -1,7 +1,7 @@
-//! Mode direct de `inkboard-mcp` : serveur local (127.0.0.1, port éphémère, jeton secret) qui applique les outils d'un agent au tableau affiché.
+//! Live mode of `inkboard-mcp`: a local server (127.0.0.1, ephemeral port, secret token) that applies an agent's tools to the displayed board.
 //!
-//! Les demandes arrivent sur des threads réseau mais sont exécutées **sur le fil de l'interface** (`App::poll_live`), dans une transaction :
-//! un appel d'outil = une étape d'annulation (Ctrl+Z). Protocole : voir `inkboard_mcp::live`.
+//! Requests arrive on network threads but are executed **on the UI thread** (`App::poll_live`), in a transaction:
+//! one tool call = one undo step (Ctrl+Z). Protocol: see `inkboard_mcp::live`.
 
 use crate::app::App;
 use inkboard_core::Id;
@@ -12,16 +12,16 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
-/// Réponse de l'interface à une demande.
+/// The interface's reply to a request.
 #[derive(Debug)]
 pub enum Reply {
     Ok(Value),
     Err(String),
-    /// L'application affiche un autre fichier que celui demandé.
+    /// The application displays a different file than the requested one.
     OtherFile,
 }
 
-/// Demande d'outil en attente d'exécution sur le fil de l'interface.
+/// Tool request waiting to be executed on the UI thread.
 #[derive(Debug)]
 pub struct Request {
     pub tool: String,
@@ -46,7 +46,7 @@ fn same_token(a: &str, b: &str) -> bool {
 }
 
 impl LiveServer {
-    /// Ouvre le serveur et publie `{port, token, pid}` dans `file` (fichier de découverte lu par `inkboard-mcp`).
+    /// Opens the server and publishes `{port, token, pid}` in `file` (discovery file read by `inkboard-mcp`).
     pub fn start(ctx: eframe::egui::Context, file: PathBuf) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let port = listener.local_addr()?.port();
@@ -73,7 +73,7 @@ impl LiveServer {
 
 impl Drop for LiveServer {
     fn drop(&mut self) {
-        // retire le fichier de découverte s'il est encore le nôtre (une autre instance a pu le remplacer)
+        // remove the discovery file if it is still ours (another instance may have replaced it)
         if std::fs::read_to_string(&self.file).is_ok_and(|s| s.contains(&self.token)) {
             let _ = std::fs::remove_file(&self.file);
         }
@@ -88,26 +88,26 @@ fn respond(mut s: &TcpStream, v: &Value) {
 fn serve(stream: TcpStream, tx: &mpsc::Sender<Request>, ctx: &eframe::egui::Context, token: &str) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let mut line = String::new();
-    // une demande tient sur une ligne ; 16 Mio au plus
+    // a request fits on one line; 16 MiB at most
     if BufReader::new((&stream).take(16 << 20)).read_line(&mut line).is_err() {
         return;
     }
-    let Ok(req) = serde_json::from_str::<Value>(&line) else { return respond(&stream, &json!({"ok": false, "error": "requête invalide"})) };
+    let Ok(req) = serde_json::from_str::<Value>(&line) else { return respond(&stream, &json!({"ok": false, "error": "invalid request"})) };
     if !req.get("token").and_then(Value::as_str).is_some_and(|t| same_token(t, token)) {
-        return respond(&stream, &json!({"ok": false, "error": "jeton refusé"}));
+        return respond(&stream, &json!({"ok": false, "error": "token refused"}));
     }
     let tool = req.get("tool").and_then(Value::as_str).unwrap_or("").to_owned();
     let args = req.get("args").cloned().unwrap_or_else(|| json!({}));
     let (rtx, rrx) = mpsc::channel();
     if tx.send(Request { tool, args, reply: rtx }).is_err() {
-        return respond(&stream, &json!({"ok": false, "error": "application en cours de fermeture"}));
+        return respond(&stream, &json!({"ok": false, "error": "application is closing"}));
     }
     ctx.request_repaint();
     let out = match rrx.recv_timeout(Duration::from_secs(30)) {
         Ok(Reply::Ok(v)) => json!({"ok": true, "result": v}),
         Ok(Reply::Err(e)) => json!({"ok": false, "error": e}),
         Ok(Reply::OtherFile) => json!({"ok": false, "other_file": true}),
-        Err(_) => json!({"ok": false, "error": "l'application n'a pas répondu (fenêtre occupée ou bloquée)"}),
+        Err(_) => json!({"ok": false, "error": "the application did not answer (window busy or stuck)"}),
     };
     respond(&stream, &out);
 }
@@ -120,7 +120,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 impl App {
-    /// À appeler à chaque image : exécute les demandes d'agents en attente.
+    /// Call on every frame: executes the pending agent requests.
     pub fn poll_live(&mut self) {
         while let Some(req) = self.live.as_ref().and_then(LiveServer::poll) {
             let reply = self.run_live(&req.tool, &req.args);
@@ -130,7 +130,7 @@ impl App {
 
     fn run_live(&mut self, tool: &str, args: &Value) -> Reply {
         if tool == "__status" {
-            // sondage de inkboard-mcp pour les notifications de ressources : change quand le tableau ou la sélection change
+            // polled by inkboard-mcp for resource notifications: changes when the board or the selection changes
             return Reply::Ok(json!({
                 "revision": self.ed.revision(),
                 "path": self.path.as_ref().map(|p| p.display().to_string()),
@@ -149,7 +149,7 @@ impl App {
                     self.save();
                     Reply::Ok(json!({"saved": true, "path": p.display().to_string()}))
                 }
-                None => Reply::Err("le tableau n'a pas encore de fichier : l'utilisateur doit l'enregistrer (Ctrl+S) d'abord".into()),
+                None => Reply::Err("the board has no file yet: the user must save it (Ctrl+S) first".into()),
             };
         }
         let was_empty = self.ed.page().objects.is_empty();
@@ -157,7 +157,7 @@ impl App {
         let result = self.ed.transact(|ed| inkboard_mcp::tools::apply_tracked(ed, tool, args, tracker));
         match result {
             Ok(mut v) => {
-                // la sélection de l'utilisateur suit ce que l'agent vient de créer
+                // the user's selection follows what the agent has just created
                 let created: Vec<Id> = match (&v["id"], &v["ids"]) {
                     (Value::String(i), _) => vec![Id(i.clone())],
                     (_, Value::Array(a)) => a.iter().filter_map(|i| i.as_str().map(|s| Id(s.to_owned()))).collect(),

@@ -1,13 +1,13 @@
-//! Gomme du stylet.
+//! Pen eraser.
 //!
-//! winit et egui ne transmettent pas l'état des boutons / de l'extrémité « gomme » d'un stylet. Sous Windows, ces informations sont dans les
-//! messages `WM_POINTER*` (indicateurs `PEN_FLAG_ERASER` / `PEN_FLAG_INVERTED` de `POINTER_PEN_INFO`). Ce crate installe un *subclass* de la
-//! fenêtre qui lit ces messages sans les consommer et mémorise l'état ; l'application l'interroge avec [`eraser_active`].
+//! winit and egui do not pass on the state of a pen's buttons / "eraser" end. On Windows, this information is in the
+//! `WM_POINTER*` messages (`PEN_FLAG_ERASER` / `PEN_FLAG_INVERTED` flags of `POINTER_PEN_INFO`). This crate installs a window *subclass*
+//! that reads these messages without consuming them and remembers the state; the application queries it with [`eraser_active`].
 //!
-//! Sur les autres plateformes, [`install`] est sans effet et [`eraser_active`] renvoie toujours `false`.
+//! On other platforms, [`install`] has no effect and [`eraser_active`] always returns `false`.
 //!
-//! **Non validé sur du matériel réel** : la logique d'interprétation des indicateurs est testée, l'installation du *subclass* est testée sur une
-//! fenêtre factice, mais aucun stylet physique n'était disponible.
+//! **Not validated on real hardware**: the flag-interpretation logic is tested, and installing the *subclass* is tested on a
+//! dummy window, but no physical pen was available.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static ERASER: AtomicBool = AtomicBool::new(false);
 static LAST: Mutex<PenSample> = Mutex::new(PenSample::NONE);
 
-/// Type de pointeur vu en dernier.
+/// Type of the pointer seen last.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PointerKind {
     #[default]
@@ -25,17 +25,17 @@ pub enum PointerKind {
     Pen,
 }
 
-/// Dernière mesure du pointeur, telle que la voit Windows (pour le diagnostic du stylet).
+/// Last pointer sample, as seen by Windows (for pen diagnostics).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PenSample {
     pub kind: PointerKind,
-    /// Pression de 0.0 à 1.0 (stylet uniquement).
+    /// Pressure from 0.0 to 1.0 (pen only).
     pub pressure: f32,
     /// Indicateurs `PEN_FLAG_*` (stylet uniquement).
     pub flags: u32,
-    /// Inclinaison en degrés (stylet uniquement).
+    /// Tilt in degrees (pen only).
     pub tilt: (i32, i32),
-    /// Nombre total de mesures reçues (permet de détecter qu'une nouvelle est arrivée).
+    /// Total number of samples received (lets you detect that a new one has arrived).
     pub seq: u64,
 }
 
@@ -49,12 +49,12 @@ impl PenSample {
     }
 }
 
-/// Dernière mesure reçue (`PenSample::NONE` tant qu'aucun message n'est arrivé).
+/// Last sample received (`PenSample::NONE` until a message has arrived).
 pub fn last_sample() -> PenSample {
     *LAST.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Enregistre une mesure : met à jour l'état de la gomme et incrémente `seq` (usage interne et tests).
+/// Records a sample: updates the eraser state and increments `seq` (internal use and tests).
 pub fn record(mut s: PenSample) {
     let mut g = LAST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     s.seq = g.seq + 1;
@@ -62,22 +62,22 @@ pub fn record(mut s: PenSample) {
     ERASER.store(s.kind == PointerKind::Pen && s.eraser(), Ordering::Relaxed);
 }
 
-/// Indicateurs de stylet (valeurs de l'API Windows `PEN_FLAG_*`).
+/// Pen flags (values of the Windows API `PEN_FLAG_*`).
 pub const PEN_FLAG_BARREL: u32 = 0x0000_0001;
 pub const PEN_FLAG_INVERTED: u32 = 0x0000_0002;
 pub const PEN_FLAG_ERASER: u32 = 0x0000_0004;
 
-/// L'extrémité gomme est-elle utilisée d'après ces indicateurs ? (extrémité retournée, ou bouton « gomme » enfoncé)
+/// Is the eraser end in use according to these flags? (flipped end, or the "eraser" button pressed)
 pub fn eraser_from_flags(flags: u32) -> bool {
     flags & (PEN_FLAG_INVERTED | PEN_FLAG_ERASER) != 0
 }
 
-/// Vrai tant que le stylet approché ou posé est utilisé côté gomme.
+/// True while the approached or touching pen is used on its eraser side.
 pub fn eraser_active() -> bool {
     ERASER.load(Ordering::Relaxed)
 }
 
-/// Fixe l'état (usage interne et tests).
+/// Sets the state (internal use and tests).
 pub fn set_eraser(active: bool) {
     ERASER.store(active, Ordering::Relaxed);
 }
@@ -88,13 +88,13 @@ mod win;
 #[cfg(windows)]
 pub use win::install;
 
-/// Installe la détection sur la fenêtre `hwnd`. Sans effet hors Windows.
+/// Installs the detection on window `hwnd`. No effect outside Windows.
 #[cfg(not(windows))]
 pub fn install(_hwnd: std::num::NonZeroIsize) -> bool {
     false
 }
 
-/// Les tests partagent l'état global (dernier échantillon, gomme) : ils se sérialisent avec ce verrou.
+/// Tests share the global state (last sample, eraser): they serialize with this lock.
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -111,14 +111,14 @@ mod tests {
         assert_eq!((a.pressure, a.tilt), (0.5, (10, -5)));
         record(PenSample { kind: PointerKind::Mouse, ..PenSample::NONE });
         let b = last_sample();
-        assert!(!eraser_active(), "la souris n'est jamais la gomme");
+        assert!(!eraser_active(), "the mouse is never the eraser");
         assert_eq!(b.seq, a.seq + 1);
     }
 
     #[test]
     fn eraser_is_detected_from_pen_flags() {
         assert!(!eraser_from_flags(0));
-        assert!(!eraser_from_flags(PEN_FLAG_BARREL), "le bouton latéral n'est pas la gomme");
+        assert!(!eraser_from_flags(PEN_FLAG_BARREL), "the barrel button is not the eraser");
         assert!(eraser_from_flags(PEN_FLAG_INVERTED));
         assert!(eraser_from_flags(PEN_FLAG_ERASER));
         assert!(eraser_from_flags(PEN_FLAG_BARREL | PEN_FLAG_INVERTED));

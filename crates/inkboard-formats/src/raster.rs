@@ -1,9 +1,9 @@
-//! Rendu PNG d'un SVG exporté par le moteur (pur Rust, sans fenêtre).
+//! PNG rendering of an SVG exported by the engine (pure Rust, no window).
 
 use crate::common::FormatError;
 use resvg::{tiny_skia, usvg};
 
-/// Polices du système, chargées une seule fois (le chargement coûte plusieurs dizaines de millisecondes).
+/// System fonts, loaded only once (loading costs tens of milliseconds).
 fn system_fonts() -> std::sync::Arc<usvg::fontdb::Database> {
     static FONTS: std::sync::OnceLock<std::sync::Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
     FONTS
@@ -15,7 +15,7 @@ fn system_fonts() -> std::sync::Arc<usvg::fontdb::Database> {
         .clone()
 }
 
-/// Image décodée : largeur, hauteur et pixels RGBA **prémultipliés**.
+/// Decoded image: width, height and **premultiplied** RGBA pixels.
 #[derive(Debug)]
 pub struct Raster {
     pub width: u32,
@@ -23,7 +23,7 @@ pub struct Raster {
     pub rgba_premultiplied: Vec<u8>,
 }
 
-/// Rastérise un SVG. `with_fonts` : charge les polices du système (nécessaire seulement si le SVG contient du texte ; les icônes n'en ont pas).
+/// Rasterizes an SVG. `with_fonts`: loads the system fonts (only needed when the SVG contains text; icons have none).
 pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, FormatError> {
     let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
     let opt = usvg::Options { fontdb, ..usvg::Options::default() };
@@ -31,28 +31,28 @@ pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, 
     let size = tree.size();
     let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
-        return Err(FormatError::Unsupported("dimensions d'image invalides ou trop grandes".into()));
+        return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
     let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image trop grande".into()))?;
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
     Ok(Raster { width: w, height: h, rgba_premultiplied: pixmap.take() })
 }
 
-/// Convertit un SVG en PNG. `scale` : 1.0 = taille du SVG, 2.0 = double résolution.
+/// Converts an SVG to PNG. `scale`: 1.0 = SVG size, 2.0 = double resolution.
 pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, FormatError> {
     let opt = usvg::Options { fontdb: system_fonts(), ..usvg::Options::default() };
     let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG : {e}")))?;
     let size = tree.size();
     let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
-        return Err(FormatError::Unsupported("dimensions d'image invalides ou trop grandes".into()));
+        return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
     let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image trop grande".into()))?;
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
     pixmap.encode_png().map_err(|e| FormatError::Invalid(format!("PNG : {e}")))
 }
 
-/// Convertit un SVG en PDF vectoriel (texte et images conservés).
+/// Converts an SVG to vector PDF (text and images preserved).
 pub fn svg_to_pdf(svg: &str) -> Result<Vec<u8>, FormatError> {
     use svg2pdf::usvg as pdf_usvg;
     let mut fontdb = pdf_usvg::fontdb::Database::new();
@@ -82,7 +82,7 @@ mod tests {
         let r = svg_to_raster(svg, 2.0, false).unwrap();
         assert_eq!((r.width, r.height), (8, 4));
         assert_eq!(r.rgba_premultiplied.len(), 8 * 4 * 4);
-        // blanc à 50 % prémultiplié : canaux ≈ alpha ≈ 128
+        // 50 % premultiplied white: channels ≈ alpha ≈ 128
         let p = &r.rgba_premultiplied[0..4];
         assert!(p[3] > 120 && p[3] < 136 && p[0].abs_diff(p[3]) <= 2, "{p:?}");
     }

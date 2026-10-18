@@ -1,8 +1,8 @@
 name: Release
 
-# Publie des installeurs téléchargeables (GitHub Releases) quand on pousse une étiquette « v* » (ex. v0.1.0),
-# ou à la demande (workflow_dispatch : rien n'est publié, on vérifie seulement que les installeurs se construisent).
-# Les installeurs sont attachés directement à la Release (pas d'« artefacts » : le quota de stockage d'artefacts d'un compte gratuit est vite atteint).
+# Publishes downloadable installers (GitHub Releases) when a "v*" tag is pushed (e.g. v0.1.0),
+# or on demand (workflow_dispatch: nothing is published, we only check that the installers build).
+# Installers are attached directly to the Release (no "artifacts": a free account's artifact storage quota is quickly reached).
 on:
   push:
     tags: ["v*"]
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Créer la Release (pré-version si l'étiquette contient un tiret)
+      - name: Create the Release (pre-release if the tag contains a hyphen)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -41,25 +41,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Dépendances Linux (AppImage)
+      - name: Linux dependencies (AppImage)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libfuse2 libxkbcommon-dev libwayland-dev
 
-      - name: Vérifications
+      - name: Checks
         run: |
           cargo fmt --all --check
           cargo test --workspace
 
-      - name: Compilation
+      - name: Build
         run: cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp
 
-      - name: Outil d'empaquetage
+      - name: Packaging tool
         run: cargo install cargo-packager --locked
 
-      # --- Signature (facultative) ---------------------------------------------------------------
-      # Sans secrets, les installeurs sont produits NON SIGNÉS (avertissement SmartScreen sous Windows, Gatekeeper sous macOS).
-      # macOS : renseigner les secrets APPLE_CERTIFICATE (.p12 en base64), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-      #         APPLE_ID, APPLE_PASSWORD (mot de passe d'application), APPLE_TEAM_ID : cargo-packager signe et notarise.
+      # --- Signing (optional) ---------------------------------------------------------------
+      # Without secrets, installers are produced UNSIGNED (SmartScreen warning on Windows, Gatekeeper on macOS).
+      # macOS: set the secrets APPLE_CERTIFICATE (.p12 in base64), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+      #         APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID: cargo-packager signs and notarizes.
       # Windows : voir docs/DISTRIBUTION.md (SignPath Foundation, gratuit pour l'open source, ou Azure Trusted Signing).
       - name: Empaquetage
         env:
@@ -80,7 +80,7 @@ jobs:
           done
           ls -l
 
-      - name: Joindre les installeurs à la Release
+      - name: Attach the installers to the Release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:

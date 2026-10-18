@@ -1,15 +1,15 @@
-//! Boîtes englobantes, sélection au clic et au lasso.
+//! Bounding boxes, click and marquee selection.
 
 use crate::geom::{Pt, Rect, in_poly, seg_dist};
 use crate::model::{BoxGeom, Id, Kind, Object, Outline, Page};
 
 impl Page {
-    /// Boîte englobante (épaisseur du trait comprise) dans le repère monde.
+    /// Bounding box (stroke width included) in world coordinates.
     pub fn bounds(&self, o: &Object) -> Rect {
         self.bounds_with(o, &|id| self.get(id))
     }
 
-    /// Comme [`Page::bounds`], avec une recherche d'objet fournie (voir [`Page::index`]).
+    /// Like [`Page::bounds`], with a supplied object lookup (see [`Page::index`]).
     pub fn bounds_with<'a>(&self, o: &Object, get: &dyn Fn(&Id) -> Option<&'a Object>) -> Rect {
         let m = o.style.width / 2.0;
         match &o.kind {
@@ -25,22 +25,22 @@ impl Page {
         }
     }
 
-    /// Boîte englobante de plusieurs objets ; `None` si la liste est vide.
+    /// Bounding box of several objects; `None` when the list is empty.
     pub fn bounds_of(&self, ids: &[Id]) -> Option<Rect> {
         self.objects.iter().filter(|o| ids.contains(&o.id)).map(|o| self.bounds(o)).reduce(|a, b| a.union(&b))
     }
 
-    /// Boîte englobante de tout le contenu visible.
+    /// Bounding box of all the visible content.
     pub fn content_bounds(&self) -> Option<Rect> {
         self.objects.iter().filter(|o| self.is_visible(o)).map(|o| self.bounds(o)).reduce(|a, b| a.union(&b))
     }
 
-    /// Le point `p` touche-t-il l'objet (avec une tolérance `tol` en unités monde) ?
+    /// Does point `p` touch the object (with a tolerance `tol` in world units)?
     pub fn hit(&self, o: &Object, p: Pt, tol: f64) -> bool {
         self.hit_with(o, p, tol, &|id| self.get(id))
     }
 
-    /// Comme [`Page::hit`], avec une recherche d'objet fournie (voir [`crate::spatial::getter`]).
+    /// Like [`Page::hit`], with a supplied object lookup (see [`crate::spatial::getter`]).
     pub fn hit_with<'a>(&self, o: &Object, p: Pt, tol: f64, get: &dyn Fn(&Id) -> Option<&'a Object>) -> bool {
         let t = tol + o.style.width / 2.0;
         match &o.kind {
@@ -82,13 +82,13 @@ impl Page {
         }
     }
 
-    /// Objet le plus au premier plan sous le point, en ignorant calques masqués ou verrouillés.
+    /// Topmost object under the point, ignoring hidden or locked layers.
     pub fn pick(&self, p: Pt, tol: f64) -> Option<usize> {
         self.pick_with(p, tol, &|id| self.get(id), None)
     }
 
-    /// Comme [`Page::pick`] ; `candidates` (indices croissants, par ex. issus d'un [`crate::spatial::SpatialIndex`])
-    /// limite la recherche, sinon tous les objets sont examinés.
+    /// Like [`Page::pick`]; `candidates` (increasing indices, e.g. from a [`crate::spatial::SpatialIndex`])
+    /// limits the search, otherwise all objects are examined.
     pub fn pick_with<'a>(&self, p: Pt, tol: f64, get: &dyn Fn(&Id) -> Option<&'a Object>, candidates: Option<&[usize]>) -> Option<usize> {
         let ok = |i: usize| {
             let o = &self.objects[i];
@@ -100,7 +100,7 @@ impl Page {
         }
     }
 
-    /// Objet auquel un connecteur peut s'accrocher sous `p` (intérieur ou bord, remplissage indifférent).
+    /// Object a connector can attach to under `p` (inside or edge, fill irrelevant).
     pub fn attach_target(&self, p: Pt, tol: f64, exclude: &[Id]) -> Option<Id> {
         self.objects.iter().rev().find_map(|o| {
             if exclude.contains(&o.id) || !self.is_visible(o) || self.layer(&o.layer).is_some_and(|l| l.locked) {
@@ -123,7 +123,7 @@ impl Page {
         })
     }
 
-    /// Comme [`Page::objects_in_rect`], en s'appuyant sur un index spatial à jour.
+    /// Like [`Page::objects_in_rect`], relying on an up-to-date spatial index.
     pub fn objects_in_rect_idx(&self, r: Rect, contain: bool, idx: &crate::spatial::SpatialIndex) -> Vec<Id> {
         idx.query(r)
             .into_iter()
@@ -135,7 +135,7 @@ impl Page {
             .collect()
     }
 
-    /// Objets sélectionnables par un lasso : entièrement contenus (`contain`) ou simplement touchés.
+    /// Objects selectable by a marquee: entirely contained (`contain`) or merely touched.
     pub fn objects_in_rect(&self, r: Rect, contain: bool) -> Vec<Id> {
         self.objects
             .iter()
@@ -228,7 +228,7 @@ mod tests {
             b.frame.angle = std::f64::consts::FRAC_PI_2;
         }
         let p = Page::new("t");
-        // une fois tournée de 90°, la barre devient verticale autour de (100, 10)
+        // once rotated by 90°, the bar becomes vertical around (100, 10)
         assert!(p.hit(&o, Pt::new(100.0, 90.0), 1.0));
         assert!(!p.hit(&o, Pt::new(190.0, 10.0), 1.0));
     }
@@ -248,7 +248,7 @@ mod attach_tests {
         let id = o.id.clone();
         p.objects.push(o);
         assert_eq!(p.attach_target(Pt::new(50.0, 50.0), 2.0, &[]), Some(id.clone()));
-        assert_eq!(p.attach_target(Pt::new(2.0, 2.0), 0.0, &[]), None, "coin hors de l'ellipse");
+        assert_eq!(p.attach_target(Pt::new(2.0, 2.0), 0.0, &[]), None, "corner outside the ellipse");
         assert_eq!(p.attach_target(Pt::new(50.0, 50.0), 2.0, &[id]), None);
     }
 }

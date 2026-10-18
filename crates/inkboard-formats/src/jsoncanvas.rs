@@ -1,4 +1,4 @@
-//! JSON Canvas (`.canvas`, format ouvert d'Obsidian) : nœuds texte, groupes et liens.
+//! JSON Canvas (`.canvas`, Obsidian's open format): text nodes, groups and links.
 
 use crate::common::{FormatError, Imported, Report, parse_color};
 use inkboard_core::geom::Rect;
@@ -43,8 +43,8 @@ fn side_of(frame: &Frame, p: Pt) -> &'static str {
     }
 }
 
-/// Exporte une page. Seuls les objets « boîte » et les connecteurs qui relient deux boîtes sont représentables ;
-/// le deuxième résultat est le nombre d'éléments ignorés.
+/// Exports a page. Only "box" objects and connectors linking two boxes can be represented;
+/// the second result is the number of skipped elements.
 pub fn export(page: &Page) -> (String, usize) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
@@ -112,7 +112,7 @@ pub fn export(page: &Page) -> (String, usize) {
 
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
     let v: Value = serde_json::from_str(content)?;
-    let nodes = v.get("nodes").and_then(Value::as_array).ok_or_else(|| FormatError::Invalid("pas de liste de nœuds".into()))?;
+    let nodes = v.get("nodes").and_then(Value::as_array).ok_or_else(|| FormatError::Invalid("no list of nodes".into()))?;
     let mut doc = Document::new(name);
     let mut report = Report::default();
     let mut out: Vec<Object> = Vec::new();
@@ -196,11 +196,11 @@ mod tests {
         let v: Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["nodes"].as_array().unwrap().len(), 6);
         let edges = v["edges"].as_array().unwrap();
-        assert_eq!(edges.len(), 1, "seule la flèche liée à deux boîtes est représentable");
-        assert_eq!(edges[0]["label"], "oui");
+        assert_eq!(edges.len(), 1, "only the arrow bound to two boxes can be represented");
+        assert_eq!(edges[0]["label"], "yes");
         assert_eq!(edges[0]["toEnd"], "arrow");
         assert_eq!(edges[0]["fromEnd"], "none");
-        assert_eq!(dropped, 3, "flèche libre + crayon + image");
+        assert_eq!(dropped, 3, "free arrow + pen + image");
     }
 
     #[test]
@@ -210,7 +210,7 @@ mod tests {
           {"id":"b","type":"text","text":"Deux","x":400,"y":0,"width":200,"height":80,"color":"#ff0000"},
           {"id":"f","type":"file","file":"notes/a.md","x":0,"y":200,"width":200,"height":80},
           {"id":"g","type":"group","label":"Groupe","x":-20,"y":-40,"width":700,"height":400},
-          {"id":"x","type":"inconnu","x":0,"y":0,"width":1,"height":1}
+          {"id":"x","type":"unknown","x":0,"y":0,"width":1,"height":1}
         ],"edges":[
           {"id":"e1","fromNode":"a","toNode":"b","fromSide":"right","toSide":"left","label":"lien"},
           {"id":"e2","fromNode":"a","toNode":"manquant"},
@@ -218,18 +218,18 @@ mod tests {
         ]}"##;
         let r = import(src, "ob", &ApproxMeasurer).unwrap();
         let p = &r.doc.pages[0];
-        assert_eq!(r.report.skipped, 2, "type inconnu + arête cassée");
+        assert_eq!(r.report.skipped, 2, "unknown type + broken edge");
         assert_eq!(r.report.approximated, 1);
         let conns: Vec<&Connector> = p.objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
         assert_eq!(conns.len(), 2);
         assert!(matches!(conns[0].start, End::Bound { anchor: Anchor::Frac { fx, .. }, .. } if fx == 1.0));
-        assert_eq!(conns[0].head_end, Arrowhead::Triangle, "toEnd par défaut = flèche");
+        assert_eq!(conns[0].head_end, Arrowhead::Triangle, "toEnd by default = arrow");
         assert_eq!(conns[1].head_end, Arrowhead::None);
         assert_eq!(conns[1].head_start, Arrowhead::Triangle);
         assert!(p.connector_path(conns[0]).is_some());
         let a = p.objects.iter().find(|o| matches!(&o.kind, Kind::Box(b) if b.label.text.to_plain() == "Un")).unwrap();
         assert_eq!(a.style.stroke, Color::Rgb(0x2f, 0x9e, 0x44));
-        assert!(p.objects.iter().any(|o| o.style.dash == Dash::Dashed), "groupe en pointillés");
+        assert!(p.objects.iter().any(|o| o.style.dash == Dash::Dashed), "dotted group");
         assert!(p.objects.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.label.text.to_plain() == "Groupe")));
     }
 

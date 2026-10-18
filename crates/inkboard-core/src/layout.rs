@@ -1,7 +1,7 @@
-//! Mise en page automatique de graphes (algorithme en couches, type Sugiyama).
+//! Automatic graph layout (layered algorithm, Sugiyama style).
 //!
-//! Utilisé pour les diagrammes importés (Mermaid) et pour la commande
-//! « mise en page automatique » sur des formes déjà reliées par des connecteurs.
+//! Used for imported diagrams (Mermaid) and for the
+//! "automatic layout" command on shapes already linked by connectors.
 
 use crate::connector::Route;
 use crate::editor::Editor;
@@ -25,25 +25,25 @@ pub struct NodeSpec {
 
 #[derive(Clone, Debug, Default)]
 pub struct Layout {
-    /// Centre de chaque nœud (même ordre que l'entrée).
+    /// Center of each node (same order as the input).
     pub centers: Vec<Pt>,
-    /// Pour chaque arête : points de passage de `from` à `to`, extrémités (centres) comprises.
-    /// Vide pour une boucle ou une arête invalide.
+    /// For each edge: waypoints from `from` to `to`, ends (centers) included.
+    /// Empty for a loop or an invalid edge.
     pub routes: Vec<Vec<Pt>>,
 }
 
 #[derive(Clone, Copy)]
 struct Item {
-    a: f64, // taille le long de l'axe des rangs
-    b: f64, // taille transversale
+    a: f64, // size along the rank axis
+    b: f64, // cross size
     rank: usize,
 }
 
 const NODE_SEP: f64 = 48.0;
 const RANK_SEP: f64 = 84.0;
 
-/// Calcule une disposition lisible : rangs par chemin le plus long, cycles cassés,
-/// arêtes longues traversant des nœuds relais, réduction des croisements par barycentres.
+/// Computes a readable layout: ranks by longest path, cycles broken,
+/// long edges passing through relay nodes, crossing reduction by barycenters.
 pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> Layout {
     let n = nodes.len();
     if n == 0 {
@@ -52,10 +52,10 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
     let horiz = matches!(dir, Direction::LeftRight | Direction::RightLeft);
     let mut items: Vec<Item> = nodes.iter().map(|s| Item { a: if horiz { s.w } else { s.h }, b: if horiz { s.h } else { s.w }, rank: 0 }).collect();
 
-    // arêtes valides (index dans `edges`)
+    // valid edges (index into `edges`)
     let valid: Vec<usize> = (0..edges.len()).filter(|&i| edges[i].0 != edges[i].1 && edges[i].0 < n && edges[i].1 < n).collect();
 
-    // 1. casser les cycles (DFS itératif)
+    // 1. break the cycles (iterative DFS)
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
     for &i in &valid {
         adj[edges[i].0].push(i);
@@ -90,7 +90,7 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
     let oriented: Vec<(usize, usize, usize)> =
         valid.iter().map(|&i| if reversed[i] { (edges[i].1, edges[i].0, i) } else { (edges[i].0, edges[i].1, i) }).collect();
 
-    // 2. rangs : chemin le plus long (Kahn)
+    // 2. ranks: longest path (Kahn)
     let mut indeg = vec![0usize; n];
     let mut out: Vec<Vec<usize>> = vec![Vec::new(); n];
     for &(u, v, _) in &oriented {
@@ -111,8 +111,8 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
         }
     }
 
-    // 3. nœuds relais pour les arêtes qui sautent des rangs
-    let mut chains: Vec<(usize, Vec<usize>)> = Vec::new(); // (index d'arête d'origine, chaîne orientée)
+    // 3. relay nodes for the edges that skip ranks
+    let mut chains: Vec<(usize, Vec<usize>)> = Vec::new(); // (original edge index, oriented chain)
     for &(u, v, ei) in &oriented {
         let mut chain = vec![u];
         for r in items[u].rank + 1..items[v].rank {
@@ -137,7 +137,7 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
         }
     }
 
-    // 4. ordre dans les rangs (barycentres, balayages alternés)
+    // 4. order within ranks (barycenters, alternating sweeps)
     let mut pos = vec![0usize; total];
     let reindex = |l: &Vec<usize>, pos: &mut Vec<usize>| l.iter().enumerate().for_each(|(i, &id)| pos[id] = i);
     for l in &layers {
@@ -157,7 +157,7 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
         }
     }
 
-    // 5. coordonnées transversales
+    // 5. cross coordinates
     let mut cx = vec![0.0f64; total];
     for l in &layers {
         let mut x = 0.0;
@@ -202,7 +202,7 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
         }
     }
 
-    // 6. coordonnées le long des rangs
+    // 6. coordinates along the ranks
     let mut ra = vec![0.0f64; max_rank + 1];
     let mut prev = 0.0;
     for (r, l) in layers.iter().enumerate() {
@@ -230,8 +230,8 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
     Layout { centers: (0..n).map(place).collect(), routes }
 }
 
-/// Réorganise les formes sélectionnées d'après les connecteurs qui les relient.
-/// Les connecteurs concernés reçoivent des points de passage pour contourner les rangs intermédiaires.
+/// Rearranges the selected shapes according to the connectors that link them.
+/// The connectors concerned receive waypoints to go around the intermediate ranks.
 pub fn auto_layout(editor: &mut Editor, ids: &[Id], dir: Direction) {
     let page = editor.page().clone();
     let nodes: Vec<&crate::model::Object> = page.objects.iter().filter(|o| ids.contains(&o.id) && o.is_attachable() && !page.is_locked(o)).collect();
@@ -330,22 +330,22 @@ mod tests {
         let edges = [(0, 1), (1, 2), (2, 0), (1, 1)];
         let l = layered(&nodes, &edges, Direction::TopDown);
         assert!(!overlaps(&l, &nodes));
-        // l'arête retour 2→0 : la route part bien du centre du nœud 2 et arrive au nœud 0
+        // the back edge 2→0: the route does start at the center of node 2 and arrives at node 0
         let r = &l.routes[2];
         assert!(r.first().unwrap().dist(l.centers[2]) < 1e-6);
         assert!(r.last().unwrap().dist(l.centers[0]) < 1e-6);
-        assert!(l.routes[3].is_empty(), "une boucle n'a pas de route");
+        assert!(l.routes[3].is_empty(), "a loop has no route");
     }
 
     #[test]
     fn long_edges_get_relay_points_and_no_overlap_in_diamond() {
         let nodes = vec![spec(100.0, 50.0); 5];
-        // 0→1→2→3 et 0→3 (arête longue) et 0→4
+        // 0→1→2→3 and 0→3 (long edge) and 0→4
         let edges = [(0, 1), (1, 2), (2, 3), (0, 3), (0, 4)];
         let l = layered(&nodes, &edges, Direction::TopDown);
-        assert_eq!(l.routes[3].len(), 4, "0→3 saute deux rangs : deux relais");
+        assert_eq!(l.routes[3].len(), 4, "0→3 skips two ranks: two relays");
         assert!(!overlaps(&l, &nodes));
-        // les relais ne tombent pas sur un nœud
+        // relays do not land on a node
         for p in &l.routes[3][1..3] {
             for (c, s) in l.centers.iter().zip(&nodes) {
                 assert!((p.x - c.x).abs() > s.w / 2.0 || (p.y - c.y).abs() > s.h / 2.0);
@@ -359,7 +359,7 @@ mod tests {
         let nodes = vec![spec(60.0, 30.0); 4];
         let l = layered(&nodes, &[], Direction::TopDown);
         assert!(!overlaps(&l, &nodes));
-        let l = layered(&nodes, &[(9, 0)], Direction::TopDown); // arête invalide ignorée
+        let l = layered(&nodes, &[(9, 0)], Direction::TopDown); // invalid edge ignored
         assert!(l.routes[0].is_empty());
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "inkboard-pen"
-description = "Détection de la gomme du stylet (extrémité « gomme » ou bouton) via l'API Pointer de Windows, que winit/egui n'exposent pas."
+description = "Pen eraser detection (\"eraser\" end or button) through the Windows Pointer API, which winit/egui do not expose."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

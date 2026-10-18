@@ -1,10 +1,11 @@
-//! Édition de texte riche : sélection de mots, gras / italique / souligné / barré, couleur, surlignage.
+//! Rich-text editing: word selection, bold / italic / underline / strikethrough, color, highlight.
 //!
-//! La chaîne brute (`buf`) reste la source du champ de saisie ; `rich` porte les styles et suit chaque frappe
-//! (`RichText::apply_edit`). Le champ affiche les styles grâce à un `layouter`.
+//! The raw string (`buf`) remains the source of the input field; `rich` carries the styles and follows every keystroke
+//! (`RichText::apply_edit`). The field displays the styles through a `layouter`.
 
 use crate::app::App;
 use crate::fonts::font_id;
+use crate::i18n::t;
 use crate::keymap::Action;
 use crate::render::{Cam, col, label_screen_rect};
 use eframe::egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
@@ -16,19 +17,19 @@ use std::sync::Arc;
 
 pub struct Editing {
     pub id: Id,
-    /// Texte brut du champ de saisie.
+    /// Raw text of the input field.
     pub buf: String,
-    /// Même contenu, avec les styles.
+    /// Same content, with the styles.
     pub rich: RichText,
-    /// Dernière chaîne à laquelle `rich` correspond.
+    /// Last string `rich` corresponds to.
     pub synced: String,
     pub cell: Option<(usize, usize)>,
-    /// Objet créé à l'instant : s'il reste vide, on annule sa création.
+    /// Object just created: if it stays empty, its creation is undone.
     pub fresh: bool,
     pub focused: bool,
-    /// Sélection courante, en caractères (début ≤ fin).
+    /// Current selection, in characters (start ≤ end).
     pub sel: (usize, usize),
-    /// Sélection à rétablir après un clic sur la barre de mise en forme.
+    /// Selection to restore after a click on the formatting bar.
     pub restore_sel: Option<(usize, usize)>,
 }
 
@@ -118,8 +119,8 @@ impl App {
         }
     }
 
-    /// Applique une mise en forme : à la sélection du champ de saisie s'il est ouvert
-    /// (tout le texte si rien n'est sélectionné), sinon à tout le texte des objets sélectionnés.
+    /// Applies a format: to the selection of the input field when it is open
+    /// (all the text when nothing is selected), otherwise to all the text of the selected objects.
     pub fn apply_format(&mut self, f: Format) {
         if let Some(e) = self.editing.as_mut() {
             if e.synced != e.buf {
@@ -153,7 +154,7 @@ impl App {
         self.ed.update_many(&ids, |o| {
             for t in texts_mut(o) {
                 let n = t.len_chars();
-                // si tout est déjà actif on retire ; sinon on s'assure que c'est appliqué partout
+                // if everything is already active remove it; otherwise make sure it is applied everywhere
                 if n > 0 && (all_active || !f.is_active(t, 0, n)) {
                     t.format(0, n, f);
                 }
@@ -164,7 +165,7 @@ impl App {
         });
     }
 
-    /// Mise en forme du texte sélectionné (ou en cours d'édition) : état « tout actif » pour la barre.
+    /// Format of the selected (or edited) text: "all active" state for the bar.
     pub fn format_active(&self, f: Format) -> bool {
         if let Some(e) = &self.editing {
             let len = e.rich.len_chars();
@@ -189,7 +190,7 @@ impl App {
     }
 }
 
-/// Spans → texte mis en forme egui.
+/// Spans → egui formatted text.
 #[allow(clippy::too_many_arguments)]
 fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark: bool, wrap: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
@@ -216,7 +217,7 @@ fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark:
     job
 }
 
-/// Barre flottante de mise en forme ; renvoie l'action choisie.
+/// Floating formatting bar; returns the chosen action.
 fn format_bar(ui: &mut egui::Ui, app: &App) -> Option<Format> {
     let mut action = None;
     ui.horizontal(|ui| {
@@ -230,12 +231,12 @@ fn format_bar(ui: &mut egui::Ui, app: &App) -> Option<Format> {
             };
             if ui
                 .selectable_label(app.format_active(f), t)
-                .on_hover_text(match f {
-                    Format::Bold => "Gras (Ctrl+B)",
-                    Format::Italic => "Italique (Ctrl+I)",
-                    Format::Underline => "Souligné (Ctrl+U)",
-                    _ => "Barré",
-                })
+                .on_hover_text(crate::i18n::t(match f {
+                    Format::Bold => "Bold (Ctrl+B)",
+                    Format::Italic => "Italic (Ctrl+I)",
+                    Format::Underline => "Underline (Ctrl+U)",
+                    _ => "Strikethrough",
+                }))
                 .clicked()
             {
                 action = Some(f);
@@ -245,7 +246,7 @@ fn format_bar(ui: &mut egui::Ui, app: &App) -> Option<Format> {
         ui.label("A");
         for c in PALETTE.iter().skip(1) {
             let on = app.format_active(Format::Color(Some(*c)));
-            if swatch(ui, *c, on, "Couleur du texte").clicked() {
+            if swatch(ui, *c, on, "Text color").clicked() {
                 action = Some(Format::Color(Some(*c)));
             }
         }
@@ -253,12 +254,12 @@ fn format_bar(ui: &mut egui::Ui, app: &App) -> Option<Format> {
         ui.label("🖍");
         for c in HIGHLIGHTS {
             let on = app.format_active(Format::Highlight(Some(c)));
-            if swatch(ui, c, on, "Surligner").clicked() {
+            if swatch(ui, c, on, "Highlight").clicked() {
                 action = Some(Format::Highlight(Some(c)));
             }
         }
         ui.separator();
-        if ui.button("Effacer").on_hover_text("Retirer la mise en forme").clicked() {
+        if ui.button(t("Clear")).on_hover_text(t("Remove the formatting")).clicked() {
             action = Some(Format::Clear);
         }
     });
@@ -275,10 +276,10 @@ fn swatch(ui: &mut egui::Ui, c: Color, active: bool, tip: &str) -> egui::Respons
         Stroke::new(if active { 2.5 } else { 1.0_f32 }, if active { Color32::from_rgb(0x4f, 0x6d, 0xf5) } else { Color32::from_black_alpha(70) }),
         egui::StrokeKind::Middle,
     );
-    resp.on_hover_text(tip)
+    resp.on_hover_text(t(tip))
 }
 
-/// Champ de saisie superposé à l'objet édité, avec sa barre de mise en forme.
+/// Input field overlaid on the edited object, with its formatting bar.
 pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     let dark = app.ed.doc.background.preset.is_dark();
     let Some(ed) = app.editing.as_ref() else { return };
@@ -331,7 +332,7 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     };
     let size = size.max(8.0);
 
-    // raccourcis de mise en forme (consommés avant que le champ ne les voie)
+    // formatting shortcuts (consumed before the field sees them)
     let key_fmt = {
         let formats =
             [(Action::Bold, Format::Bold), (Action::Italic, Format::Italic), (Action::Underline, Format::Underline), (Action::Strike, Format::Strike)];
@@ -342,7 +343,7 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         app.apply_format(f);
     }
 
-    // barre de mise en forme
+    // formatting bar
     let bar_pos = {
         let y = if area.top() > 70.0 { area.top() - 44.0 } else { area.bottom() + 8.0 };
         egui::pos2(area.left().max(60.0), y)

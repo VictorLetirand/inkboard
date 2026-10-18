@@ -1,9 +1,9 @@
-//! Géométrie 2D : points, rectangles, cadres tournés, utilitaires de distance.
+//! 2D geometry: points, rectangles, rotated frames, distance utilities.
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg, Sub};
 
-/// Un point (ou un vecteur) du plan, en unités monde.
+/// A point (or a vector) of the plane, in world units.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Pt {
     pub x: f64,
@@ -28,12 +28,12 @@ impl Pt {
     pub fn lerp(self, o: Pt, t: f64) -> Pt {
         self + (o - self) * t
     }
-    /// Vecteur unitaire (ou zéro si le vecteur est nul).
+    /// Unit vector (or zero when the vector is zero).
     pub fn normalized(self) -> Pt {
         let l = self.len();
         if l < 1e-12 { Pt::ZERO } else { self * (1.0 / l) }
     }
-    /// Rotation d'un angle `a` (radians) autour de `c`.
+    /// Rotation by an angle `a` (radians) around `c`.
     pub fn rotate(self, c: Pt, a: f64) -> Pt {
         let (s, co) = a.sin_cos();
         let d = self - c;
@@ -66,7 +66,7 @@ impl Neg for Pt {
     }
 }
 
-/// Rectangle aligné sur les axes.
+/// Axis-aligned rectangle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: f64,
@@ -79,11 +79,11 @@ impl Rect {
     pub const fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
         Self { x, y, w, h }
     }
-    /// Rectangle normalisé passant par deux coins quelconques.
+    /// Normalized rectangle through any two corners.
     pub fn from_corners(a: Pt, b: Pt) -> Self {
         Self::new(a.x.min(b.x), a.y.min(b.y), (a.x - b.x).abs(), (a.y - b.y).abs())
     }
-    /// Boîte englobante d'un ensemble de points ; `None` si vide.
+    /// Bounding box of a set of points; `None` when empty.
     pub fn from_points<I: IntoIterator<Item = Pt>>(it: I) -> Option<Self> {
         let mut it = it.into_iter();
         let first = it.next()?;
@@ -127,7 +127,7 @@ impl Rect {
     }
 }
 
-/// Boîte (x, y, largeur, hauteur) avec rotation autour de son centre.
+/// Box (x, y, width, height) with rotation around its center.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
     pub x: f64,
@@ -155,7 +155,7 @@ impl Frame {
     pub fn center(&self) -> Pt {
         Pt::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
     }
-    /// Position dans le repère local : origine au centre, sans rotation.
+    /// Position in the local frame: origin at the center, no rotation.
     pub fn to_local(&self, p: Pt) -> Pt {
         let c = self.center();
         let d = p - c;
@@ -172,7 +172,7 @@ impl Frame {
         let (hw, hh) = (self.w / 2.0, self.h / 2.0);
         [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)].map(|(x, y)| self.to_world(Pt::new(x, y)))
     }
-    /// Boîte englobante alignée sur les axes (tient compte de la rotation).
+    /// Axis-aligned bounding box (takes the rotation into account).
     pub fn aabb(&self) -> Rect {
         if self.angle == 0.0 {
             return self.rect();
@@ -181,7 +181,7 @@ impl Frame {
     }
 }
 
-/// Distance d'un point `p` au segment `[a, b]`.
+/// Distance from a point `p` to the segment `[a, b]`.
 pub fn seg_dist(p: Pt, a: Pt, b: Pt) -> f64 {
     let d = b - a;
     let l2 = d.dot(d);
@@ -189,7 +189,7 @@ pub fn seg_dist(p: Pt, a: Pt, b: Pt) -> f64 {
     p.dist(a + d * t)
 }
 
-/// Test d'appartenance d'un point à un polygone (règle pair-impair).
+/// Point-in-polygon test (even-odd rule).
 pub fn in_poly(poly: &[Pt], p: Pt) -> bool {
     let mut inside = false;
     let mut j = poly.len().wrapping_sub(1);
@@ -203,7 +203,7 @@ pub fn in_poly(poly: &[Pt], p: Pt) -> bool {
     inside
 }
 
-/// Première intersection (t > 0) d'un rayon avec les arêtes d'un polygone fermé.
+/// First intersection (t > 0) of a ray with the edges of a closed polygon.
 pub fn ray_poly_hit(poly: &[Pt], origin: Pt, dir: Pt) -> Option<Pt> {
     let mut best: Option<f64> = None;
     for i in 0..poly.len() {
@@ -223,7 +223,7 @@ pub fn ray_poly_hit(poly: &[Pt], origin: Pt, dir: Pt) -> Option<Pt> {
     best.map(|t| origin + dir * t)
 }
 
-/// Indices des points conservés par la simplification de Ramer–Douglas–Peucker.
+/// Indices of the points kept by the Ramer–Douglas–Peucker simplification.
 pub fn rdp_indices(pts: &[Pt], eps: f64) -> Vec<usize> {
     if pts.len() < 3 {
         return (0..pts.len()).collect();
@@ -250,7 +250,7 @@ pub fn rdp_indices(pts: &[Pt], eps: f64) -> Vec<usize> {
     keep.iter().enumerate().filter_map(|(i, k)| k.then_some(i)).collect()
 }
 
-/// Simplification de Ramer–Douglas–Peucker.
+/// Ramer–Douglas–Peucker simplification.
 pub fn rdp(pts: &[Pt], eps: f64) -> Vec<Pt> {
     rdp_indices(pts, eps).into_iter().map(|i| pts[i]).collect()
 }

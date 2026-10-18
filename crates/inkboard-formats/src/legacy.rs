@@ -1,4 +1,4 @@
-//! Import des tableaux enregistrés par le prototype web (`.tableau.json` version 1).
+//! Import of the boards saved by the web prototype (`.tableau.json` version 1).
 
 use crate::common::{FormatError, Imported, Report, parse_color, parse_data_url};
 use inkboard_core::*;
@@ -18,8 +18,8 @@ fn color(v: &Value, k: &str) -> Option<Color> {
 
 pub fn import(content: &str) -> Result<Imported, FormatError> {
     let v: Value = serde_json::from_str(content)?;
-    let objs = v.get("objects").and_then(Value::as_array).ok_or_else(|| FormatError::Invalid("pas de liste d'objets".into()))?;
-    let mut doc = Document::new(s(&v, "name").unwrap_or("Importé"));
+    let objs = v.get("objects").and_then(Value::as_array).ok_or_else(|| FormatError::Invalid("no list of objects".into()))?;
+    let mut doc = Document::new(s(&v, "name").unwrap_or("Imported"));
     doc.background = Background {
         preset: match s(&v, "bg").unwrap_or("white") {
             "cream" => BgPreset::Cream,
@@ -173,7 +173,7 @@ mod tests {
         {"id":"e","type":"text","x":50,"y":400,"w":80,"h":26,"angle":0,"stroke":"ink","fill":"transparent","sw":0,"opacity":1,"text":"Libre","font":"mono","fontSize":20,"align":"left","locked":true},
         {"id":"f","type":"image","x":600,"y":0,"w":40,"h":30,"angle":0,"stroke":"ink","fill":"transparent","sw":0,"opacity":1,"asset":"img1"},
         {"id":"g","type":"image","x":0,"y":0,"w":10,"h":10,"asset":"manquant"},
-        {"id":"h","type":"inconnu"}
+        {"id":"h","type":"unknown"}
       ],
       "assets":{"img1":"data:image/png;base64,AQIDBA=="}
     }"##;
@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(d.name, "Ancien");
         assert_eq!(d.background.preset, BgPreset::Slate);
         assert_eq!(d.background.pattern, Pattern::Grid);
-        assert_eq!(r.report.skipped, 2, "image sans ressource + type inconnu");
+        assert_eq!(r.report.skipped, 2, "image without an asset + unknown type");
         let p = &d.pages[0];
         assert_eq!(p.objects.len(), 6);
         assert_eq!(p.view.zoom, 1.5);
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(p.objects[0].style.dash, Dash::Dashed);
         assert!(p.objects[0].style.roundness > 0.0);
         assert_eq!(p.objects[0].style.fill, Some(Color::Rgb(0xa5, 0xd8, 0xff)));
-        // ligne : extrémités libres converties en coordonnées monde, tête de flèche conservée
+        // line: free ends converted to world coordinates, arrowhead kept
         let Kind::Connector(c) = &p.objects[2].kind else { panic!() };
         assert_eq!(c.head_end, Arrowhead::Arrow);
         assert_eq!(c.head_start, Arrowhead::None);
@@ -216,7 +216,7 @@ mod tests {
         let j = r##"{"objects":[{"id":"p","type":"pen","x":0,"y":0,"w":100,"h":0,"angle":1.5707963267948966,"stroke":"ink","sw":3,"opacity":1,"pts":[[0,0],[1,0]]}]}"##;
         let r = import(j).unwrap();
         let Kind::Pen(p) = &r.doc.pages[0].objects[0].kind else { panic!() };
-        // trait horizontal de 100 centré en (50, 0), tourné de 90° → vertical
+        // horizontal stroke of 100 centered at (50, 0), rotated by 90° → vertical
         assert!((p.pts[0].x - 50.0).abs() < 1e-6 && (p.pts[1].x - 50.0).abs() < 1e-6);
         assert!((p.pts[0].y - p.pts[1].y).abs() > 99.0);
     }
@@ -224,6 +224,6 @@ mod tests {
     #[test]
     fn rejects_non_board_json() {
         assert!(import("{}").is_err());
-        assert!(import("pas du json").is_err());
+        assert!(import("not json").is_err());
     }
 }

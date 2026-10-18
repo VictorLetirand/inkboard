@@ -1,7 +1,8 @@
-//! Surveillance du fichier ouvert : un autre programme (par exemple un agent via `inkboard-mcp`) peut le modifier sur le disque.
-//! Sans modification locale en cours, le tableau est rechargé ; sinon un avertissement est affiché (l'enregistrement écrasera le fichier).
+//! Watching the open file: another program (for example an agent through `inkboard-mcp`) may modify it on disk.
+//! Without pending local changes the board is reloaded; otherwise a warning is shown (saving will overwrite the file).
 
 use crate::app::App;
+use crate::i18n::t;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -10,7 +11,7 @@ pub fn mtime(p: &Path) -> Option<SystemTime> {
 }
 
 impl App {
-    /// À appeler à chaque image ; ne touche au disque qu'une fois toutes les 400 ms.
+    /// Call on every frame; only touches the disk every 400 ms.
     pub fn watch_file(&mut self) {
         if self.last_watch.elapsed() < Duration::from_millis(400) {
             return;
@@ -23,12 +24,12 @@ impl App {
         }
         self.disk_mtime = now;
         if self.dirty() {
-            return self.toast("Le fichier a été modifié sur le disque : enregistrer écrasera ces modifications");
+            return self.toast(&t("The file was modified on disk: saving will overwrite those changes"));
         }
         let Ok(content) = std::fs::read_to_string(&path) else { return };
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let Ok(imp) = inkboard_formats::import_any(name, &content, &self.measurer) else { return };
-        // conserve la page affichée et les vues (zoom, position) des pages qui existent encore
+        // keep the displayed page and the views (zoom, position) of the pages that still exist
         let (current, views): (_, Vec<_>) = (self.ed.current.clone(), self.ed.doc.pages.iter().map(|p| (p.id.clone(), p.view)).collect());
         let mut doc = imp.doc;
         for p in &mut doc.pages {
@@ -45,6 +46,6 @@ impl App {
         self.editing = None;
         self.textures.clear();
         self.saved_rev = self.ed.revision();
-        self.toast("Tableau mis à jour (modifié par un autre programme)");
+        self.toast(&t("Board updated (modified by another program)"));
     }
 }

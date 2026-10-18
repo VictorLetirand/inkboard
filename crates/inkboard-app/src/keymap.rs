@@ -1,11 +1,11 @@
-//! Raccourcis clavier personnalisables : actions, combinaisons, fichier de réglages.
+//! Customizable keyboard shortcuts: actions, key combinations, settings file.
 
 use crate::tools::Tool;
 use eframe::egui::{Key, Modifiers};
 use inkboard_core::BoxGeom;
 use std::collections::BTreeMap;
 
-/// Commande de l'application que l'on peut lier à un raccourci.
+/// Application command that can be bound to a shortcut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Action {
     New,
@@ -96,7 +96,7 @@ impl Action {
         Action::Present,
     ];
 
-    /// Identifiant stable utilisé dans le fichier de réglages.
+    /// Stable identifier used in the settings file.
     pub fn id(self) -> &'static str {
         match self {
             Action::New => "file.new",
@@ -149,60 +149,58 @@ impl Action {
 
     pub fn label(self) -> &'static str {
         match self {
-            Action::New => "Nouveau tableau",
-            Action::Open => "Ouvrir / importer",
-            Action::Save => "Enregistrer",
-            Action::SaveAs => "Enregistrer sous",
-            Action::Undo => "Annuler",
-            Action::Redo => "Rétablir",
-            Action::SelectAll => "Tout sélectionner",
-            Action::Duplicate => "Dupliquer",
-            Action::Delete => "Supprimer",
-            Action::Group => "Grouper",
-            Action::Ungroup => "Dégrouper",
-            Action::Front => "Premier plan",
-            Action::Forward => "Avancer",
-            Action::Backward => "Reculer",
-            Action::Back => "Arrière-plan",
+            Action::New => "New board",
+            Action::Open => "Open / import",
+            Action::Save => "Save",
+            Action::SaveAs => "Save as",
+            Action::Undo => "Undo",
+            Action::Redo => "Redo",
+            Action::SelectAll => "Select all",
+            Action::Duplicate => "Duplicate",
+            Action::Delete => "Delete",
+            Action::Group => "Group",
+            Action::Ungroup => "Ungroup",
+            Action::Front => "Bring to front",
+            Action::Forward => "Bring forward",
+            Action::Backward => "Send backward",
+            Action::Back => "Send to back",
             Action::Zoom100 => "Zoom 100 %",
-            Action::ZoomFit => "Tout afficher",
-            Action::ZoomIn => "Zoom avant",
-            Action::ZoomOut => "Zoom arrière",
-            Action::EditText => "Modifier le texte",
-            Action::Bold => "Gras",
-            Action::Italic => "Italique",
-            Action::Underline => "Souligné",
-            Action::Strike => "Barré",
-            Action::ToolLock => "Garder l'outil actif",
-            Action::ToolSelect => "Outil : sélection",
-            Action::ToolHand => "Outil : main",
-            Action::ToolPen => "Outil : crayon",
-            Action::ToolHighlighter => "Outil : surligneur",
-            Action::ToolEraser => "Outil : gomme",
-            Action::ToolRect => "Outil : rectangle",
-            Action::ToolEllipse => "Outil : ellipse",
-            Action::ToolDiamond => "Outil : losange",
-            Action::ToolTriangle => "Outil : triangle",
-            Action::ToolLine => "Outil : ligne",
-            Action::ToolArrow => "Outil : flèche",
-            Action::ToolText => "Outil : texte",
-            Action::ToolSticky => "Outil : note adhésive",
-            Action::ToolTable => "Outil : tableau",
-            Action::ToolLaser => "Outil : pointeur laser",
-            Action::Present => "Présenter en plein écran",
+            Action::ZoomFit => "Fit all",
+            Action::ZoomIn => "Zoom in",
+            Action::ZoomOut => "Zoom out",
+            Action::EditText => "Edit text",
+            Action::Bold => "Bold",
+            Action::Italic => "Italic",
+            Action::Underline => "Underline",
+            Action::Strike => "Strikethrough",
+            Action::ToolLock => "Keep the tool active",
+            Action::ToolSelect => "Tool: select",
+            Action::ToolHand => "Tool: hand",
+            Action::ToolPen => "Tool: pen",
+            Action::ToolHighlighter => "Tool: highlighter",
+            Action::ToolEraser => "Tool: eraser",
+            Action::ToolRect => "Tool: rectangle",
+            Action::ToolEllipse => "Tool: ellipse",
+            Action::ToolDiamond => "Tool: diamond",
+            Action::ToolTriangle => "Tool: triangle",
+            Action::ToolLine => "Tool: line",
+            Action::ToolArrow => "Tool: arrow",
+            Action::ToolText => "Tool: text",
+            Action::ToolSticky => "Tool: sticky note",
+            Action::ToolTable => "Tool: table",
+            Action::ToolLaser => "Tool: laser pointer",
+            Action::Present => "Present full screen",
         }
     }
 
     pub fn group(self) -> &'static str {
         match self {
-            Action::New | Action::Open | Action::Save | Action::SaveAs => "Fichier",
-            Action::Undo | Action::Redo | Action::SelectAll | Action::Duplicate | Action::Delete | Action::Group | Action::Ungroup | Action::EditText => {
-                "Édition"
-            }
-            Action::Front | Action::Forward | Action::Backward | Action::Back => "Ordre",
-            Action::Zoom100 | Action::ZoomFit | Action::ZoomIn | Action::ZoomOut | Action::Present => "Vue",
-            Action::Bold | Action::Italic | Action::Underline | Action::Strike => "Texte",
-            _ => "Outils",
+            Action::New | Action::Open | Action::Save | Action::SaveAs => "File",
+            Action::Undo | Action::Redo | Action::SelectAll | Action::Duplicate | Action::Delete | Action::Group | Action::Ungroup | Action::EditText => "Edit",
+            Action::Front | Action::Forward | Action::Backward | Action::Back => "Order",
+            Action::Zoom100 | Action::ZoomFit | Action::ZoomIn | Action::ZoomOut | Action::Present => "View",
+            Action::Bold | Action::Italic | Action::Underline | Action::Strike => "Text",
+            _ => "Tools",
         }
     }
 
@@ -236,7 +234,7 @@ impl Action {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shortcut {
     pub key: Key,
-    /// Ctrl (Cmd sur Mac).
+    /// Ctrl (Cmd on Mac).
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
@@ -260,12 +258,12 @@ impl Shortcut {
         Modifiers { alt: self.alt, shift: self.shift, ..if self.ctrl { Modifiers::COMMAND } else { Modifiers::NONE } }
     }
 
-    /// Correspondance exacte : les modificateurs doivent être identiques.
+    /// Exact match: the modifiers must be identical.
     pub fn matches(&self, key: Key, m: Modifiers) -> bool {
         self.key == key && self.ctrl == m.command && self.shift == m.shift && self.alt == m.alt
     }
 
-    /// Forme stockée dans le fichier de réglages : « Ctrl+Shift+G ».
+    /// Form stored in the settings file: "Ctrl+Shift+G".
     pub fn to_id(self) -> String {
         let mut s = String::new();
         if self.ctrl {
@@ -296,14 +294,14 @@ impl Shortcut {
         Some(sc)
     }
 
-    /// Texte affiché à l'utilisateur.
+    /// Text shown to the user (translated).
     pub fn label(&self) -> String {
         let key = match self.key {
-            Key::Delete => "Suppr".to_owned(),
-            Key::Backspace => "Retour arrière".to_owned(),
-            Key::Enter => "Entrée".to_owned(),
-            Key::Escape => "Échap".to_owned(),
-            Key::Space => "Espace".to_owned(),
+            Key::Delete => crate::i18n::t("Delete"),
+            Key::Backspace => crate::i18n::t("Backspace"),
+            Key::Enter => crate::i18n::t("Enter"),
+            Key::Escape => crate::i18n::t("Esc"),
+            Key::Space => crate::i18n::t("Space"),
             Key::ArrowLeft => "←".to_owned(),
             Key::ArrowRight => "→".to_owned(),
             Key::ArrowUp => "↑".to_owned(),
@@ -315,7 +313,7 @@ impl Shortcut {
             s.push_str("Ctrl+");
         }
         if self.shift {
-            s.push_str("Maj+");
+            s.push_str(&crate::i18n::t("Shift+"));
         }
         if self.alt {
             s.push_str("Alt+");
@@ -324,7 +322,7 @@ impl Shortcut {
     }
 }
 
-/// Touches qui ne peuvent pas être réaffectées (réservées par l'application ou par le système).
+/// Keys that cannot be reassigned (reserved by the application or the system).
 pub fn is_reserved(sc: &Shortcut) -> bool {
     matches!(sc.key, Key::Escape | Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown)
         || (sc.ctrl && !sc.shift && !sc.alt && matches!(sc.key, Key::C | Key::X | Key::V))
@@ -342,7 +340,7 @@ impl Default for Keymap {
 }
 
 impl Keymap {
-    /// Raccourcis proposés par défaut pour une action.
+    /// Default shortcuts for an action.
     pub fn default_for(a: Action) -> Vec<Shortcut> {
         use Shortcut as S;
         match a {
@@ -394,21 +392,21 @@ impl Keymap {
         self.map.get(&a).map_or(&[], Vec::as_slice)
     }
 
-    /// Action liée à cette combinaison, s'il y en a une.
+    /// Action bound to this combination, if any.
     pub fn action_for(&self, key: Key, m: Modifiers) -> Option<Action> {
         self.map.iter().find(|(_, v)| v.iter().any(|s| s.matches(key, m))).map(|(a, _)| *a)
     }
 
-    /// Premier raccourci d'une action, prêt à afficher (vide s'il n'y en a pas).
+    /// First shortcut of an action, ready to display (empty when there is none).
     pub fn label(&self, a: Action) -> String {
         self.bindings(a).first().map(Shortcut::label).unwrap_or_default()
     }
 
-    /// Lie un raccourci à une action. S'il servait déjà à une autre action, il lui est retiré ;
-    /// cette autre action est renvoyée. Les combinaisons réservées sont refusées.
+    /// Binds a shortcut to an action. If it was already used by another action it is removed from it,
+    /// and that other action is returned. Reserved combinations are refused.
     pub fn add(&mut self, a: Action, sc: Shortcut) -> Result<Option<Action>, String> {
         if is_reserved(&sc) {
-            return Err(format!("« {} » est réservé (échappement, flèches, copier/couper/coller)", sc.label()));
+            return Err(crate::i18n::tr!("\"{}\" is reserved (escape, arrows, copy/cut/paste)", sc.label()));
         }
         let mut stolen = None;
         for (other, list) in &mut self.map {
@@ -431,7 +429,7 @@ impl Keymap {
     }
 
     pub fn reset(&mut self, a: Action) {
-        // les raccourcis par défaut ne doivent pas rester en double ailleurs
+        // default shortcuts must not remain duplicated elsewhere
         for sc in Keymap::default_for(a) {
             for (other, list) in &mut self.map {
                 if *other != a {
@@ -450,7 +448,7 @@ impl Keymap {
         self.bindings(a) == Keymap::default_for(a).as_slice()
     }
 
-    /// Actions dont un raccourci est partagé (ne devrait pas arriver, sauf fichier modifié à la main).
+    /// Actions that share a shortcut (should not happen, except with a hand-edited file).
     pub fn conflicts(&self) -> Vec<(Shortcut, Action, Action)> {
         let mut out = Vec::new();
         let all: Vec<(Action, Shortcut)> = self.map.iter().flat_map(|(a, v)| v.iter().map(move |s| (*a, *s))).collect();
@@ -473,11 +471,11 @@ impl Keymap {
         serde_json::to_string_pretty(&serde_json::json!({ "version": 1, "bindings": bindings })).expect("JSON valide")
     }
 
-    /// Lit un fichier de réglages. Les actions absentes gardent leur raccourci par défaut ; les entrées
-    /// inconnues ou illisibles sont ignorées. Renvoie aussi le nombre d'entrées ignorées.
+    /// Reads a settings file. Missing actions keep their default shortcut; unknown or unreadable
+    /// entries are ignored. Also returns the number of ignored entries.
     pub fn from_json(s: &str) -> Result<(Keymap, usize), String> {
         let v: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("JSON invalide : {e}"))?;
-        let b = v.get("bindings").and_then(|b| b.as_object()).ok_or("réglages sans « bindings »")?;
+        let b = v.get("bindings").and_then(|b| b.as_object()).ok_or("settings without \"bindings\"")?;
         let mut km = Keymap::default();
         let mut ignored = 0;
         for (id, list) in b {
@@ -506,7 +504,7 @@ mod tests {
     fn defaults_cover_every_action_without_conflicts() {
         let km = Keymap::default();
         for a in Action::ALL {
-            assert!(!km.bindings(a).is_empty(), "{a:?} sans raccourci par défaut");
+            assert!(!km.bindings(a).is_empty(), "{a:?} has no default shortcut");
         }
         assert!(km.conflicts().is_empty(), "{:?}", km.conflicts());
         assert_eq!(Action::ALL.len(), 41);
@@ -516,10 +514,10 @@ mod tests {
     fn ids_are_unique_and_roundtrip() {
         let mut seen = std::collections::HashSet::new();
         for a in Action::ALL {
-            assert!(seen.insert(a.id()), "id en double : {}", a.id());
+            assert!(seen.insert(a.id()), "duplicate id: {}", a.id());
             assert_eq!(Action::from_id(a.id()), Some(a));
         }
-        assert_eq!(Action::from_id("inconnu"), None);
+        assert_eq!(Action::from_id("unknown"), None);
     }
 
     #[test]
@@ -529,7 +527,7 @@ mod tests {
         assert_eq!(km.action_for(Key::Z, Modifiers::COMMAND | Modifiers::SHIFT), Some(Action::Redo));
         assert_eq!(km.action_for(Key::Z, Modifiers::NONE), None);
         assert_eq!(km.action_for(Key::R, Modifiers::NONE), Some(Action::ToolRect));
-        assert_eq!(km.action_for(Key::R, Modifiers::COMMAND), None, "Ctrl+R n'est pas la touche R seule");
+        assert_eq!(km.action_for(Key::R, Modifiers::COMMAND), None, "Ctrl+R is not the R key alone");
         assert_eq!(km.action_for(Key::R, Modifiers::ALT), None);
     }
 
@@ -540,22 +538,22 @@ mod tests {
             assert_eq!(Shortcut::parse(&sc.to_id()), Some(sc));
         }
         assert_eq!(Shortcut::parse("Ctrl+"), None);
-        assert_eq!(Shortcut::parse("Ctrl+Touche inconnue"), None);
+        assert_eq!(Shortcut::parse("Ctrl+Unknown key"), None);
         assert_eq!(Shortcut::parse("maj+ctrl+g"), Some(Shortcut::ctrl_shift(Key::G)));
-        assert_eq!(Shortcut::ctrl_shift(Key::G).label(), "Ctrl+Maj+G");
-        assert_eq!(Shortcut::key(Key::Delete).label(), "Suppr");
+        assert_eq!(Shortcut::ctrl_shift(Key::G).label(), "Ctrl+Shift+G");
+        assert_eq!(Shortcut::key(Key::Delete).label(), "Delete");
     }
 
     #[test]
     fn rebinding_steals_from_the_previous_owner() {
         let mut km = Keymap::default();
-        // « R » appartenait au rectangle ; on le donne à l'ellipse
+        // "R" belonged to the rectangle; give it to the ellipse
         let stolen = km.add(Action::ToolEllipse, Shortcut::key(Key::R)).unwrap();
         assert_eq!(stolen, Some(Action::ToolRect));
         assert_eq!(km.action_for(Key::R, Modifiers::NONE), Some(Action::ToolEllipse));
         assert!(km.bindings(Action::ToolRect).is_empty());
         assert!(km.conflicts().is_empty());
-        // ré-ajouter ne duplique pas
+        // adding again does not duplicate
         assert_eq!(km.add(Action::ToolEllipse, Shortcut::key(Key::R)).unwrap(), None);
         assert_eq!(km.bindings(Action::ToolEllipse).iter().filter(|s| **s == Shortcut::key(Key::R)).count(), 1);
     }
@@ -575,7 +573,7 @@ mod tests {
         km.add(Action::ToolEllipse, Shortcut::key(Key::R)).unwrap();
         km.reset(Action::ToolRect);
         assert!(km.is_default(Action::ToolRect));
-        assert_eq!(km.action_for(Key::R, Modifiers::NONE), Some(Action::ToolRect), "le raccourci d'origine est rendu");
+        assert_eq!(km.action_for(Key::R, Modifiers::NONE), Some(Action::ToolRect), "the original shortcut is given back");
         assert!(km.conflicts().is_empty());
         km.reset_all();
         assert_eq!(km, Keymap::default());
@@ -589,17 +587,17 @@ mod tests {
         let (back, ignored) = Keymap::from_json(&km.to_json()).unwrap();
         assert_eq!(back, km);
         assert_eq!(ignored, 0);
-        // fichier partiel avec des erreurs : on garde ce qui est valide, le reste par défaut
+        // partial file with errors: keep what is valid, the rest stays default
         let (k2, ignored) = Keymap::from_json(
-            r#"{"version":1,"bindings":{"tool.rect":["K"],"action.inventée":["X"],"edit.undo":["Ctrl+Truc","Ctrl+W"],"file.save":["Escape"]}}"#,
+            r#"{"version":1,"bindings":{"tool.rect":["K"],"action.invented":["X"],"edit.undo":["Ctrl+Thing","Ctrl+W"],"file.save":["Escape"]}}"#,
         )
         .unwrap();
         assert_eq!(k2.action_for(Key::K, Modifiers::NONE), Some(Action::ToolRect));
         assert_eq!(k2.bindings(Action::Undo), &[Shortcut::ctrl(Key::W)]);
-        assert!(k2.bindings(Action::Save).is_empty(), "Échap est réservé : entrée ignorée");
+        assert!(k2.bindings(Action::Save).is_empty(), "Escape is reserved: entry ignored");
         assert_eq!(ignored, 3);
-        assert!(k2.is_default(Action::Open), "actions non mentionnées : valeurs par défaut");
-        assert!(Keymap::from_json("pas du json").is_err());
+        assert!(k2.is_default(Action::Open), "actions not mentioned: default values");
+        assert!(Keymap::from_json("not json").is_err());
         assert!(Keymap::from_json("{}").is_err());
     }
 

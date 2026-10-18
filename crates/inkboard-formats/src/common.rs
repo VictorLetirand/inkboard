@@ -1,4 +1,4 @@
-//! Types et utilitaires partagés par les importeurs / exporteurs.
+//! Types and utilities shared by the importers / exporters.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use inkboard_core::{BgPreset, Color, Document, FontFamily};
@@ -6,9 +6,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum FormatError {
-    #[error("format de fichier non reconnu")]
+    #[error("unrecognized file format")]
     Unknown,
-    #[error("fichier invalide : {0}")]
+    #[error("invalid file: {0}")]
     Invalid(String),
     #[error("{0}")]
     Unsupported(String),
@@ -20,12 +20,12 @@ impl From<serde_json::Error> for FormatError {
     }
 }
 
-/// Ce qui n'a pas pu être repris fidèlement lors d'un import.
+/// What could not be carried over faithfully during an import.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Report {
-    /// Éléments importés sous une forme approchée (ex. cylindre → rectangle).
+    /// Elements imported in an approximate form (e.g. cylinder → rectangle).
     pub approximated: usize,
-    /// Éléments ignorés (non gérés ou invalides).
+    /// Skipped elements (unsupported or invalid).
     pub skipped: usize,
 }
 
@@ -33,10 +33,10 @@ impl Report {
     pub fn summary(&self) -> String {
         let mut p = Vec::new();
         if self.approximated > 0 {
-            p.push(format!("{} élément(s) approximé(s)", self.approximated));
+            p.push(format!("{} element(s) approximated", self.approximated));
         }
         if self.skipped > 0 {
-            p.push(format!("{} élément(s) ignoré(s)", self.skipped));
+            p.push(format!("{} element(s) skipped", self.skipped));
         }
         p.join(", ")
     }
@@ -48,7 +48,7 @@ pub struct Imported {
     pub report: Report,
 }
 
-/// Analyse une couleur CSS ; le noir pur est converti en « encre » (il suit le fond clair/sombre).
+/// Parses a CSS color; pure black is converted to "ink" (it follows the light/dark background).
 pub fn parse_color(s: &str) -> Option<Color> {
     let s = s.trim().to_ascii_lowercase();
     let named = match s.as_str() {
@@ -63,7 +63,7 @@ pub fn parse_color(s: &str) -> Option<Color> {
         "orange" => "#ffa500",
         "purple" => "#800080",
         other => {
-            // « light-dark(#aaa, #bbb) » et assimilés : première couleur trouvée
+            // "light-dark(#aaa, #bbb)" and the like: first color found
             let i = other.find('#')?;
             let hex: String = other[i..].chars().take_while(|c| *c == '#' || c.is_ascii_hexdigit()).collect();
             return Color::parse(&hex).map(ink_if_black);
@@ -142,9 +142,9 @@ mod tests {
     fn data_urls() {
         let u = data_url("image/png", &[1, 2, 3, 250]);
         assert_eq!(parse_data_url(&u), Some(("image/png".into(), vec![1, 2, 3, 250])));
-        // variante draw.io : base64 sans « ;base64 »
+        // draw.io variant: base64 without ";base64"
         assert_eq!(parse_data_url("data:image/png,AQID+g=="), Some(("image/png".into(), vec![1, 2, 3, 250])));
-        // SVG non encodé
+        // unencoded SVG
         let (m, d) = parse_data_url("data:image/svg+xml,%3Csvg%3E").unwrap();
         assert_eq!(m, "image/svg+xml");
         assert_eq!(d, b"<svg>");

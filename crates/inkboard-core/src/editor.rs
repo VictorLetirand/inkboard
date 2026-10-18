@@ -1,4 +1,4 @@
-//! Édition d'un document avec historique : toutes les modifications passent ici.
+//! Editing a document with history: every modification goes through here.
 
 use crate::connector::{Connector, End};
 use crate::geom::{Pt, Rect};
@@ -46,7 +46,7 @@ impl Editor {
         Self { doc, current, history: History::default(), open: None, depth: 0, rev: 0 }
     }
 
-    /// Compteur incrémenté à chaque modification (pour détecter « à enregistrer »).
+    /// Counter incremented on every modification (to detect "needs saving").
     pub fn revision(&self) -> u64 {
         self.rev
     }
@@ -60,7 +60,7 @@ impl Editor {
         self.history.can_redo()
     }
 
-    /// Regroupe plusieurs modifications en une seule étape d'annulation.
+    /// Groups several modifications into a single undo step.
     pub fn transact<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         self.depth += 1;
         if self.depth == 1 {
@@ -105,7 +105,7 @@ impl Editor {
             self.current = self.doc.pages[0].id.clone();
         }
     }
-    /// Repart d'un historique vide (après ouverture d'un fichier).
+    /// Starts again from an empty history (after opening a file).
     pub fn reset(&mut self, doc: Document) {
         self.current = doc.pages[0].id.clone();
         self.doc = doc;
@@ -122,7 +122,7 @@ impl Editor {
         id
     }
 
-    /// Remplace l'objet de même identifiant.
+    /// Replaces the object with the same id.
     pub fn replace(&mut self, new: Object) {
         let Some(before) = self.page().get(&new.id).cloned() else { return };
         if before == new {
@@ -147,7 +147,7 @@ impl Editor {
         });
     }
 
-    /// Supprime des objets ; les connecteurs liés sont détachés (ils gardent leur position).
+    /// Removes objects; bound connectors are detached (they keep their position).
     pub fn remove(&mut self, ids: &[Id]) {
         let ids: Vec<Id> = ids.to_vec();
         self.transact(|e| {
@@ -173,8 +173,8 @@ impl Editor {
         });
     }
 
-    /// Copies d'objets avec nouveaux identifiants, décalées de `d`. Les liens vers des objets
-    /// non copiés sont rompus (extrémités libres à leur position actuelle).
+    /// Copies of objects with new ids, offset by `d`. Links to objects that
+    /// are not copied are broken (ends become free at their current position).
     pub fn clone_objects(page: &Page, ids: &[Id], d: Pt) -> Vec<Object> {
         let set: Vec<&Object> = page.objects.iter().filter(|o| ids.contains(&o.id)).collect();
         let idmap: HashMap<Id, Id> = set.iter().map(|o| (o.id.clone(), Id::new())).collect();
@@ -204,7 +204,7 @@ impl Editor {
             .collect()
     }
 
-    /// Colle des objets (déjà clonés) au premier plan.
+    /// Pastes (already cloned) objects on top.
     pub fn insert_all(&mut self, objs: Vec<Object>) -> Vec<Id> {
         self.transact(|e| objs.into_iter().map(|o| e.insert(o)).collect())
     }
@@ -214,7 +214,7 @@ impl Editor {
         self.insert_all(copies)
     }
 
-    /// Relie deux objets par un nouveau connecteur.
+    /// Links two objects with a new connector.
     pub fn connect(&mut self, from: &Id, to: &Id) -> Id {
         let o = Object::new(
             Kind::Connector(Connector::new(End::bound(from.clone()), End::bound(to.clone()))),
@@ -301,7 +301,7 @@ impl Editor {
         });
     }
 
-    /// Répartit les objets à intervalles réguliers (3 objets au moins).
+    /// Distributes objects at regular intervals (at least 3 objects).
     pub fn distribute(&mut self, ids: &[Id], axis: Axis) {
         let page = self.page().clone();
         let mut items: Vec<(Id, Rect)> =
@@ -454,9 +454,9 @@ mod tests {
         let copies: Vec<&Object> = new.iter().map(|i| page.get(i).unwrap()).collect();
         let conns: Vec<&Connector> = copies.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
         assert_eq!(conns.len(), 2);
-        // premier connecteur : toujours lié aux copies
+        // first connector: always bound to the copies
         assert!(conns[0].targets().all(|t| new.contains(t)));
-        // second : extrémité vers l'extérieur devenue libre, à la position d'origine
+        // second: the end pointing outside has become free, at the original position
         assert!(matches!(conns[1].end, End::Free { .. }));
         assert!(page.connector_path(conns[1]).is_some());
     }

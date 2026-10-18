@@ -1,81 +1,83 @@
-# Serveur MCP (`inkboard-mcp`)
+# MCP server (`inkboard-mcp`)
 
-Permet à un agent (Claude, ou tout client MCP) de **créer et modifier des tableaux** en appelant des outils. Deux modes, choisis automatiquement :
+*Version française : [fr/MCP.md](fr/MCP.md)*
 
-- **Direct** (application ouverte) : l'outil agit sur le tableau **affiché**, dans l'application. Chaque appel est **une étape d'annulation** (Ctrl+Z),
-  l'objet créé est sélectionné, `describe_board` indique la **sélection de l'utilisateur** (« modifie ce que j'ai sélectionné »), et rien n'est enregistré
-  sur le disque tant que l'utilisateur (ou `save_board`) ne le décide pas. Si le tableau est vide, la vue s'ajuste.
-- **Fichier** (application fermée, ou `path` d'un autre fichier) : l'outil lit et écrit le fichier `.inkboard.json` ; si l'application a ce fichier ouvert,
-  elle le **recharge toute seule** dans la demi-seconde (sauf modifications locales non enregistrées : elle prévient et ne remplace rien).
+Lets an agent (Claude, or any MCP client) **create and modify boards** by calling tools. Two modes, chosen automatically:
 
-En mode direct, `path` est facultatif ; s'il est donné et désigne le fichier affiché, l'outil agit en direct ; s'il désigne un autre fichier, il agit sur ce fichier.
-Sans `path` et sans application ouverte, l'outil répond par une erreur claire.
+- **Live** (application open): the tool acts on the board **displayed** in the application. Each call is **one undo step** (Ctrl+Z),
+  the created object is selected, `describe_board` reports the **user's selection** ("modify what I selected"), and nothing is saved
+  to disk until the user (or `save_board`) decides so. If the board is empty, the view fits the content.
+- **File** (application closed, or `path` of another file): the tool reads and writes the `.inkboard.json` file; if the application has this file open,
+  it **reloads it on its own** within half a second (unless there are unsaved local changes: it warns and replaces nothing).
 
-## Brancher le serveur
+In live mode, `path` is optional; if given and it designates the displayed file, the tool acts live; if it designates another file, it acts on that file.
+Without `path` and without an open application, the tool answers with a clear error.
+
+## Connecting the server
 
 ```bash
 cargo build --release -p inkboard-mcp
-claude mcp add inkboard -- E:\Dev\inkboard\target\release\inkboard-mcp.exe --root C:\Tableaux
+claude mcp add inkboard -- /path/to/inkboard/target/release/inkboard-mcp --root /path/to/boards
 ```
 
-Pour un autre client, la configuration est la même : commande `inkboard-mcp.exe`, arguments `--root <dossier>`, transport stdio.
-**Utilisez toujours `--root`** : sans lui l'agent peut lire et écrire n'importe quel fichier accessible à votre compte.
-Avec `--root`, tout chemin (relatif ou absolu) doit se trouver sous ce dossier ; `..` et les liens sont neutralisés. Seuls les fichiers `.inkboard.json`
-sont modifiés ; `export` n'écrit que `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
+For another client the configuration is the same: command `inkboard-mcp`, arguments `--root <folder>`, stdio transport.
+**Always use `--root`**: without it the agent can read and write any file your account can reach.
+With `--root`, every path (relative or absolute) must be under that folder; `..` and links are neutralized. Only `.inkboard.json` files
+are modified; `export` writes only `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
 
-## Comment le mode direct fonctionne
+## How live mode works
 
-L'application ouvre un serveur local sur `127.0.0.1` (port éphémère, jamais exposé au réseau) et publie son port et un **jeton secret** aléatoire dans
-`%APPDATA%\Inkboard\live.json` (supprimé à la fermeture). `inkboard-mcp` lit ce fichier, transmet l'appel avec le jeton, et l'application exécute l'outil sur son fil
-d'interface. Une demande sans jeton valide est refusée sans rien exécuter. Les chemins (`path`, `output`) sont résolus et confinés à `--root` par `inkboard-mcp`
-avant la transmission. Options : `--no-live` désactive le mode direct ; `--live-file` change le fichier de découverte.
+The application opens a local server on `127.0.0.1` (ephemeral port, never exposed to the network) and publishes its port and a random **secret token** in
+`live.json` in its data folder (`%APPDATA%\Inkboard` on Windows, `~/Library/Application Support/Inkboard` on macOS, `~/.local/share/Inkboard` on Linux; deleted on exit). `inkboard-mcp` reads this file, forwards the call with the token, and the application runs the tool on its UI
+thread. A request without a valid token is refused without running anything. Paths (`path`, `output`) are resolved and confined to `--root` by `inkboard-mcp`
+before forwarding. Options: `--no-live` disables live mode; `--live-file` changes the discovery file.
 
-## Outils
+## Tools
 
-| Outil | Rôle |
+| Tool | Purpose |
 |---|---|
-| `create_board` | Crée un tableau vide (refuse d'écraser un fichier existant). |
-| `save_board` | Mode direct : enregistre le tableau affiché (il doit déjà avoir un fichier). |
-| `board_changes` | Ce que **l'utilisateur** a modifié depuis votre dernier regard (`describe_board` / `board_changes`) : objets ajoutés, modifiés, supprimés. Vos propres modifications ne sont pas signalées. |
-| `add_image` | Image PNG/JPEG/GIF/WebP/SVG (15 Mio au plus) depuis un fichier sous la racine (`source`) ou en base64 ; taille naturelle réduite à 600, ou `w`/`h`. Le type est reconnu d'après le contenu, jamais d'après l'extension. |
-| `describe_board` | Pages et objets (id, type, texte, position, liens des connecteurs) ; en mode direct, aussi `selection`. Lit aussi draw.io, Excalidraw, JSON Canvas, Mermaid. |
-| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, avec texte, couleurs, taille. |
-| `add_connector` | Flèche **liée** entre deux objets (`straight`, `elbow`, `curve`, pointes, étiquette). |
-| `add_table` | Tableau de cellules (colonnes ajustées au texte). |
-| `add_code_block` | Bloc de code coloré. |
-| `add_formula` | Formule LaTeX composée comme en TeX (erreur claire si non gérée). |
-| `import_mermaid` | Diagramme Mermaid (flowchart, état, séquence) avec mise en page automatique ; page dédiée possible. |
-| `update_object` / `delete_object` | Modifier (texte, position, taille, couleurs) ou supprimer. |
-| `auto_layout` | Réorganise un graphe de formes reliées (TB, LR, BT, RL). |
-| `add_page` | Nouvelle page. |
-| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard.json` d'après l'extension. |
+| `create_board` | Creates an empty board (refuses to overwrite an existing file). |
+| `save_board` | Live mode: saves the displayed board (it must already have a file). |
+| `board_changes` | What the **user** changed since your last look (`describe_board` / `board_changes`): objects added, modified, deleted. Your own changes are not reported. |
+| `add_image` | PNG/JPEG/GIF/WebP/SVG image (15 MiB at most) from a file under the root (`source`) or in base64; natural size reduced to 600, or `w`/`h`. The type is recognized from the content, never from the extension. |
+| `describe_board` | Pages and objects (id, type, text, position, connector links); in live mode, also `selection`. Also reads draw.io, Excalidraw, JSON Canvas, Mermaid. |
+| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, with text, colors, size. |
+| `add_connector` | **Bound** arrow between two objects (`straight`, `elbow`, `curve`, arrowheads, label). |
+| `add_table` | Table of cells (columns fitted to the text). |
+| `add_code_block` | Colored code block. |
+| `add_formula` | LaTeX formula typeset as in TeX (clear error if unsupported). |
+| `import_mermaid` | Mermaid diagram (flowchart, state, sequence) with automatic layout; optional dedicated page. |
+| `update_object` / `delete_object` | Modify (text, position, size, colors) or delete. |
+| `auto_layout` | Rearranges a graph of connected shapes (TB, LR, BT, RL). |
+| `add_page` | New page. |
+| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard.json` according to the extension. |
 
-Sans `x`/`y`, un nouvel objet est placé sous le contenu existant. Les ids renvoyés servent à relier ou modifier les objets.
-Les erreurs sont renvoyées comme résultat d'outil (`isError`) avec un message en français que l'agent peut exploiter.
+Without `x`/`y`, a new object is placed below the existing content. The returned ids are used to connect or modify objects.
+Errors are returned as a tool result (`isError`) with an English message the agent can act on.
 
-## Ressources et notifications
+## Resources and notifications
 
-Le serveur déclare les capacités MCP `resources` (avec `subscribe` et `listChanged`) :
+The server declares the MCP `resources` capability (with `subscribe` and `listChanged`):
 
-- `inkboard://live` : le tableau affiché dans l'application (même contenu que `describe_board`, avec la sélection) — présent seulement quand l'application est ouverte ;
-- `file:///…/*.inkboard.json` : les tableaux sous la racine `--root` (3 niveaux de dossiers, 300 fichiers au plus).
+- `inkboard://live`: the board displayed in the application (same content as `describe_board`, with the selection) — present only when the application is open;
+- `file:///…/*.inkboard.json`: the boards under the `--root` folder (3 folder levels, 300 files at most).
 
-`resources/subscribe` sur l'une d'elles : le serveur envoie `notifications/resources/updated` quand le contenu change (fichier modifié, ou — pour le tableau
-affiché — modification **ou changement de sélection** par l'utilisateur), et `notifications/resources/list_changed` quand la liste change. Le changement est
-détecté par sondage toutes les 600 ms. La première observation après l'abonnement sert de référence (aucune notification pour l'état déjà lu).
+`resources/subscribe` on one of them: the server sends `notifications/resources/updated` when the content changes (file modified, or — for the displayed
+board — a user modification **or selection change**), and `notifications/resources/list_changed` when the list changes. Change is
+detected by polling every 600 ms. The first observation after subscribing serves as the baseline (no notification for the state already read).
 
-**Selon le client**, ces notifications ne sont pas forcément montrées au modèle : un client qui ne gère pas les abonnements les ignore. C'est pourquoi l'outil
-`board_changes` existe : l'agent peut demander lui-même ce que l'utilisateur a changé, quel que soit le client.
+**Depending on the client**, these notifications are not necessarily shown to the model: a client that does not handle subscriptions ignores them. That is why the
+`board_changes` tool exists: the agent can ask by itself what the user changed, whatever the client.
 
-## Limites
+## Limits
 
-- Plusieurs instances de l'application : la dernière lancée publie le fichier de découverte (les autres ne sont pas pilotables).
-- Après un plantage de l'application, un fichier de découverte périmé peut subsister ; `inkboard-mcp` bascule alors en mode fichier.
-- En mode direct, l'agent change la page affichée quand il en cible une autre (`page`), et la sélection de l'utilisateur est remplacée par les objets créés.
-- Pas de lecture des traits au crayon ni du contenu des images (seulement leur présence, taille et position).
-- Le suivi `board_changes` est désactivé au-delà de 20 000 objets (coût linéaire à chaque appel).
-- Les notifications de ressources reposent sur un sondage (600 ms) et ne portent pas le détail du changement : l'agent relit la ressource ou appelle `board_changes`.
-- Le protocole MCP est implémenté à la main (`initialize`, `ping`, `tools/list`, `tools/call`) ; pas de ressources, d'invites ni de notifications serveur.
-- Testé de bout en bout avec un client écrit pour l'occasion (`crates/inkboard-mcp/tests/session.rs`, `crates/inkboard-app/src/tests.rs`) **et avec Claude Code 2.1.258**
-  (mode fichier, puis mode direct contre l'application réelle : ajout d'un rectangle, `describe_board` avec `live: true` et sélection). Les ressources, abonnements et notifications sont testés avec le vrai binaire et avec l'application (tests automatisés) mais **pas avec un client MCP réel qui les exploite** (Claude Code a servi pour les outils ; je n'ai pas pu vérifier ce qu'il fait des notifications). Pas testé avec Claude Desktop.
-- Plusieurs agents écrivant en même temps dans le même fichier (mode fichier) : le dernier gagne.
+- Several application instances: the last one launched publishes the discovery file (the others cannot be driven).
+- After an application crash, a stale discovery file can remain; `inkboard-mcp` then falls back to file mode.
+- In live mode, the agent changes the displayed page when it targets another one (`page`), and the user's selection is replaced by the created objects.
+- Pen strokes and image content cannot be read (only their presence, size and position).
+- `board_changes` tracking is disabled beyond 20,000 objects (linear cost on every call).
+- Resource notifications rely on polling (600 ms) and do not carry the detail of the change: the agent re-reads the resource or calls `board_changes`.
+- The MCP protocol is implemented by hand (`initialize`, `ping`, `tools/list`, `tools/call`, `resources/*`); no prompts.
+- Tested end to end with a client written for the purpose (`crates/inkboard-mcp/tests/session.rs`, `crates/inkboard-app/src/tests.rs`) **and with Claude Code 2.1.258**
+  (file mode, then live mode against the real application: adding a rectangle, `describe_board` with `live: true` and selection). Resources, subscriptions and notifications are tested with the real binary and with the application (automated tests) but **not with a real MCP client that uses them** (Claude Code was used for the tools; what it does with notifications has not been verified). Not tested with Claude Desktop.
+- Several agents writing to the same file at once (file mode): the last one wins.

@@ -1,7 +1,7 @@
 //! Mermaid : `flowchart` / `graph`, `stateDiagram`, `sequenceDiagram`.
 //!
-//! Le texte devient de vraies formes liées par de vrais connecteurs : déplacer un nœud
-//! fait suivre ses flèches. La mise en page vient de `inkboard_core::layout`.
+//! The text becomes real shapes linked by real connectors: moving a node
+//! makes its arrows follow. The layout comes from `inkboard_core::layout`.
 
 use crate::common::{FormatError, Imported, Report, parse_color};
 use inkboard_core::layout::{Direction, NodeSpec, layered};
@@ -354,7 +354,7 @@ fn dir_of(s: &str) -> Direction {
     }
 }
 
-/// Dimensions d'un nœud selon son texte.
+/// Dimensions of a node according to its text.
 fn node_size(n: &Node, m: &dyn Measurer) -> (BoxGeom, f64, f64) {
     let (geom, mut w, mut h) = match n.shape {
         Shape::Start => return (BoxGeom::Ellipse, 26.0, 26.0),
@@ -449,7 +449,7 @@ fn build_flow(f: &Flow, m: &dyn Measurer) -> Vec<Object> {
         rects.push(r);
         nodes.push(node_object(n, g, Frame::from_rect(r), &f.classes));
     }
-    // sous-graphes
+    // subgraphs
     let mut bounds: HashMap<usize, Option<Rect>> = HashMap::new();
     fn bounds_of(i: usize, f: &Flow, rects: &[Rect], cache: &mut HashMap<usize, Option<Rect>>) -> Option<Rect> {
         if let Some(b) = cache.get(&i) {
@@ -505,7 +505,7 @@ fn build_flow(f: &Flow, m: &dyn Measurer) -> Vec<Object> {
     }
     let ids: Vec<Id> = nodes.iter().map(|o| o.id.clone()).collect();
     out.extend(nodes);
-    // arêtes : de vrais connecteurs liés ; les relais de mise en page deviennent des points de passage
+    // edges: real bound connectors; layout relays become waypoints
     let mut pair_count: HashMap<(usize, usize), usize> = HashMap::new();
     for &(a, b) in &edges {
         *pair_count.entry((a.min(b), a.max(b))).or_default() += 1;
@@ -625,7 +625,7 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
         }
     }
     if parts.is_empty() {
-        return Err(FormatError::Invalid("aucun message trouvé".into()));
+        return Err(FormatError::Invalid("no message found".into()));
     }
     let widths: Vec<f64> = parts.iter().map(|p| (m.width(&p.1, FontFamily::Sans, FONT, false) + 36.0).max(120.0)).collect();
     let mut xs: HashMap<&str, f64> = HashMap::new();
@@ -721,7 +721,7 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
     Ok(out)
 }
 
-/// Convertit du texte Mermaid en objets prêts à être posés sur une page.
+/// Converts Mermaid text to objects ready to be placed on a page.
 pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatError> {
     let mut lines: Vec<&str> = src.lines().collect();
     if lines.first().is_some_and(|l| l.trim() == "---")
@@ -730,13 +730,13 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
         lines.drain(..=end + 1);
     }
     let lines: Vec<String> = lines.iter().map(|l| l.split("%%").next().unwrap_or("").trim().to_owned()).filter(|l| !l.is_empty()).collect();
-    let Some(head) = lines.first() else { return Err(FormatError::Invalid("texte vide".into())) };
+    let Some(head) = lines.first() else { return Err(FormatError::Invalid("empty text".into())) };
     static FLOW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:flowchart|graph)(?:-elk)?\b\s*(TD|TB|LR|RL|BT)?").unwrap());
     if let Some(c) = FLOW.captures(head) {
         let mut f = Flow::new(dir_of(c.get(1).map_or("TD", |d| d.as_str())));
         parse_flowchart(&lines[1..], &mut f);
         if f.nodes.is_empty() {
-            return Err(FormatError::Invalid("aucun nœud trouvé".into()));
+            return Err(FormatError::Invalid("no node found".into()));
         }
         return Ok(build_flow(&f, m));
     }
@@ -744,7 +744,7 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
         let mut f = Flow::new(Direction::TopDown);
         parse_state(&lines[1..], &mut f);
         if f.nodes.is_empty() {
-            return Err(FormatError::Invalid("aucun état trouvé".into()));
+            return Err(FormatError::Invalid("no state found".into()));
         }
         return Ok(build_flow(&f, m));
     }
@@ -752,7 +752,7 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
         return build_sequence(&lines[1..], m);
     }
     let kind = head.split_whitespace().next().unwrap_or("");
-    Err(FormatError::Unsupported(format!("type de diagramme non pris en charge (« {kind} »). Pris en charge : flowchart/graph, stateDiagram, sequenceDiagram")))
+    Err(FormatError::Unsupported(format!("unsupported diagram type (\"{kind}\"). Supported: flowchart/graph, stateDiagram, sequenceDiagram")))
 }
 
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
@@ -783,26 +783,26 @@ mod tests {
         p
     }
 
-    const FLOW: &str = "flowchart LR\n  subgraph Front [Frontend]\n    A[Client] --> B(API Gateway)\n  end\n  B -->|REST| C{Auth ?}\n  C -->|ok| D[(Base de données)]\n  C -->|ko| E((Erreur))\n  D -.-> F[Cache]\n  E --> A\n  A --> A";
+    const FLOW: &str = "flowchart LR\n  subgraph Front [Frontend]\n    A[Client] --> B(API Gateway)\n  end\n  B -->|REST| C{Auth ?}\n  C -->|ok| D[(Database)]\n  C -->|ko| E((Error))\n  D -.-> F[Cache]\n  E --> A\n  A --> A";
 
     #[test]
     fn flowchart_builds_bound_connectors_and_clusters() {
         let o = objs(FLOW);
         let b = boxes(&o);
         let texts: Vec<String> = b.iter().map(|x| x.1.label.text.to_plain()).collect();
-        for want in ["Client", "API Gateway", "Auth ?", "Base de données", "Erreur", "Cache", "Frontend"] {
-            assert!(texts.iter().any(|t| t == want), "{want} manquant dans {texts:?}");
+        for want in ["Client", "API Gateway", "Auth ?", "Database", "Error", "Cache", "Frontend"] {
+            assert!(texts.iter().any(|t| t == want), "{want} missing from {texts:?}");
         }
         assert!(b.iter().any(|x| x.1.geom == BoxGeom::Diamond) && b.iter().any(|x| x.1.geom == BoxGeom::Ellipse));
         let c = conns(&o);
         assert_eq!(c.len(), 7);
-        assert!(c.iter().all(|c| c.targets().count() == 2), "toutes les flèches sont liées à des formes");
+        assert!(c.iter().all(|c| c.targets().count() == 2), "all the arrows are bound to shapes");
         let p = page_of(o.clone());
         assert!(conns(&p.objects).iter().all(|c| p.connector_path(c).is_some()));
         let rest = c.iter().find(|c| c.label.as_ref().is_some_and(|l| l.text.to_plain() == "REST")).unwrap();
         assert_eq!(rest.head_end, Arrowhead::Triangle);
-        assert!(o.iter().any(|x| x.style.dash == Dash::Dashed && matches!(x.kind, Kind::Connector(_))), "flèche pointillée");
-        assert!(o.iter().any(|x| x.style.dash == Dash::Dashed && matches!(&x.kind, Kind::Box(b) if b.geom == BoxGeom::Rect)), "cadre du sous-graphe");
+        assert!(o.iter().any(|x| x.style.dash == Dash::Dashed && matches!(x.kind, Kind::Connector(_))), "dotted arrow");
+        assert!(o.iter().any(|x| x.style.dash == Dash::Dashed && matches!(&x.kind, Kind::Box(b) if b.geom == BoxGeom::Rect)), "subgraph frame");
     }
 
     #[test]
@@ -824,34 +824,34 @@ mod tests {
     #[test]
     fn long_edge_gets_via_points() {
         let o = objs("graph TD\n A --> B --> C --> D\n A --> D");
-        let long = conns(&o).into_iter().find(|c| !c.via.is_empty()).expect("arête longue avec relais");
+        let long = conns(&o).into_iter().find(|c| !c.via.is_empty()).expect("long edge with relays");
         assert_eq!(long.via.len(), 2);
     }
 
     #[test]
     fn styles_classes_and_chains() {
         let o = objs(
-            "flowchart TD\n A[Un]:::ok --> B[Deux] & C[Trois]\n classDef ok fill:#d3f9d8,stroke:#2f9e44,stroke-width:3px\n style B fill:#ffc9c9,color:#e03131",
+            "flowchart TD\n A[One]:::ok --> B[Two] & C[Three]\n classDef ok fill:#d3f9d8,stroke:#2f9e44,stroke-width:3px\n style B fill:#ffc9c9,color:#e03131",
         );
         let b = boxes(&o);
         let find = |t: &str| b.iter().find(|x| x.1.label.text.to_plain() == t).unwrap();
-        assert_eq!(find("Un").0.style.fill, Some(Color::Rgb(0xd3, 0xf9, 0xd8)));
-        assert_eq!(find("Un").0.style.stroke, Color::Rgb(0x2f, 0x9e, 0x44));
-        assert_eq!(find("Deux").0.style.fill, Some(Color::Rgb(0xff, 0xc9, 0xc9)));
-        assert_eq!(find("Deux").1.label.text.0[0].style.color, Some(Color::Rgb(0xe0, 0x31, 0x31)));
-        assert_eq!(conns(&o).len(), 2, "A --> B & C : deux arêtes");
+        assert_eq!(find("One").0.style.fill, Some(Color::Rgb(0xd3, 0xf9, 0xd8)));
+        assert_eq!(find("One").0.style.stroke, Color::Rgb(0x2f, 0x9e, 0x44));
+        assert_eq!(find("Two").0.style.fill, Some(Color::Rgb(0xff, 0xc9, 0xc9)));
+        assert_eq!(find("Two").1.label.text.0[0].style.color, Some(Color::Rgb(0xe0, 0x31, 0x31)));
+        assert_eq!(conns(&o).len(), 2, "A --> B & C: two edges");
     }
 
     #[test]
     fn link_syntaxes() {
-        let o = objs("graph LR\n A --- B\n B ==> C\n C -- texte --> D\n D <--> E\n E -.- F\n F ~~~ G");
+        let o = objs("graph LR\n A --- B\n B ==> C\n C -- text --> D\n D <--> E\n E -.- F\n F ~~~ G");
         let c = conns(&o);
-        assert_eq!(c.len(), 5, "le lien invisible n'est pas dessiné");
+        assert_eq!(c.len(), 5, "the invisible link is not drawn");
         assert_eq!(c[0].head_end, Arrowhead::None);
-        assert_eq!(c[2].label.as_ref().unwrap().text.to_plain(), "texte");
+        assert_eq!(c[2].label.as_ref().unwrap().text.to_plain(), "text");
         assert!(c[3].head_start == Arrowhead::Triangle && c[3].head_end == Arrowhead::Triangle);
-        assert!(o.iter().any(|x| x.style.width > 4.0 && matches!(x.kind, Kind::Connector(_))), "trait épais");
-        // les 7 nœuds A..G existent, G est placé grâce au lien invisible
+        assert!(o.iter().any(|x| x.style.width > 4.0 && matches!(x.kind, Kind::Connector(_))), "thick stroke");
+        // the 7 nodes A..G exist, G is placed thanks to the invisible link
         assert_eq!(boxes(&o).len(), 7);
     }
 
@@ -863,7 +863,7 @@ mod tests {
         let b = boxes(&o);
         assert!(b.iter().any(|x| x.1.geom == BoxGeom::Diamond));
         assert!(b.iter().any(|x| x.1.label.text.to_plain() == "Inner"));
-        assert!(b.iter().any(|x| x.1.label.text.to_plain() == "Group"), "état composite = cadre titré");
+        assert!(b.iter().any(|x| x.1.label.text.to_plain() == "Group"), "composite state = titled frame");
         let c = conns(&o);
         assert!(c.iter().any(|c| c.label.as_ref().is_some_and(|l| l.text.to_plain() == "stop")));
         let p = page_of(o.clone());
@@ -877,25 +877,25 @@ mod tests {
         let p = page_of(o.clone());
         let (p0, p1) = (p.connector_path(c[0]).unwrap(), p.connector_path(c[1]).unwrap());
         let mid = |v: &Vec<Pt>| v[v.len() / 2];
-        assert!(mid(&p0).dist(mid(&p1)) > 20.0, "les deux flèches opposées sont écartées");
-        assert!(c[2].via.len() == 2, "boucle sur soi-même");
+        assert!(mid(&p0).dist(mid(&p1)) > 20.0, "the two opposite arrows are spread apart");
+        assert!(c[2].via.len() == 2, "self loop");
     }
 
     #[test]
     fn sequence_diagram_has_lifelines_messages_notes_and_blocks() {
         let o = objs(
-            "sequenceDiagram\n autonumber\n participant U as Utilisateur\n U->>API: Requête\n loop Retry\n API-->>DB: Lecture\n end\n Note right of DB: cache chaud\n API->>U: Réponse\n U->>U: calcul",
+            "sequenceDiagram\n autonumber\n participant U as User\n U->>API: Request\n loop Retry\n API-->>DB: Read\n end\n Note right of DB: warm cache\n API->>U: Response\n U->>U: compute",
         );
         let b = boxes(&o);
-        for want in ["Utilisateur", "API", "DB", "1. Requête", "2. Lecture", "cache chaud", "3. Réponse", "loop Retry"] {
+        for want in ["User", "API", "DB", "1. Request", "2. Read", "warm cache", "3. Response", "loop Retry"] {
             assert!(b.iter().any(|x| x.1.label.text.to_plain() == want), "{want} manquant");
         }
         assert!(b.iter().any(|x| x.1.geom == BoxGeom::Sticky));
         let c = conns(&o);
-        assert_eq!(c.iter().filter(|c| c.head_end == Arrowhead::Triangle).count(), 4, "4 messages fléchés");
-        assert!(c.iter().filter(|c| c.head_end == Arrowhead::None).count() >= 3, "lignes de vie");
+        assert_eq!(c.iter().filter(|c| c.head_end == Arrowhead::Triangle).count(), 4, "4 arrowed messages");
+        assert!(c.iter().filter(|c| c.head_end == Arrowhead::None).count() >= 3, "lifelines");
         let y = |t: &str| b.iter().find(|x| x.1.label.text.to_plain() == t).unwrap().1.frame.y;
-        assert!(y("1. Requête") < y("2. Lecture") && y("2. Lecture") < y("3. Réponse"));
+        assert!(y("1. Request") < y("2. Read") && y("2. Read") < y("3. Response"));
     }
 
     #[test]
@@ -904,7 +904,7 @@ mod tests {
         assert!(to_objects("", &ApproxMeasurer).is_err());
         assert!(to_objects("graph TD", &ApproxMeasurer).is_err());
         assert!(to_objects("sequenceDiagram", &ApproxMeasurer).is_err());
-        assert!(to_objects("%% rien\n", &ApproxMeasurer).is_err());
+        assert!(to_objects("%% nothing\n", &ApproxMeasurer).is_err());
     }
 
     #[test]
@@ -916,9 +916,9 @@ mod tests {
 
     #[test]
     fn multiline_and_quoted_labels() {
-        let o = objs("graph TD\n A[\"Texte avec (parenthèses)\"] --> B[Ligne 1<br/>Ligne 2]");
+        let o = objs("graph TD\n A[\"Text with (parentheses)\"] --> B[Line 1<br/>Line 2]");
         let t: Vec<String> = boxes(&o).iter().map(|x| x.1.label.text.to_plain()).collect();
-        assert!(t.contains(&"Texte avec (parenthèses)".to_owned()));
-        assert!(t.contains(&"Ligne 1\nLigne 2".to_owned()));
+        assert!(t.contains(&"Text with (parentheses)".to_owned()));
+        assert!(t.contains(&"Line 1\nLine 2".to_owned()));
     }
 }

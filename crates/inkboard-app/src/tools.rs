@@ -1,6 +1,7 @@
-//! Interactions sur le canvas : outils, sélection, poignées, édition de texte.
+//! Canvas interactions: tools, selection, handles, text editing.
 
 use crate::app::App;
+use crate::i18n::t;
 use crate::render::{Cam, Renderer};
 use eframe::egui::{self, Color32, CursorIcon, PointerButton, Pos2, Sense, Shape, Stroke, vec2};
 use inkboard_core::geom::{Frame, Pt, Rect};
@@ -20,9 +21,9 @@ pub enum Tool {
     Text,
     Sticky,
     Table,
-    /// Pastilles de vote : un clic pose une pastille.
+    /// Vote dots: one click drops a dot.
     Vote,
-    /// Pointeur laser : une traînée rouge qui s'efface, pour montrer sans dessiner.
+    /// Laser pointer: a fading red trail, to point without drawing.
     Laser,
 }
 
@@ -55,7 +56,7 @@ pub enum Drag {
         orig: Object,
         is_start: bool,
     },
-    /// Point de passage d'un connecteur ; `inserted` : le point vient d'être créé depuis une poignée de milieu de segment.
+    /// Waypoint of a connector; `inserted`: the point has just been created from a segment-midpoint handle.
     Via {
         orig: Object,
         idx: usize,
@@ -95,17 +96,17 @@ struct SelBox {
     frame: Frame,
     edges: bool,
     rotate: bool,
-    /// Un seul objet à cadre (forme, image, tableau) : redimensionnement exact dans son repère.
+    /// A single object with a frame (shape, image, table): exact resizing in its own frame of reference.
     single_frame: bool,
     ends: Option<(Pt, Pt)>,
-    /// Points de passage (connecteur seul).
+    /// Waypoints (single connector only).
     via: Vec<Pt>,
 }
 
 const MIN_SIZE: f64 = 4.0;
 
 impl App {
-    /// Début d'une modification « en direct » (curseur du panneau) : mémorise l'état d'origine.
+    /// Start of a "live" modification (panel slider): remembers the original state.
     pub fn live_apply(&mut self, f: &dyn Fn(&mut Object)) {
         if self.prop_edit.is_none() {
             self.prop_edit = Some(self.editable_selection());
@@ -115,7 +116,7 @@ impl App {
         self.set_live(&objs);
     }
 
-    /// Fin de la modification en direct : une seule étape d'annulation.
+    /// End of the live modification: a single undo step.
     pub fn live_end(&mut self) {
         if let Some(orig) = self.prop_edit.take() {
             self.commit_live(&orig);
@@ -128,7 +129,7 @@ impl App {
         &mut self.ed.doc.pages[idx]
     }
 
-    /// Applique des objets à la page sans toucher à l'historique (aperçu pendant un geste).
+    /// Applies objects to the page without touching the history (preview during a gesture).
     fn set_live(&mut self, objs: &[Object]) {
         let page = self.page_mut();
         for o in objs {
@@ -138,7 +139,7 @@ impl App {
         }
     }
 
-    /// Termine un geste : l'historique reçoit un seul « avant / après ».
+    /// Ends a gesture: the history receives a single "before / after".
     fn commit_live(&mut self, orig: &[Object]) {
         let finals: Vec<Object> = orig.iter().filter_map(|o| self.ed.page().get(&o.id).cloned()).collect();
         self.set_live(orig);
@@ -205,7 +206,7 @@ impl App {
         let Some(sb) = self.selection_box() else { return Vec::new() };
         if let Some((a, b)) = sb.ends {
             let mut v = vec![(HandleKind::Start, cam.s(a)), (HandleKind::End, cam.s(b))];
-            // poignées des points de passage, puis du milieu de chaque tronçon (pour en créer un nouveau)
+            // waypoint handles, then the midpoint of each segment (to create a new one)
             let controls: Vec<Pt> = std::iter::once(a).chain(sb.via.iter().copied()).chain(std::iter::once(b)).collect();
             for (i, p) in sb.via.iter().enumerate() {
                 v.push((HandleKind::Via(i), cam.s(*p)));
@@ -230,7 +231,7 @@ impl App {
         self.handles(cam).into_iter().filter(|(_, hp)| hp.distance(p) <= 10.0).min_by(|a, b| a.1.distance(p).total_cmp(&b.1.distance(p))).map(|h| h.0)
     }
 
-    /* ----------------------------------------------- Début de geste */
+    /* ----------------------------------------------- Gesture start */
 
     fn press_select(&mut self, cam: &Cam, screen: Pos2, w: Pt, shift: bool, alt: bool) {
         if let Some(h) = self.hit_handle(cam, screen) {
@@ -253,7 +254,7 @@ impl App {
                 HandleKind::Via(i) => {
                     if let Some(o) = orig.into_iter().next() {
                         if alt {
-                            // Alt + clic : supprime ce point de passage
+                            // Alt + click: removes this waypoint
                             self.ed.update(&o.id, |x| {
                                 if let Kind::Connector(c) = &mut x.kind
                                     && i < c.via.len()
@@ -308,7 +309,7 @@ impl App {
     }
 
     fn press_tool(&mut self, cam: &Cam, screen: Pos2, w: Pt, shift: bool, alt: bool) {
-        // l'extrémité gomme du stylet efface, quel que soit l'outil actif (sauf la main)
+        // the pen's eraser end erases, whatever the active tool (except the hand)
         let tool = if self.tool != Tool::Hand && (self.eraser_probe)() { Tool::Eraser } else { self.tool };
         match tool {
             Tool::Select => self.press_select(cam, screen, w, shift, alt),
@@ -579,7 +580,7 @@ impl App {
             Drag::Draw { pts, pressures, has_force } => {
                 let hl = self.tool == Tool::Highlighter;
                 let eps = 0.45 / zoom;
-                // simplification : on garde les indices pour que chaque pression suive son point
+                // simplification: keep the indices so that each pressure follows its point
                 let keep = if pts.len() > 2 { inkboard_core::geom::rdp_indices(&pts, eps) } else { (0..pts.len()).collect() };
                 let mut p: Vec<Pt> = keep.iter().map(|i| pts[*i]).collect();
                 let mut pr: Vec<f32> = keep.iter().map(|i| pressures[*i]).collect();
@@ -662,7 +663,7 @@ impl App {
 
     /* ----------------------------------------------- Texte */
 
-    /// Insère des images choisies dans une boîte de dialogue, au centre de la vue.
+    /// Inserts images chosen in a dialog, at the center of the view.
     pub fn insert_images_dialog(&mut self) {
         let files = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]).pick_files().unwrap_or_default();
         let c = self.view_center();
@@ -674,7 +675,7 @@ impl App {
         for (i, f) in files.iter().enumerate() {
             let Ok(bytes) = std::fs::read(f) else { continue };
             let Ok(img) = image::load_from_memory(&bytes) else {
-                self.toast("Image illisible");
+                self.toast(&t("Unreadable image"));
                 continue;
             };
             let (w, h) = (f64::from(img.width()), f64::from(img.height()));
@@ -699,7 +700,7 @@ impl App {
     }
 }
 
-/// Dessine le canvas et traite les entrées de l'utilisateur.
+/// Draws the canvas and handles the user's input.
 pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     let rect = ui.available_rect_before_wrap();
     let (resp, painter) = ui.allocate_painter(rect.size(), Sense::click_and_drag());
@@ -718,7 +719,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     let view = app.ed.page().view;
     let mut cam = Cam { origin: rect.min + vec2(view.x as f32, view.y as f32), zoom: view.zoom as f32 };
 
-    // ---- zoom / défilement
+    // ---- zoom / scrolling
     let (scroll, zoom_d, mods, ptr) = ctx.input(|i| (i.raw_scroll_delta, i.zoom_delta(), i.modifiers, i.pointer.hover_pos()));
     if let (true, Some(p)) = (resp.hovered(), ptr) {
         let factor = if (zoom_d - 1.0).abs() > 1e-4 {
@@ -742,7 +743,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         cam = Cam { origin: rect.min + vec2(v.x as f32, v.y as f32), zoom: v.zoom as f32 };
     }
 
-    // ---- pression du stylet : les événements tactiles portent la force (0..1) quand le matériel la fournit
+    // ---- pen pressure: touch events carry the force (0..1) when the hardware provides it
     ctx.input(|i| {
         for e in &i.events {
             if let egui::Event::Touch { phase, force, .. } = e {
@@ -754,7 +755,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
-    // ---- pointeur
+    // ---- pointer
     let (pressed, down, released, middle, secondary, dbl, pos, alt, shift) = ctx.input(|i| {
         (
             i.pointer.button_pressed(PointerButton::Primary),
@@ -815,7 +816,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
                 app.release(&cam, w, shift);
             }
         }
-        // curseur
+        // cursor
         if inside && app.drag.is_none() && app.editing.is_none() {
             let icon = match app.tool {
                 Tool::Select => match app.hit_handle(&cam, sp) {
@@ -842,7 +843,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         }
     }
 
-    // ---- dessin
+    // ---- drawing
     let dark = app.ed.doc.background.preset.is_dark();
     let (r, g, b) = app.ed.doc.background.preset.rgb();
     let ghost: Vec<Id> = match &app.drag {
@@ -873,7 +874,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     crate::rich_edit::draw_text_editor(app, ui, &cam);
     let _ = rect;
 
-    // ---- menu contextuel
+    // ---- context menu
     resp.context_menu(|ui| {
         if app.sel.is_empty() {
             crate::chrome::canvas_menu(app, ui);
@@ -920,7 +921,7 @@ fn handle_double_click(app: &mut App, cam: &Cam, w: Pt) {
 fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
     let accent = Color32::from_rgb(0x5b, 0x7c, 0xfa);
     let page = app.ed.page();
-    // brouillon en cours de création
+    // draft being created
     if let Some(d) = &app.draft {
         let (r, g, b) = app.ed.doc.background.preset.rgb();
         let mut rd = Renderer {
@@ -937,7 +938,7 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         };
         rd.draw_one(d);
     }
-    // aperçu d'un connecteur en cours de création / de modification : cible visée
+    // preview of a connector being created / edited: target aimed at
     let hover_target = match (&app.drag, app.ed.page()) {
         (Some(Drag::Create { tool: Tool::Line | Tool::Arrow, .. }), _) | (Some(Drag::Endpoint { .. }), _) => {
             let p = painter.ctx().input(|i| i.pointer.hover_pos());
@@ -951,7 +952,7 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         let pts: Vec<Pos2> = f.corners().iter().map(|p| cam.s(*p)).collect();
         painter.add(Shape::closed_line(pts, Stroke::new(2.0_f32, accent)));
     }
-    // sélection
+    // selection
     let page = app.ed.page();
     for o in page.objects.iter().filter(|o| app.sel.contains(&o.id)) {
         let corners: Vec<Pos2> = match o.frame() {
@@ -992,7 +993,7 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         let r = egui::Rect::from_two_pos(cam.s(*start), p);
         painter.rect(r, 0.0, accent.gamma_multiply(0.12), Stroke::new(1.0_f32, accent), egui::StrokeKind::Middle);
     }
-    // trait en cours
+    // stroke being drawn
     if let Some(Drag::Draw { pts, pressures, has_force }) = &app.drag {
         let hl = app.tool == Tool::Highlighter;
         let style = Style { fill: None, dash: Dash::Solid, ..app.style.clone() };
@@ -1026,10 +1027,10 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
     }
 }
 
-/// Durée de vie d'un point de la traînée du pointeur laser.
+/// Lifetime of a point of the laser pointer trail.
 const LASER_LIFE: std::time::Duration = std::time::Duration::from_millis(900);
 
-/// Enregistre la position du pointeur (outil laser) et dessine la traînée qui s'efface.
+/// Records the pointer position (laser tool) and draws the fading trail.
 fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, pointer: Option<Pos2>) {
     let now = std::time::Instant::now();
     app.laser.retain(|(_, t)| now.duration_since(*t) < LASER_LIFE);

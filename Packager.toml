@@ -1,15 +1,15 @@
 # Installeurs : cargo packager --release   (outil : cargo install cargo-packager --locked)
-# Formats produits par système : Windows → NSIS (.exe) et WiX (.msi) ; macOS → .app et .dmg ; Linux → .deb et .AppImage.
-# Prérequis : cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp (le workflow .github/workflows/release.yml le fait).
+# Formats produced per system: Windows → NSIS (.exe) and WiX (.msi); macOS → .app and .dmg; Linux → .deb and .AppImage.
+# Prerequisite: cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp (the .github/workflows/release.yml workflow does it).
 name = "inkboard"
 product-name = "Inkboard"
 version = "0.1.0"
 identifier = "org.inkboard.app"
-description = "Inkboard, tableau blanc infini, hors ligne et libre."
-long-description = "Inkboard est un tableau blanc infini 100 % hors ligne : dessin, formes, connecteurs liés, texte riche, formules LaTeX, import et export draw.io / Excalidraw / JSON Canvas / Mermaid, présentation, et un serveur MCP pour piloter le tableau depuis un agent."
-authors = ["Les contributeurs d'Inkboard"]
+description = "Inkboard, an infinite, offline and free whiteboard."
+long-description = "Inkboard is a 100% offline infinite whiteboard: drawing, shapes, bound connectors, rich text, LaTeX formulas, draw.io / Excalidraw / JSON Canvas / Mermaid import and export, presentation mode, and an MCP server to drive the board from an agent."
+authors = ["The Inkboard contributors"]
 publisher = "Inkboard"
-copyright = "Copyright (c) 2026 Les contributeurs d'Inkboard — MIT OU Apache-2.0"
+copyright = "Copyright (c) 2026 The Inkboard contributors — MIT OR Apache-2.0"
 category = "GraphicsAndDesign"
 license-file = "packaging/LICENSE.txt"
 out-dir = "dist"
@@ -26,17 +26,17 @@ resources = [
 path = "inkboard"
 main = true
 
-# Outils en ligne de commande, installés à côté de l'application (conversion de formats, serveur MCP).
+# Command-line tools, installed next to the application (format conversion, MCP server).
 [[binaries]]
 path = "ink"
 
 [[binaries]]
 path = "inkboard-mcp"
 
-# Linux (.deb) : bibliothèques chargées à l'exécution par egui/winit (non testé : aucun Linux disponible pendant le développement).
+# Linux (.deb): libraries loaded at runtime by egui/winit (untested: no Linux machine was available during development).
 [deb]
 depends = ["libgl1", "libxkbcommon0"]
 
-# macOS (non testé : aucun Mac disponible pendant le développement).
+# macOS (untested: no Mac was available during development).
 [macos]
 minimum-system-version = "11.0"

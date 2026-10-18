@@ -1,4 +1,4 @@
-//! Mini-DOM XML : suffisant pour lire les fichiers draw.io.
+//! Mini XML DOM: enough to read draw.io files.
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
@@ -40,13 +40,13 @@ fn node_from(e: &BytesStart<'_>) -> Result<Node, String> {
     Ok(n)
 }
 
-/// Analyse un document XML et renvoie son élément racine.
+/// Parses an XML document and returns its root element.
 pub fn parse(src: &str) -> Result<Node, String> {
     let mut reader = Reader::from_str(src);
     let mut stack: Vec<Node> = Vec::new();
     let mut root: Option<Node> = None;
     loop {
-        match reader.read_event().map_err(|e| format!("XML invalide : {e}"))? {
+        match reader.read_event().map_err(|e| format!("invalid XML: {e}"))? {
             Event::Start(e) => stack.push(node_from(&e)?),
             Event::Empty(e) => {
                 let n = node_from(&e)?;
@@ -93,12 +93,12 @@ pub fn parse(src: &str) -> Result<Node, String> {
         }
     }
     if !stack.is_empty() {
-        return Err("document XML incomplet".into());
+        return Err("incomplete XML document".into());
     }
-    root.ok_or_else(|| "document XML vide".into())
+    root.ok_or_else(|| "empty XML document".into())
 }
 
-/// Échappement pour valeur d'attribut.
+/// Escaping for an attribute value.
 pub fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -109,11 +109,11 @@ mod tests {
 
     #[test]
     fn parses_nested_with_entities() {
-        let n = parse(r#"<?xml version="1.0"?><a x="1 &amp; 2"><b y="&lt;z&gt;"/><c>texte &amp; suite</c></a>"#).unwrap();
+        let n = parse(r#"<?xml version="1.0"?><a x="1 &amp; 2"><b y="&lt;z&gt;"/><c>text &amp; more</c></a>"#).unwrap();
         assert_eq!(n.name, "a");
         assert_eq!(n.attr("x"), Some("1 & 2"));
         assert_eq!(n.child("b").unwrap().attr("y"), Some("<z>"));
-        assert_eq!(n.child("c").unwrap().text, "texte & suite");
+        assert_eq!(n.child("c").unwrap().text, "text & more");
         let mut v = Vec::new();
         n.find_all("b", &mut v);
         assert_eq!(v.len(), 1);

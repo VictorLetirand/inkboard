@@ -1,87 +1,91 @@
 # Architecture
 
-## Principes
+*Version française : [fr/ARCHITECTURE.md](fr/ARCHITECTURE.md)*
 
-1. **Le moteur ne connaît pas l'interface.** `inkboard-core` n'a ni fenêtre, ni police, ni dépendance graphique. Tout ce qui peut
-   se tester sans écran se teste dans `inkboard-core` / `inkboard-formats` ; l'interface (`inkboard-app`) est une couche mince au-dessus.
-   Le même moteur servira le futur serveur MCP, la CLI et d'éventuels autres fronts (WASM).
-2. **Les connecteurs ne stockent pas leur tracé.** Un connecteur garde ses extrémités (`Free(point)` ou
-   `Bound{cible, ancre}`) ; le chemin est **recalculé à la demande** depuis l'état courant de la page
-   (`Page::connector_path`). Déplacer, redimensionner ou tourner une forme fait donc suivre ses flèches, sans aucune mise à jour
-   et sans état périmé possible. Supprimer une forme détache ses connecteurs dans la même transaction.
-3. **Toute modification passe par l'`Editor`.** Les opérations (`Insert`, `Remove`, `Replace`, `Reorder`, `SetLayers`, pages, fond)
-   sont réversibles ; une transaction = une étape d'annulation. Pendant un geste (déplacement, redimensionnement…), l'interface
-   modifie la page « en direct » sans historique puis enregistre **un seul** avant/après au relâchement.
-4. **Le texte est mesuré par un `Measurer` injecté.** L'interface fournit les vraies polices (egui) ; la CLI utilise une
-   mesure approchée. La mise en page du texte (`layout_rich`) est donc identique pour l'écran, le SVG et les formats d'échange.
-5. **Texte riche dans le modèle dès le départ** : `RichText` = fragments stylés (gras, italique, souligné, barré, couleur,
-   surlignage). Les couleurs de mots et le surlignage sont déjà rendus (écran, SVG, draw.io).
-6. **Formats d'échange = fonctions pures** `contenu → Document` et `Document → contenu`, testées par aller-retours.
-   Un import renvoie un `Report` (éléments approximés / ignorés) plutôt que d'échouer en silence.
+## Principles
 
-## Modèle
+1. **The engine knows nothing about the interface.** `inkboard-core` has no window, no font, no graphics dependency. Everything that can
+   be tested without a screen is tested in `inkboard-core` / `inkboard-formats`; the interface (`inkboard-app`) is a thin layer on top.
+   The same engine serves the MCP server, the CLI and possible other front ends (WASM).
+2. **Connectors do not store their path.** A connector keeps its ends (`Free(point)` or
+   `Bound{target, anchor}`); the path is **recomputed on demand** from the page's current state
+   (`Page::connector_path`). Moving, resizing or rotating a shape therefore makes its arrows follow, with no update step
+   and no possible stale state. Deleting a shape detaches its connectors in the same transaction.
+3. **Every modification goes through the `Editor`.** Operations (`Insert`, `Remove`, `Replace`, `Reorder`, `SetLayers`, pages, background)
+   are reversible; one transaction = one undo step. During a gesture (move, resize…), the interface
+   modifies the page "live" without history, then records **a single** before/after on release.
+4. **Text is measured by an injected `Measurer`.** The interface provides the real fonts (egui); the CLI uses an
+   approximate measure. Text layout (`layout_rich`) is therefore identical for the screen, the SVG and the exchange formats.
+5. **Rich text in the model from day one**: `RichText` = styled fragments (bold, italic, underline, strikethrough, color,
+   highlight). Word colors and highlights are already rendered (screen, SVG, draw.io).
+6. **Exchange formats = pure functions** `content → Document` and `Document → content`, tested by round trips.
+   An import returns a `Report` (approximated / skipped elements) instead of failing silently.
+7. **English in the source, translations in a table.** UI strings are written in English in the code and looked up through `t()` / `tr!`; `i18n_fr.rs` holds the French table. The language is detected from the system and can be overridden in the menu. Libraries and the MCP server speak English only.
+
+## Model
 
 ```
-Document { pages[], fond, ressources (images, dédupliquées) }
-Page     { calques[], objets[] (ordre = z), vue }
-Object   { id, style, groupe, verrou, calque, kind }
-Kind     = Box (rect/ellipse/losange/triangle/note/texte) | Pen | Connector | Image | Table
+Document { pages[], background, assets (images, deduplicated) }
+Page     { layers[], objects[] (order = z), view }
+Object   { id, style, group, lock, layer, kind }
+Kind     = Box (rect/ellipse/diamond/triangle/sticky/text) | Pen | Connector | Image | Table
 ```
 
-Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<_>>` (copie bon marché pour l'historique).
+Strokes (`Pen`) store their points in world coordinates in an `Arc<Vec<_>>` (cheap copy for the history).
 
 ## Interface (`inkboard-app`)
 
-- `render.rs` : dessine une page (formes, texte riche, traits lissés à largeur variable, connecteurs et pointes, images, tableaux). Niveau de détail :
-  sous 3 px un objet devient un point ; les caches de l'application (`Caches` : identifiant → position, index spatial) servent au rendu et aux sélections.
-- `tools.rs` : machine à états des gestes (`Drag`), poignées, création d'objets, édition de texte.
-  Les calculs de poignées (redimensionner un cadre tourné, rotation, magnétisme) vivent dans `inkboard-core::transform` et sont testés à part.
-- `rich_edit.rs` : édition de texte riche. Le champ de saisie egui garde la chaîne brute ; `RichText` suit chaque frappe
-  (`apply_edit` : préfixe/suffixe communs) et un `layouter` affiche les styles. La barre flottante et les raccourcis appellent
-  `RichText::format` (moteur). La sélection est mémorisée puis rétablie après un clic sur la barre.
-- `keymap.rs` : `Action` (41 commandes) → `Shortcut`s, remplacement en cas de conflit, combinaisons réservées, fichier JSON tolérant.
-  `App::run_action` est le point d'entrée unique des commandes (raccourcis, menus).
-- `theme.rs` : palette claire/sombre du prototype, styles egui (arrondis, ombres, tailles de texte) et widgets partagés (boutons à icône, lignes de menu, boutons segmentés, cartes flottantes) ;
-  `icons.rs` : jeu d'icônes SVG du prototype, rastérisé une fois (resvg, 3×) en texture blanche puis teinté ; `chrome.rs` : les cartes (titre + menu, outils, pages, zoom, aide), le menu principal et les menus contextuels ;
-  `panel.rs` : panneau de style flottant (pastilles, boutons segmentés, ordre, alignement, calques) ; `ui.rs` : présentation, dialogues centrés sur fond assombri, notifications.
-  Le canevas occupe toute la fenêtre ; les cartes sont des `egui::Area` au-dessus (l'aire d'une carte nouvellement apparue est trop large pendant ses toutes premières images : les tests laissent le panneau se stabiliser avec `T::tool`). `app.rs` : état, fichiers, sauvegarde automatique.
-- `clipboard.rs` : presse-papiers (objets internes, images et texte du système). `insert.rs` : bloc de code, formule, pastille de vote.
-  Mode présentation (`App::presenting`, `present_overlay`) et minuteur dans `app.rs` / `ui.rs`.
-- `tests.rs` : 78 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
+- `render.rs`: draws a page (shapes, rich text, smoothed variable-width strokes, connectors and arrowheads, images, tables). Level of detail:
+  below 3 px an object becomes a dot; the application caches (`Caches`: id → position, spatial index) serve rendering and selections.
+- `tools.rs`: state machine of the gestures (`Drag`), handles, object creation, text editing.
+  Handle computations (resizing a rotated frame, rotation, snapping) live in `inkboard-core::transform` and are tested separately.
+- `rich_edit.rs`: rich-text editing. The egui input field keeps the raw string; `RichText` follows every keystroke
+  (`apply_edit`: common prefix/suffix) and a `layouter` displays the styles. The floating bar and the shortcuts call
+  `RichText::format` (engine). The selection is remembered, then restored after a click on the bar.
+- `keymap.rs`: `Action` (41 commands) → `Shortcut`s, replacement on conflict, reserved combinations, tolerant JSON file.
+  `App::run_action` is the single entry point for commands (shortcuts, menus).
+- `i18n.rs` / `i18n_fr.rs`: language detection and preference, `t()` / `tr!` lookups, French table.
+- `theme.rs`: the prototype's light/dark palette, egui styles (rounding, shadows, text sizes) and shared widgets (icon buttons, menu rows, segmented buttons, floating cards);
+  `icons.rs`: the prototype's SVG icon set, rasterized once (resvg, 3×) into a white texture, then tinted; `chrome.rs`: the cards (title + menu, tools, pages, zoom, help), the main menu and the context menus;
+  `panel.rs`: floating style panel (swatches, segmented buttons, order, alignment, layers); `ui.rs`: presentation, dialogs centered on a dimmed background, notifications.
+  The canvas fills the whole window; the cards are `egui::Area`s above it (a newly appeared card's area is too wide during its very first frames: the tests let the panel settle with `T::tool`). `app.rs`: state, files, autosave.
+- `clipboard.rs`: clipboard (internal objects, system images and text). `insert.rs`: code block, formula, vote dot.
+  Presentation mode (`App::presenting`, `present_overlay`) and the timer are in `app.rs` / `ui.rs`.
+- `tests.rs`: tests that drive the application with a simulated mouse and keyboard (`egui_kittest`), without a window.
 
-## Modules ajoutés au noyau (`inkboard-core`)
+## Modules added to the core (`inkboard-core`)
 
-- `spatial.rs` : index spatial en grille (`SpatialIndex`), table id → position, accès rapide aux objets par identifiant.
-- `route.rs` : routage orthogonal A* sur la grille formée par les bords des obstacles (pénalité de coude) ; `connector.rs` l'utilise pour les
-  connecteurs coudés (`avoid_obstacles`) uniquement quand le chemin simple traverse une forme. Désactivé au-delà de 5 000 objets.
-- `pen.rs` : lissage des traits, largeur selon la pression, contour polygonal du trait.
-- `highlight.rs` : coloration syntaxique générique des blocs de code (`RichText` coloré).
+- `spatial.rs`: grid spatial index (`SpatialIndex`), id → position table, fast access to objects by id.
+- `route.rs`: A* orthogonal routing on the grid formed by the obstacles' edges (elbow penalty); `connector.rs` uses it for
+  elbow connectors (`avoid_obstacles`) only when the simple path crosses a shape. Disabled beyond 5,000 objects.
+- `pen.rs`: stroke smoothing, pressure-dependent width, polygonal outline of the stroke.
+- `highlight.rs`: generic syntax coloring of code blocks (colored `RichText`).
 
-`inkboard-formats::math` compose les formules LaTeX en SVG (crate `latex-rust`, police STIX Two Math embarquée). Une formule est un `ImageObj` dont l'asset est ce SVG
-**dessiné en blanc** et dont `latex` conserve le source : l'écran teinte la texture avec la couleur de trait, l'export SVG remplace le blanc par cette couleur.
+`inkboard-formats::math` typesets LaTeX formulas to SVG (`latex-rust` crate, embedded STIX Two Math font). A formula is an `ImageObj` whose asset is that SVG
+**drawn in white** and whose `latex` field keeps the source: the screen tints the texture with the stroke color, SVG export replaces the white with that color.
 
-`inkboard-mcp` : serveur MCP (JSON-RPC sur stdio, écrit à la main) au-dessus de `inkboard-core`/`inkboard-formats` ; chaque outil est une fonction `apply(&mut Editor, nom, args)` ; le mode fichier ouvre le fichier, l'applique et réenregistre atomiquement, le mode direct la fait exécuter par l'application (`inkboard-app::live` : serveur local 127.0.0.1 + jeton, exécution sur le fil d'interface dans une transaction).
-`inkboard-app::watch` recharge le fichier ouvert quand un autre programme le modifie (sauf modifications locales non enregistrées). Détails : [MCP.md](MCP.md).
+`inkboard-mcp`: MCP server (JSON-RPC over stdio, hand-written) on top of `inkboard-core`/`inkboard-formats`; each tool is a function `apply(&mut Editor, name, args)`; file mode opens the file, applies it and saves atomically, live mode has the application run it (`inkboard-app::live`: local 127.0.0.1 server + token, executed on the UI thread in one transaction).
+`inkboard-app::watch` reloads the open file when another program modifies it (unless there are unsaved local changes). Details: [MCP.md](MCP.md).
 
-`inkboard-mcp::resources` : ressources MCP et fil de surveillance (sondage 600 ms → `notifications/resources/updated`) ; `tools::apply_tracked` : suivi des changements de l'utilisateur (empreinte par objet, les modifications de l'agent sont absorbées dans la référence).
+`inkboard-mcp::resources`: MCP resources and the watcher thread (600 ms polling → `notifications/resources/updated`); `tools::apply_tracked`: tracking of the user's changes (per-object fingerprint, the agent's own changes are absorbed into the baseline).
 
-`inkboard-pen` (Windows) installe un *subclass* de fenêtre qui lit les `WM_POINTER*` sans les consommer et expose `eraser_active()` et `last_sample()` (pression, indicateurs, inclinaison ; utilisés par le diagnostic `--pen-test`, `inkboard-app::pen_test`) ; l'application remplace alors l'outil par la gomme
-pour le geste (`App::eraser_probe`, substituable dans les tests). C'est le seul crate qui autorise `unsafe`.
+`inkboard-pen` (Windows) installs a window *subclass* that reads `WM_POINTER*` without consuming them and exposes `eraser_active()` and `last_sample()` (pressure, flags, tilt; used by the `--pen-test` diagnostic, `inkboard-app::pen_test`); the application then replaces the tool with the eraser
+for the gesture (`App::eraser_probe`, substitutable in tests). It is the only crate that allows `unsafe`.
 
-### Pourquoi egui ?
+### Why egui?
 
-Un seul langage et un exécutable natif, hors ligne par construction, avec une API de dessin qui permet de maîtriser le rendu du
-tableau. Limites connues, assumées pour ce jalon : pas d'icônes système (icônes dessinées à la main), éditeur de texte basique
-accessibilité limitée. Si le rendu devait dépasser egui
-(très grands tableaux, effets), `inkboard-core` reste indépendant : on pourrait changer de moteur de rendu sans toucher au reste.
+A single language and a native executable, offline by construction, with a drawing API that gives full control over the board's
+rendering. Known limits, accepted for this milestone: no system icons (hand-drawn icons), basic text editor,
+limited accessibility. If rendering ever outgrew egui
+(very large boards, effects), `inkboard-core` stays independent: the renderer could be changed without touching the rest.
 
 ## Tests
 
-| Crate | Tests | Ce qui est couvert |
+| Crate | Tests | What is covered |
 |---|---|---|
-| `inkboard-core` | 101 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
-| `inkboard-formats` | 46 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
-| `inkboard-mcp` | 8 | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports) ; le mode direct, les ressources/notifications et `board_changes` en direct sont testés dans `inkboard-app` (5 tests : édition annulable, ciblage du fichier ouvert, jeton, ressources et notifications, changements et images) |
-| `inkboard-app` | 85 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
+| `inkboard-core` | 101 | geometry, model, connectors (rotation, elbow, curve), selection, history, saving, SVG, layout, handles, rich text (insert/delete/style toggling), obstacle routing, spatial index, pen pressure, highlighting |
+| `inkboard-formats` | 46 | draw.io / Excalidraw / JSON Canvas round trips, foreign imports, compressed draw.io, Mermaid (flowchart, state, sequence), PNG, PDF, LaTeX typesetting, realistic Excalidraw/Canvas files |
+| `inkboard-mcp` | 8 | full session on the real binary (handshake, tools, root confinement, exports, resources and notifications); live mode and live `board_changes` are tested in `inkboard-app` (editing with undo, targeting the open file, token, resources and notifications, changes and images) |
+| `inkboard-app` | 88 | creation, moving with bound arrows, resizing, rotation, lasso, eraser, undoing a gesture, text, tables, import, zoom; **rich text** (typing, keyboard selection, bold/color/highlight); **shortcuts** (reassigning, removing, recording a key, persistence, shortcuts while editing); **waypoints**, obstacle avoidance, code block (colored), typeset formula (insert, edit, tinted export), vote, pen eraser, presentation, timer, clipboard, pen, languages |
 
-En plus : l'export draw.io a été ouvert dans le visualiseur officiel diagrams.net (formes, flèches liées, pointillés, rotation).
+In addition: the draw.io export was opened in the official diagrams.net viewer (shapes, bound arrows, dashes, rotation).

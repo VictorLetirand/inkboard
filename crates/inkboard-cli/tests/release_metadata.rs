@@ -1,4 +1,4 @@
-//! Cohérence des métadonnées de publication : version des installeurs, licence et fichiers de licence.
+//! Consistency of the release metadata: installer version, license and license files.
 
 use std::path::PathBuf;
 
@@ -10,18 +10,18 @@ fn read(name: &str) -> String {
     std::fs::read_to_string(root().join(name)).unwrap_or_else(|e| panic!("{name} : {e}"))
 }
 
-/// Valeur d'une clé `clé = "valeur"` de premier niveau.
+/// Value of a top-level `key = "value"` entry.
 fn value(toml: &str, key: &str) -> String {
     toml.lines()
         .find_map(|l| l.strip_prefix(key).and_then(|r| r.trim_start().strip_prefix('=')).map(|r| r.trim().trim_matches('"').to_owned()))
-        .unwrap_or_else(|| panic!("clé {key} absente"))
+        .unwrap_or_else(|| panic!("key {key} is missing"))
 }
 
 #[test]
 fn installer_version_matches_the_workspace_version() {
     let ws = value(&read("Cargo.toml"), "version");
     let pk = value(&read("Packager.toml"), "version");
-    assert_eq!(pk, ws, "mettre à jour `version` dans Packager.toml en même temps que dans Cargo.toml");
+    assert_eq!(pk, ws, "update `version` in Packager.toml together with Cargo.toml");
 }
 
 #[test]
@@ -30,6 +30,6 @@ fn project_is_dual_licensed_mit_or_apache_with_both_texts_present() {
     assert!(read("LICENSE-MIT").contains("Permission is hereby granted, free of charge"));
     assert!(read("LICENSE-APACHE").contains("Apache License") && read("LICENSE-APACHE").contains("Version 2.0, January 2004"));
     let combined = read("packaging/LICENSE.txt");
-    assert!(combined.contains("MIT") && combined.contains("Apache License"), "le texte affiché par l'installeur contient les deux licences");
-    assert!(read("THIRD_PARTY_LICENSES.md").contains("STIX Two Math"), "la police embarquée est créditée");
+    assert!(combined.contains("MIT") && combined.contains("Apache License"), "the text shown by the installer contains both licenses");
+    assert!(read("THIRD_PARTY_LICENSES.md").contains("STIX Two Math"), "the embedded font is credited");
 }

@@ -1,4 +1,4 @@
-//! Format de fichier natif (JSON versionné) et enregistrement atomique.
+//! Native file format (versioned JSON) and atomic saving.
 
 use crate::model::{Document, Id, Kind, Page};
 use serde::{Deserialize, Serialize};
@@ -7,17 +7,24 @@ use std::path::Path;
 use thiserror::Error;
 
 pub const FORMAT: &str = "inkboard";
+/// Format identifier written by the pre-rename alpha builds; still accepted when reading.
+const LEGACY_FORMAT: &str = "tableau-blanc";
+
+/// Is `format` an identifier of the native format (current or pre-rename)?
+pub fn is_native_format(format: &str) -> bool {
+    format == FORMAT || format == LEGACY_FORMAT
+}
 pub const VERSION: u32 = 2;
 
 #[derive(Debug, Error)]
 pub enum LoadError {
-    #[error("JSON invalide : {0}")]
+    #[error("invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("ce fichier n'est pas un tableau blanc (format « {0} »)")]
+    #[error("this file is not an Inkboard board (format \"{0}\")")]
     WrongFormat(String),
-    #[error("fichier créé par une version plus récente (v{0}) ; mettez l'application à jour")]
+    #[error("file created by a newer version (v{0}); update the application")]
     TooNew(u32),
-    #[error("lecture ou écriture impossible : {0}")]
+    #[error("cannot read or write: {0}")]
     Io(#[from] std::io::Error),
 }
 
@@ -38,12 +45,12 @@ struct EnvelopeIn {
 pub fn to_json(doc: &Document, pretty: bool) -> String {
     let env = EnvelopeOut { format: FORMAT, version: VERSION, document: doc };
     let r = if pretty { serde_json::to_string_pretty(&env) } else { serde_json::to_string(&env) };
-    r.expect("la sérialisation d'un document ne peut pas échouer")
+    r.expect("serializing a document cannot fail")
 }
 
 pub fn from_json(s: &str) -> Result<Document, LoadError> {
     let env: EnvelopeIn = serde_json::from_str(s)?;
-    if env.format != FORMAT {
+    if !is_native_format(&env.format) {
         return Err(LoadError::WrongFormat(env.format));
     }
     if env.version > VERSION {
@@ -54,8 +61,8 @@ pub fn from_json(s: &str) -> Result<Document, LoadError> {
     Ok(doc)
 }
 
-/// Rend un document cohérent : au moins une page, identifiants uniques,
-/// pas de connecteur orphelin, calque « main » présent.
+/// Makes a document consistent: at least one page, unique ids,
+/// no orphan connector, "main" layer present.
 pub fn sanitize(doc: &mut Document) {
     if doc.pages.is_empty() {
         doc.pages.push(Page::new("Page 1"));
@@ -83,7 +90,7 @@ pub fn sanitize(doc: &mut Document) {
         doc.pages.iter().flat_map(|p| p.objects.iter()).filter_map(|o| if let Kind::Image(i) = &o.kind { Some(i.asset.clone()) } else { None }).collect();
     for id in used {
         if !doc.assets.contains_key(&id) {
-            // image sans ressource : on la retire plutôt que de laisser un objet cassé
+            // image without an asset: remove it rather than leave a broken object
             for p in &mut doc.pages {
                 p.objects.retain(|o| !matches!(&o.kind, Kind::Image(i) if i.asset == id));
             }
@@ -91,7 +98,7 @@ pub fn sanitize(doc: &mut Document) {
     }
 }
 
-/// Enregistre via un fichier temporaire puis renommage : un plantage ne laisse jamais un fichier tronqué.
+/// Saves through a temporary file then a rename: a crash never leaves a truncated file.
 pub fn save(doc: &Document, path: &Path) -> Result<(), LoadError> {
     let tmp = path.with_extension("tmp-save");
     std::fs::write(&tmp, to_json(doc, false))?;
@@ -114,7 +121,7 @@ mod tests {
 
     fn sample() -> Document {
         let mut d = Document::default();
-        let mut label = Label::new("Bonjour", 22.0, crate::style::Align::Center);
+        let mut label = Label::new("Hello", 22.0, crate::style::Align::Center);
         label.text.restyle(0, 3, |s| {
             s.bold = true;
             s.highlight = Some(Color::rgb(255, 236, 153));
@@ -148,9 +155,13 @@ mod tests {
 
     #[test]
     fn rejects_foreign_and_future_files() {
-        assert!(matches!(from_json(r#"{"format":"autre","version":1,"document":{"name":"x","pages":[]}}"#), Err(LoadError::WrongFormat(_))));
+        assert!(matches!(from_json(r#"{"format":"other","version":1,"document":{"name":"x","pages":[]}}"#), Err(LoadError::WrongFormat(_))));
+        assert!(
+            from_json(r#"{"format":"tableau-blanc","version":2,"document":{"name":"old","pages":[]}}"#).is_ok(),
+            "boards saved before the rename still open"
+        );
         assert!(matches!(from_json(r#"{"format":"inkboard","version":99,"document":{"name":"x","pages":[]}}"#), Err(LoadError::TooNew(99))));
-        assert!(matches!(from_json("pas du json"), Err(LoadError::Json(_))));
+        assert!(matches!(from_json("not json"), Err(LoadError::Json(_))));
     }
 
     #[test]
@@ -158,8 +169,8 @@ mod tests {
         let mut d = sample();
         let dup = d.pages[0].objects[0].clone();
         d.pages[0].objects.push(dup);
-        d.pages[0].objects.remove(1); // supprime la cible du connecteur
-        d.pages[0].objects[0].layer = Id::from("inconnu");
+        d.pages[0].objects.remove(1); // remove the connector's target
+        d.pages[0].objects[0].layer = Id::from("unknown");
         sanitize(&mut d);
         let ids: HashSet<&Id> = d.pages[0].objects.iter().map(|o| &o.id).collect();
         assert_eq!(ids.len(), d.pages[0].objects.len());

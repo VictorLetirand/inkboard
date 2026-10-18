@@ -1,7 +1,7 @@
-//! Ressources MCP : le tableau affiché dans l'application (`inkboard://live`) et les fichiers `.inkboard.json` de la racine autorisée,
-//! avec abonnement : le serveur prévient le client (`notifications/resources/updated`) quand le contenu change.
+//! MCP resources: the board shown in the application (`inkboard://live`) and the `.inkboard.json` files of the allowed root,
+//! with subscription: the server notifies the client (`notifications/resources/updated`) when the content changes.
 //!
-//! Le changement est détecté par sondage (toutes les 600 ms) : date de modification d'un fichier, ou « révision + sélection » de l'application.
+//! Change is detected by polling (every 600 ms): a file's modification time, or the application's "revision + selection".
 
 use crate::Server;
 use crate::live::{self, Forward};
@@ -11,13 +11,13 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-/// URI de la ressource « tableau affiché dans l'application ».
+/// URI of the "board shown in the application" resource.
 pub const LIVE_URI: &str = "inkboard://live";
 
 const MAX_FILES: usize = 300;
 const MAX_DEPTH: usize = 3;
 
-/// Encode un chemin en URI `file://` (les caractères hors `A-Za-z0-9-._~/:` sont codés en %XX).
+/// Encodes a path as a `file://` URI (characters outside `A-Za-z0-9-._~/:` are %XX-encoded).
 pub fn file_uri(p: &Path) -> String {
     let s = p.display().to_string().replace('\\', "/");
     let mut out = String::from("file://");
@@ -34,7 +34,7 @@ pub fn file_uri(p: &Path) -> String {
     out
 }
 
-/// Chemin désigné par une URI `file://` (`None` pour tout autre schéma).
+/// Path designated by a `file://` URI (`None` for any other scheme).
 pub fn uri_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let decoded = String::from_utf8(inkboard_formats::common::percent_decode(rest)).ok()?;
@@ -66,13 +66,13 @@ fn live_available(srv: &Server) -> bool {
 }
 
 impl Server {
-    /// Ressources disponibles : le tableau de l'application s'il est ouvert, et les fichiers `.inkboard.json` sous la racine.
+    /// Available resources: the application's board if it is open, and the `.inkboard.json` files under the root.
     pub fn list_resources(&self) -> Vec<Value> {
         let mut v = Vec::new();
         if live_available(self) {
             v.push(json!({
-                "uri": LIVE_URI, "name": "Tableau affiché dans l'application",
-                "description": "Contenu du tableau ouvert (page courante) et sélection de l'utilisateur. Abonnez-vous pour être prévenu de ses modifications.",
+                "uri": LIVE_URI, "name": "Board shown in the application",
+                "description": "Content of the open board (current page) and the user's selection. Subscribe to be notified of its changes.",
                 "mimeType": "application/json",
             }));
         }
@@ -80,27 +80,27 @@ impl Server {
             let mut files = Vec::new();
             collect(root, 0, &mut files);
             for f in files {
-                let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("tableau").to_owned();
+                let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("board").to_owned();
                 v.push(json!({"uri": file_uri(&f), "name": name, "mimeType": "application/json"}));
             }
         }
         v
     }
 
-    /// Contenu JSON d'une ressource (même forme que `describe_board`).
+    /// JSON content of a resource (same shape as `describe_board`).
     pub fn read_resource(&self, uri: &str) -> Result<String, String> {
         if uri == LIVE_URI {
             return match live::forward(self, "describe_board", &json!({})) {
                 Forward::Done(Ok(v)) => Ok(v.to_string()),
                 Forward::Done(Err(e)) => Err(e),
-                Forward::NotLive => Err("aucun tableau n'est ouvert dans l'application".into()),
+                Forward::NotLive => Err("no board is open in the application".into()),
             };
         }
-        let path = uri_path(uri).ok_or_else(|| format!("ressource inconnue : {uri}"))?;
+        let path = uri_path(uri).ok_or_else(|| format!("unknown resource: {uri}"))?;
         crate::tools::call(self, "describe_board", &json!({"path": path.display().to_string()}))
     }
 
-    /// Valeur qui change quand le contenu de la ressource change (`None` : ressource absente).
+    /// Value that changes when the resource's content changes (`None`: resource absent).
     fn change_token(&self, uri: &str) -> String {
         if uri == LIVE_URI {
             return match live::forward(self, "__status", &json!({})) {
@@ -114,7 +114,7 @@ impl Server {
             .map_or_else(|| "absent".into(), |d| d.as_nanos().to_string())
     }
 
-    /// Lance le fil de surveillance qui envoie les notifications de ressources sur `out` (il s'arrête quand `out` est fermé).
+    /// Starts the watcher thread that sends resource notifications on `out` (it stops when `out` is closed).
     pub fn spawn_watcher(&self, out: Sender<Value>) {
         let srv = self.clone();
         std::thread::spawn(move || srv.watch(&out));
@@ -131,7 +131,7 @@ impl Server {
             last.retain(|u, _| subs.contains(u));
             for uri in subs {
                 let token = self.change_token(&uri);
-                // la première observation après l'abonnement sert de référence : le client vient de lire l'état courant
+                // the first observation after subscribing serves as the reference: the client has just read the current state
                 if last.insert(uri.clone(), token.clone()).is_some_and(|old| old != token)
                     && out.send(json!({"jsonrpc": "2.0", "method": "notifications/resources/updated", "params": {"uri": uri}})).is_err()
                 {
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn file_uris_round_trip_including_spaces_and_accents() {
-        for p in ["C:\\Tableaux\\Mon schéma.inkboard.json", "/home/u/a b/é.inkboard.json"] {
+        for p in ["C:\\Boards\\My diagram.inkboard.json", "/home/u/a b/é.inkboard.json"] {
             let uri = file_uri(Path::new(p));
             assert!(uri.starts_with("file:///"), "{uri}");
             assert!(!uri.contains(' ') && uri.is_ascii(), "{uri}");
