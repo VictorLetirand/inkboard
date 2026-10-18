@@ -912,6 +912,3 @@ impl eframe::App for App {
         self.bench_step(ctx, started);
     }
 }
-
-#[allow(dead_code)]
-fn _order_used(_: Order) {}

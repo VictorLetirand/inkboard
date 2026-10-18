@@ -1846,7 +1846,6 @@ dependencies = [
  "quick-xml 0.41.0",
  "regex",
  "resvg 0.48.1",
- "serde",
  "serde_json",
  "svg2pdf",
  "thiserror 2.0.21",
