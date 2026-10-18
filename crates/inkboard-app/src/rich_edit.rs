@@ -96,6 +96,9 @@ impl App {
             Kind::Box(b) => {
                 if b.label.text != rich {
                     b.label.text = rich.clone();
+                    if let Some(lang) = b.lang {
+                        b.label.text = inkboard_core::highlight::highlight_lang(&rich.to_plain(), lang);
+                    }
                     b.fit(&m);
                 }
             }
@@ -192,9 +195,10 @@ impl App {
 
 /// Spans → egui formatted text.
 #[allow(clippy::too_many_arguments)]
-fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark: bool, wrap: f32) -> LayoutJob {
+fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark: bool, wrap: f32, halign: egui::Align) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap;
+    job.halign = halign;
     for sp in &rich.0 {
         let color = sp.style.color.map_or(base, |c| col(c, dark, 1.0));
         job.append(
@@ -206,7 +210,6 @@ fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark:
                 background: sp.style.highlight.map_or(Color32::TRANSPARENT, |h| col(h, dark, 0.55)),
                 italics: sp.style.italic,
                 underline: if sp.style.underline { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
-                strikethrough: if sp.style.strike { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
                 ..Default::default()
             },
         );
@@ -217,29 +220,69 @@ fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark:
     job
 }
 
-/// Floating formatting bar; returns the chosen action.
-fn format_bar(ui: &mut egui::Ui, app: &App) -> Option<Format> {
+/// Choice made in the floating formatting bar.
+enum BarAction {
+    Format(Format),
+    Align(Align),
+}
+
+/// Text-style button (B / I / U / S) drawn by hand so that the underline and strikethrough sit on the letter itself
+/// (egui draws them relative to the whole text row, which looks off-center on a single capital).
+fn style_button(ui: &mut egui::Ui, f: Format, active: bool, tip: &str) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(30.0, 26.0), egui::Sense::click());
+    let st = ui.style().interact_selectable(&resp, active);
+    ui.painter().rect(r, st.corner_radius, st.bg_fill, st.bg_stroke, egui::StrokeKind::Inside);
+    let (label, font) = match f {
+        Format::Bold => ("B", font_id(FontFamily::Sans, 15.0, true)),
+        Format::Italic => ("I", font_id(FontFamily::Sans, 15.0, false)),
+        Format::Underline => ("U", font_id(FontFamily::Sans, 15.0, false)),
+        _ => ("S", font_id(FontFamily::Sans, 15.0, false)),
+    };
+    let color = st.fg_stroke.color;
+    let job = LayoutJob::single_section(label.to_owned(), TextFormat { font_id: font, color, italics: f == Format::Italic, ..Default::default() });
+    let galley = ui.painter().layout_job(job);
+    let pos = r.center() - galley.size() / 2.0;
+    let glyph = egui::Rect::from_min_size(pos, galley.size());
+    ui.painter().galley(pos, galley, color);
+    // capital letters occupy roughly the middle 70 % of the row, slightly above its center
+    let cap_center = glyph.center().y - glyph.height() * 0.04;
+    let cap_bottom = cap_center + glyph.height() * 0.30;
+    let (x0, x1) = (glyph.center().x - 6.0, glyph.center().x + 6.0);
+    match f {
+        Format::Underline => {
+            ui.painter().hline(x0..=x1, cap_bottom + 1.5, Stroke::new(1.3_f32, color));
+        }
+        Format::Strike => {
+            ui.painter().hline(x0..=x1, glyph.center().y + glyph.height() * 0.05, Stroke::new(1.3_f32, color));
+        }
+        _ => {}
+    }
+    resp.on_hover_text(t(tip))
+}
+
+/// Floating formatting bar; returns the chosen action. `align`: current text alignment of the edited box (`None`: not applicable).
+fn format_bar(ui: &mut egui::Ui, app: &App, align: Option<Align>) -> Option<BarAction> {
     let mut action = None;
     ui.horizontal(|ui| {
-        for (label, f) in [("B", Format::Bold), ("I", Format::Italic), ("U", Format::Underline), ("S", Format::Strike)] {
-            let mut t = egui::RichText::new(label);
-            t = match f {
-                Format::Bold => t.strong(),
-                Format::Italic => t.italics(),
-                Format::Underline => t.underline(),
-                _ => t.strikethrough(),
-            };
-            if ui
-                .selectable_label(app.format_active(f), t)
-                .on_hover_text(crate::i18n::t(match f {
-                    Format::Bold => "Bold (Ctrl+B)",
-                    Format::Italic => "Italic (Ctrl+I)",
-                    Format::Underline => "Underline (Ctrl+U)",
-                    _ => "Strikethrough",
-                }))
-                .clicked()
+        for (f, tip) in
+            [(Format::Bold, "Bold (Ctrl+B)"), (Format::Italic, "Italic (Ctrl+I)"), (Format::Underline, "Underline (Ctrl+U)"), (Format::Strike, "Strikethrough")]
+        {
+            if style_button(ui, f, app.format_active(f), tip).clicked() {
+                action = Some(BarAction::Format(f));
+            }
+        }
+        if let Some(cur) = align {
+            ui.separator();
+            for (a, icon, tip) in
+                [(Align::Left, "alignL", "Align text left"), (Align::Center, "alignC", "Center text"), (Align::Right, "alignR", "Align text right")]
             {
-                action = Some(f);
+                let (r, resp) = ui.allocate_exact_size(vec2(30.0, 26.0), egui::Sense::click());
+                let st = ui.style().interact_selectable(&resp, cur == a);
+                ui.painter().rect(r, st.corner_radius, st.bg_fill, st.bg_stroke, egui::StrokeKind::Inside);
+                crate::icons::paint(ui.painter(), icon, egui::Rect::from_center_size(r.center(), vec2(16.0, 16.0)), st.fg_stroke.color);
+                if resp.on_hover_text(t(tip)).clicked() {
+                    action = Some(BarAction::Align(a));
+                }
             }
         }
         ui.separator();
@@ -247,7 +290,7 @@ fn format_bar(ui: &mut egui::Ui, app: &App) -> Option<Format> {
         for c in PALETTE.iter().skip(1) {
             let on = app.format_active(Format::Color(Some(*c)));
             if swatch(ui, *c, on, "Text color").clicked() {
-                action = Some(Format::Color(Some(*c)));
+                action = Some(BarAction::Format(Format::Color(Some(*c))));
             }
         }
         ui.separator();
@@ -255,12 +298,12 @@ fn format_bar(ui: &mut egui::Ui, app: &App) -> Option<Format> {
         for c in HIGHLIGHTS {
             let on = app.format_active(Format::Highlight(Some(c)));
             if swatch(ui, c, on, "Highlight").clicked() {
-                action = Some(Format::Highlight(Some(c)));
+                action = Some(BarAction::Format(Format::Highlight(Some(c))));
             }
         }
         ui.separator();
         if ui.button(t("Clear")).on_hover_text(t("Remove the formatting")).clicked() {
-            action = Some(Format::Clear);
+            action = Some(BarAction::Format(Format::Clear));
         }
     });
     action
@@ -323,6 +366,17 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         }
         _ => return,
     };
+    // same layout as the final rendering: wrap width (model units) and text alignment of the box
+    let bar_align = matches!(o.kind, Kind::Box(_)).then_some(align);
+    let lay_wrap = match &o.kind {
+        Kind::Box(b) if b.geom != BoxGeom::Text => Some(f64::from(area.width() / cam.zoom)),
+        Kind::Table(_) => Some(f64::from(area.width() / cam.zoom)),
+        _ => None,
+    };
+    let model_size = f64::from(size / cam.zoom);
+    let zoom = cam.zoom;
+    let edit_id = ed.id.clone();
+    let measurer = app.measurer.clone();
     let ctx = ui.ctx().clone();
     let field_id = egui::Id::new("wb-text-edit-field");
     let halign = match align {
@@ -350,10 +404,19 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     };
     let mut bar_action = None;
     egui::Area::new(egui::Id::new("wb-rich-bar")).order(egui::Order::Foreground).fade_in(false).fixed_pos(bar_pos).show(&ctx, |ui| {
-        egui::Frame::popup(ui.style()).show(ui, |ui| bar_action = format_bar(ui, app));
+        egui::Frame::popup(ui.style()).show(ui, |ui| bar_action = format_bar(ui, app, bar_align));
     });
-    if let Some(f) = bar_action {
-        app.apply_format(f);
+    match bar_action {
+        Some(BarAction::Format(f)) => app.apply_format(f),
+        Some(BarAction::Align(a)) => {
+            app.label.align = a;
+            app.ed.update(&edit_id, |o| {
+                if let Kind::Box(b) = &mut o.kind {
+                    b.label.align = a;
+                }
+            });
+        }
+        None => {}
     }
 
     let Some(ed) = app.editing.as_mut() else { return };
@@ -365,39 +428,72 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     }
     let mut done = false;
     let width = area.width().max(60.0);
-    egui::Area::new(egui::Id::new("wb-text-edit")).order(egui::Order::Foreground).fade_in(false).fixed_pos(area.min).show(&ctx, |ui| {
-        ui.set_width(width);
-        let Editing { buf, rich, synced, .. } = &mut *ed;
-        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| -> Arc<egui::Galley> {
-            let t = text.as_str();
-            if t != synced.as_str() {
-                rich.apply_edit(synced, t);
-                *synced = t.to_owned();
+    // vertical centering of the text block in its area, like the final rendering
+    if ed.synced != ed.buf {
+        ed.rich.apply_edit(&ed.synced, &ed.buf);
+        ed.synced = ed.buf.clone();
+    }
+    let lay = inkboard_core::text::layout_rich(&ed.rich, lay_wrap, &measurer, family, model_size);
+    let y_off = ((area.height() - lay.height as f32 * zoom) / 2.0).max(0.0);
+    let wrap_px = if no_wrap { f32::INFINITY } else { width };
+    // egui's `TextEdit` places a galley by its left edge, but a galley laid out with a center / right alignment is anchored at the
+    // middle / right of its text. So for those alignments the field is made twice as wide and shifted so that the anchor lands where
+    // the final rendering puts it (using the text width computed with the same measurer).
+    let text_w = (lay.width as f32 * zoom).min(width);
+    let (field_x, field_w, field_align) = match halign {
+        _ if no_wrap => (area.min.x, width, egui::Align::LEFT),
+        egui::Align::LEFT => (area.min.x, width, egui::Align::LEFT),
+        egui::Align::Center => (area.min.x + width / 2.0 + text_w / 2.0 - width, 2.0 * width, egui::Align::Center),
+        egui::Align::RIGHT => (area.min.x + text_w - width, 2.0 * width, egui::Align::RIGHT),
+    };
+    let job_align = if no_wrap { egui::Align::LEFT } else { halign };
+    egui::Area::new(egui::Id::new("wb-text-edit"))
+        .constrain(false)
+        .order(egui::Order::Foreground)
+        .fade_in(false)
+        .fixed_pos(egui::pos2(field_x, area.min.y + y_off))
+        .show(&ctx, |ui| {
+            ui.set_width(field_w);
+            let Editing { buf, rich, synced, .. } = &mut *ed;
+            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| -> Arc<egui::Galley> {
+                let t = text.as_str();
+                if t != synced.as_str() {
+                    rich.apply_edit(synced, t);
+                    *synced = t.to_owned();
+                }
+                let job = rich_job(rich, family, size, color, dark, wrap_px, job_align);
+                ui.ctx().fonts_mut(|f| f.layout_job(job))
+            };
+            let out = egui::TextEdit::multiline(buf)
+                .id(field_id)
+                .frame(false)
+                .desired_width(field_w)
+                .desired_rows(1)
+                .horizontal_align(field_align)
+                .lock_focus(true)
+                .layouter(&mut layouter)
+                .show(ui);
+            // strikethrough drawn by hand (see `strike_segments`)
+            let strike: Vec<bool> = rich.0.iter().flat_map(|sp| sp.text.chars().filter(|c| *c != '\n').map(|_| sp.style.strike)).collect();
+            if strike.iter().any(|s| *s) {
+                let c = rich.0.iter().find(|sp| sp.style.strike).and_then(|sp| sp.style.color.map(|c| col(c, dark, 1.0))).unwrap_or(color);
+                for (x0, x1, y) in crate::render::strike_segments(&out.galley, &strike, size) {
+                    let (p0, p1) = (out.galley_pos + vec2(x0, y), out.galley_pos + vec2(x1, y));
+                    ui.painter().line_segment([p0, p1], Stroke::new((size * 0.07).max(1.0), c));
+                }
             }
-            let job = rich_job(rich, family, size, color, dark, if no_wrap { f32::INFINITY } else { wrap });
-            ui.ctx().fonts_mut(|f| f.layout_job(job))
-        };
-        let out = egui::TextEdit::multiline(buf)
-            .id(field_id)
-            .frame(false)
-            .desired_width(width)
-            .desired_rows(1)
-            .horizontal_align(halign)
-            .lock_focus(true)
-            .layouter(&mut layouter)
-            .show(ui);
-        if let Some(r) = out.cursor_range {
-            let (p, s) = (r.primary.index, r.secondary.index);
-            ed.sel = (p.min(s), p.max(s));
-        }
-        if !ed.focused {
-            out.response.request_focus();
-            ed.focused = true;
-        }
-        if ui.input(|i| i.key_pressed(egui::Key::Escape) || (i.key_pressed(egui::Key::Enter) && i.modifiers.command)) {
-            done = true;
-        }
-    });
+            if let Some(r) = out.cursor_range {
+                let (p, s) = (r.primary.index, r.secondary.index);
+                ed.sel = (p.min(s), p.max(s));
+            }
+            if !ed.focused {
+                out.response.request_focus();
+                ed.focused = true;
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Escape) || (i.key_pressed(egui::Key::Enter) && i.modifiers.command)) {
+                done = true;
+            }
+        });
     if ed.synced != ed.buf {
         ed.rich.apply_edit(&ed.synced, &ed.buf);
         ed.synced = ed.buf.clone();

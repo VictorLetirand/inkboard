@@ -75,7 +75,7 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
   **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
 - **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `inkboard-pen`). **À valider avec un vrai stylet** : `inkboard --pen-test` affiche un diagnostic et produit un rapport ([docs/STYLET.md](docs/fr/STYLET.md)).
 - **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
-- **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
+- **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique avec choix du langage), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
 - **Pointeur laser** (F) : une traînée rouge qui s'efface, pour montrer sans dessiner ; en présentation, F l'active.

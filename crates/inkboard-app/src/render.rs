@@ -317,13 +317,13 @@ impl Renderer<'_> {
                         background: run.style.highlight.map_or(Color32::TRANSPARENT, |h| col(h, self.dark, 0.55)),
                         italics: run.style.italic,
                         underline: if run.style.underline { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
-                        strikethrough: if run.style.strike { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
                         ..Default::default()
                     },
                 );
             }
             if !line.is_empty() {
                 let galley = self.painter.layout_job(job);
+                let strike: Vec<bool> = line.iter().flat_map(|run| run.text.chars().map(|_| run.style.strike)).collect();
                 let lw = f64::from(galley.size().x / self.cam.zoom);
                 let x = match label.align {
                     Align::Left => area.x,
@@ -331,6 +331,19 @@ impl Renderer<'_> {
                     Align::Right => area.right() - lw,
                 };
                 let pos = self.cam.s(to_world(Pt::new(x, y)));
+                if strike.iter().any(|s| *s) {
+                    let (sin, cos) = angle.sin_cos();
+                    let w = (size * 0.07).max(1.0);
+                    for (x0, x1, y0) in strike_segments(&galley, &strike, size) {
+                        let rot = |x: f32| pos + vec2(x * cos - y0 * sin, x * sin + y0 * cos);
+                        let c = line
+                            .iter()
+                            .find(|r| r.style.strike)
+                            .and_then(|r| r.style.color.map(|c| col(c, self.dark, f32::from(base.a()) / 255.0)))
+                            .unwrap_or(base);
+                        self.painter.line_segment([rot(x0), rot(x1)], Stroke::new(w, c));
+                    }
+                }
                 self.painter.add(TextShape::new(pos, galley, base).with_angle(angle));
             }
             y += lay.line_h;
@@ -464,6 +477,32 @@ impl Renderer<'_> {
             }
         }
     }
+}
+
+/// Strikethrough segments `(x0, x1, y)` relative to the galley origin. egui draws its own at the middle of the whole text row, which looks
+/// too high; these sit at the middle of lowercase letters. `strike[i]` tells whether the i-th glyph (newlines excluded) is struck.
+pub fn strike_segments(galley: &egui::Galley, strike: &[bool], size: f32) -> Vec<(f32, f32, f32)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    for placed in &galley.rows {
+        let mut seg: Option<(f32, f32)> = None;
+        let base = placed.pos.y + placed.row.glyphs.first().map_or(0.0, |g| g.pos.y);
+        let y = base - size * 0.28;
+        for g in &placed.row.glyphs {
+            let on = strike.get(i).copied().unwrap_or(false);
+            i += 1;
+            let (x0, x1) = (placed.pos.x + g.pos.x, placed.pos.x + g.pos.x + g.advance_width);
+            if on {
+                seg = Some(seg.map_or((x0, x1), |(a, _)| (a, x1)));
+            } else if let Some((a, b)) = seg.take() {
+                out.push((a, b, y));
+            }
+        }
+        if let Some((a, b)) = seg {
+            out.push((a, b, y));
+        }
+    }
+    out
 }
 
 /// Rectangle of a "box" shape in screen coordinates, to overlay a text editor.

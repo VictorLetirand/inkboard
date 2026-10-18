@@ -163,6 +163,9 @@ pub struct BoxObj {
     pub frame: Frame,
     #[serde(default)]
     pub label: Label,
+    /// Programming language when the box is a code block (its text is then colored automatically).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<crate::highlight::Lang>,
 }
 
 impl BoxObj {
@@ -367,7 +370,7 @@ impl Object {
 
     /// Shape, note or text.
     pub fn new_box(geom: BoxGeom, frame: Frame, style: Style, label: Label) -> Self {
-        Self::new(Kind::Box(BoxObj { geom, frame, label }), style)
+        Self::new(Kind::Box(BoxObj { geom, frame, label, lang: None }), style)
     }
 
     pub fn new_pen(pts: Vec<Pt>, highlighter: bool, style: Style) -> Self {
@@ -666,7 +669,7 @@ mod tests {
 
     #[test]
     fn text_box_fits_content() {
-        let mut b = BoxObj { geom: BoxGeom::Text, frame: Frame::new(0.0, 0.0, 1.0, 1.0), label: Label::new("Hello\nworld", 20.0, Align::Left) };
+        let mut b = BoxObj { geom: BoxGeom::Text, frame: Frame::new(0.0, 0.0, 1.0, 1.0), label: Label::new("Hello\nworld", 20.0, Align::Left), lang: None };
         b.fit(&ApproxMeasurer);
         assert!(b.frame.w > 40.0);
         assert!((b.frame.h - 2.0 * 26.0).abs() < 1e-9);
@@ -678,6 +681,7 @@ mod tests {
             geom: BoxGeom::Rect,
             frame: Frame::new(0.0, 0.0, 100.0, 40.0),
             label: Label::new("a really long text that overflows", 20.0, Align::Center),
+            lang: None,
         };
         let before = b.frame.h;
         b.fit(&ApproxMeasurer);

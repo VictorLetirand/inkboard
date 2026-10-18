@@ -144,6 +144,8 @@ pub struct App {
     pub prev_tool: Tool,
     /// Timer: end instant and total duration.
     pub timer: Option<(Instant, Duration)>,
+    /// The "time's up" warning of the current timer has been shown.
+    pub timer_done: bool,
     pub last_autosave: Instant,
     pub last_title: String,
     pub paste_count: u32,
@@ -225,6 +227,7 @@ impl App {
             present_req: None,
             prev_tool: Tool::Select,
             timer: None,
+            timer_done: false,
             last_autosave: Instant::now(),
             last_title: String::new(),
             paste_count: 0,
@@ -304,6 +307,13 @@ impl App {
 
     pub fn toast(&mut self, msg: &str) {
         self.toast = Some((msg.to_owned(), Instant::now()));
+    }
+
+    /// Starts (or restarts) the countdown timer.
+    pub fn start_timer(&mut self, minutes: u64) {
+        let d = Duration::from_secs(minutes * 60);
+        self.timer = Some((Instant::now() + d, d));
+        self.timer_done = false;
     }
 
     pub fn dirty(&self) -> bool {
@@ -807,6 +817,9 @@ impl App {
                 bg.preset = BgPreset::Slate;
                 self.ed.set_background(bg);
             }
+            if demo.contains("code") {
+                self.insert_code_block();
+            }
             if demo.contains("panel") {
                 self.set_tool(Tool::Shape(BoxGeom::Rect));
                 if let Some(id) = self.ed.page().objects.iter().find(|o| matches!(o.kind, Kind::Box(_))).map(|o| o.id.clone()) {
@@ -855,7 +868,7 @@ impl App {
             }
         }
         ctx.request_repaint();
-        if self.frames == if self.ui_demo.contains("menu") { 18 } else { 8 } {
+        if self.frames == if self.ui_demo.contains("menu") || self.ui_demo.contains("code") { 18 } else { 8 } {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }
         let shot = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));

@@ -3,6 +3,7 @@
 use crate::app::{App, Dialog, FormulaPreview};
 use crate::i18n::t;
 use crate::tools::Tool;
+use inkboard_core::highlight::Lang;
 use inkboard_core::*;
 
 /// Text size of a formula when inserted (board units).
@@ -28,6 +29,7 @@ impl App {
         let label = Label { text: inkboard_core::highlight::highlight(CODE_SAMPLE), family: FontFamily::Mono, size: 18.0, align: Align::Left };
         let mut o = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 420.0, 120.0), style, label);
         if let Kind::Box(b) = &mut o.kind {
+            b.lang = Some(Lang::Auto);
             let lay = b.layout(&self.measurer);
             b.frame.w = (lay.width + 48.0).max(260.0);
             b.frame.h = (lay.height + 40.0).max(90.0);
@@ -40,7 +42,18 @@ impl App {
     pub fn recolor_code(&mut self, id: &Id) {
         self.ed.update(id, |o| {
             if let Kind::Box(b) = &mut o.kind {
-                b.label.text = inkboard_core::highlight::highlight(&b.label.text.to_plain());
+                let lang = *b.lang.get_or_insert(Lang::Auto);
+                b.label.text = inkboard_core::highlight::highlight_lang(&b.label.text.to_plain(), lang);
+            }
+        });
+    }
+
+    /// Sets the language of code blocks and colors them accordingly.
+    pub fn set_code_lang(&mut self, ids: &[Id], lang: Lang) {
+        self.ed.update_many(ids, |o| {
+            if let Kind::Box(b) = &mut o.kind {
+                b.lang = Some(lang);
+                b.label.text = inkboard_core::highlight::highlight_lang(&b.label.text.to_plain(), lang);
             }
         });
     }

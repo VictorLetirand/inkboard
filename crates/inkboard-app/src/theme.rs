@@ -207,7 +207,7 @@ pub fn menu_label(ui: &mut Ui, text: &str) {
 pub fn menu_label_raw(ui: &mut Ui, text: &str) {
     let p = current(ui.ctx());
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(text.to_uppercase()).size(11.0).color(p.mute));
+    ui.label(egui::RichText::new(text.to_uppercase()).size(12.0).color(p.mute));
 }
 
 /// Menu separator (`.menu hr`).
@@ -227,10 +227,10 @@ pub fn field_label(ui: &mut Ui, text: &str) {
 /// Like [`field_label`] for a text that is already translated (e.g. built with `tr!`).
 pub fn field_label_raw(ui: &mut Ui, text: &str) {
     let p = current(ui.ctx());
-    ui.label(egui::RichText::new(text).size(11.0).color(p.mute));
+    ui.label(egui::RichText::new(text).size(12.5).color(p.mute));
 }
 
-/// Segmented button (`.seg button`): 34 × 30, bordered, accent when active. `content` draws the inside (icon or text). The tooltip is translated.
+/// Segmented button (`.seg button`): 37 × 33, bordered, accent when active. `content` draws the inside (icon or text). The tooltip is translated.
 pub fn seg_button(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&egui::Painter, egui::Rect, Color32)) -> Response {
     seg_button_raw(ui, on, &crate::i18n::t(tip), content)
 }
@@ -238,7 +238,7 @@ pub fn seg_button(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&egui::
 /// Like [`seg_button`] for a tooltip that is already translated (e.g. built with `tr!`).
 pub fn seg_button_raw(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&egui::Painter, egui::Rect, Color32)) -> Response {
     let p = current(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(34.0, 30.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(37.0, 33.0), Sense::click());
     let fill = if on {
         p.acbg
     } else if resp.hovered() {
@@ -254,7 +254,7 @@ pub fn seg_button_raw(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&eg
 /// 22 × 22 color swatch (`.sw .c`), accent outline when selected.
 pub fn swatch_frame(ui: &mut Ui, selected: bool) -> (Response, egui::Rect) {
     let p = current(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
     if selected {
         ui.painter().rect_stroke(r.expand(2.0), 7.0, Stroke::new(2.0_f32, p.ac), egui::StrokeKind::Middle);
     }

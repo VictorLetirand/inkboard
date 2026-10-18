@@ -68,8 +68,8 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 - **Drawing:** pen with pressure, highlighter, eraser, rectangles, ellipses, diamonds, triangles, lines, arrows, sticky notes, text, images, tables, vote dots, laser pointer. Infinite canvas, pages, layers, groups, alignment and distribution, snapping, undo/redo.
 - **Smart connectors:** arrows are *bound* to shapes and follow them; elbow connectors route around other shapes; drag a midpoint handle to add a waypoint.
 - **Rich text:** select words inside any shape, table cell or arrow label and make them bold, italic, underlined, struck, coloured or highlighted.
-- **Formulas and code:** LaTeX typeset with the STIX Two Math font (fractions, roots, sums, integrals, matrices…), editable by double-click; syntax-coloured code blocks.
-- **Present:** full-screen page-by-page mode (**F5**), timer, laser pointer (**F**).
+- **Formulas and code:** LaTeX typeset with the STIX Two Math font (fractions, roots, sums, integrals, matrices…), editable by double-click; syntax-coloured code blocks with a language picker (Rust, JavaScript/TypeScript, Python, C/C++, C#, Java, Go, Shell, SQL, JSON, HTML, CSS, YAML).
+- **Present:** full-screen page-by-page mode (**F5**), countdown timer (bottom-right clock button), laser pointer (**F**).
 - **Import / export:**
 
   | Format | Open | Save / export |

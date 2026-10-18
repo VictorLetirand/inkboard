@@ -10,7 +10,7 @@ use crate::tools::Tool;
 use eframe::egui::{self, Align2, Color32, Context, FontId, Sense, Stroke, Ui, vec2};
 use inkboard_core::editor::Order;
 use inkboard_core::*;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Window width below which the toolbar moves under the title bar (`@media (max-width:1180px)`).
 const NARROW: f32 = 1180.0;
@@ -167,6 +167,10 @@ fn zoom_card(app: &mut App, ctx: &Context) {
                 app.fit_view(false);
             }
             if let Some((text, over)) = crate::ui::timer_text(app) {
+                if over && !app.timer_done {
+                    app.timer_done = true;
+                    app.toast(&t("Time's up"));
+                }
                 theme::vsep(ui);
                 let p = theme::current(ui.ctx());
                 ui.label(egui::RichText::new(format!("⏱ {text}")).color(if over { Color32::from_rgb(0xe0, 0x31, 0x31) } else { p.tx }));
@@ -177,11 +181,38 @@ fn zoom_card(app: &mut App, ctx: &Context) {
     });
 }
 
+/// Timer choices: a countdown shown next to the zoom (and large in presentation mode); it turns red and warns when it reaches zero.
+fn timer_menu(app: &mut App, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        ui.add_space(10.0);
+        let p = theme::current(ui.ctx());
+        ui.label(egui::RichText::new(t("Timer")).size(13.0).color(p.tx));
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(6.0);
+        for min in [1u64, 5, 10, 15, 30] {
+            if ui.button(tr!("{} min", min)).clicked() {
+                app.start_timer(min);
+                ui.close();
+            }
+        }
+        if app.timer.is_some() && ui.button(t("Stop")).clicked() {
+            app.timer = None;
+            ui.close();
+        }
+    });
+}
+
 fn help_card(app: &mut App, ctx: &Context) {
     theme::floating(ctx, "help", Align2::RIGHT_BOTTOM, vec2(-12.0, -12.0), 3, |ui| {
-        if theme::icon_button(ui, "help", false, true).on_hover_text(t("Keyboard shortcuts")).clicked() {
-            app.dialog = Some(Dialog::Shortcuts { filter: String::new(), recording: None });
-        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let timer = theme::icon_button(ui, "timer", app.timer.is_some(), true).on_hover_text(t("Timer (time-box a workshop or a presentation)"));
+            egui::Popup::from_toggle_button_response(&timer).close_behavior(egui::PopupCloseBehavior::CloseOnClick).width(230.0).show(|ui| timer_menu(app, ui));
+            if theme::icon_button(ui, "help", false, true).on_hover_text(t("Keyboard shortcuts")).clicked() {
+                app.dialog = Some(Dialog::Shortcuts { filter: String::new(), recording: None });
+            }
+        });
     });
 }
 
@@ -368,25 +399,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
             let v = app.ed.page().view;
             app.set_view(View { zoom: 1.0, ..v });
         }
-        ui.horizontal(|ui| {
-            ui.add_space(10.0);
-            let p = theme::current(ui.ctx());
-            ui.label(egui::RichText::new(t("Timer")).size(13.0).color(p.tx));
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(6.0);
-            for min in [1u64, 5, 10, 15, 30] {
-                if ui.button(tr!("{} min", min)).clicked() {
-                    let d = Duration::from_secs(min * 60);
-                    app.timer = Some((Instant::now() + d, d));
-                    ui.close();
-                }
-            }
-            if app.timer.is_some() && ui.button(t("Stop")).clicked() {
-                app.timer = None;
-                ui.close();
-            }
-        });
+        timer_menu(app, ui);
         theme::menu_sep(ui);
         theme::menu_label(ui, "Language");
         for (label, pref) in [

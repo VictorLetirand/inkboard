@@ -21,7 +21,7 @@ Research done in October 2026 (G2/Capterra/GetApp reviews, Excalidraw GitHub iss
 | Customizable shortcuts | Excalidraw | ✔ 41 commands, several shortcuts, JSON file, conflicts handled (milestone 2) |
 | Pen: pressure | Excalidraw | ◐ variable width; **not validated on real hardware** (`--pen-test` mode) |
 | Pen: eraser (end) | Excalidraw | ◐ implemented through the Windows Pointer API; **not validated on real hardware** (`--pen-test` mode to validate it: docs/STYLET.md) |
-| Code blocks | Excalidraw | ✔ minimal syntax coloring (comments, strings, numbers, keywords; "Color the code" menu) |
+| Code blocks | Excalidraw | ✔ minimal syntax coloring (comments, strings, numbers, keywords) with a language picker (13 languages + auto) |
 | LaTeX | Excalidraw | ✔ TeX typesetting (STIX Two Math), editable formula, color follows |
 | Presentation, timer, voting | Excalidraw | ✔ full-screen page by page, timer, dots, laser pointer |
 | Polished interface (floating cards, dark theme) | – | ✔ identical to the web prototype |
@@ -36,9 +36,10 @@ Research done in October 2026 (G2/Capterra/GetApp reviews, Excalidraw GitHub iss
 - More interface languages: add a table next to `i18n_fr.rs` (contributions welcome).
 - `inkboard-mcp`: check what real clients (Claude Code, Claude Desktop) do with resource notifications; notifications with the detail of the change; reading image content.
 - **Signed** Windows installer (needs a code-signing certificate; the `scripts/` folder provides the portable archive and a per-user install).
-- Per-language syntax coloring (current coloring is generic); text (`\text`) and advanced environments of the typesetting library beyond its capabilities.
+- Smarter syntax coloring (it is token-based, not a parser); text (`\text`) and advanced environments of the typesetting library beyond its capabilities.
 - **Validation of pen pressure and eraser on real hardware** (procedure: docs/STYLET.md); eraser on macOS/Linux (not handled).
 - Per-line alignment in the input field while editing multi-line centered text.
+- draw.io shape library (stencils) as an insertable icon palette: feasible for the Apache-2.0 generic sets.
 - WASM build of the engine (same code) if a web use is wanted.
 
 ## Known limits

@@ -370,7 +370,7 @@ fn node_size(n: &Node, m: &dyn Measurer) -> (BoxGeom, f64, f64) {
         BoxGeom::Diamond => (tw / 0.5 + 24.0).clamp(w, 340.0),
         _ => (tw + 40.0).clamp(w, 300.0),
     };
-    let mut b = BoxObj { geom, frame: Frame::new(0.0, 0.0, w, h), label: Label::new(&n.label, FONT, Align::Center) };
+    let mut b = BoxObj { geom, frame: Frame::new(0.0, 0.0, w, h), label: Label::new(&n.label, FONT, Align::Center), lang: None };
     for _ in 0..6 {
         let before = b.frame.h;
         b.fit(m);

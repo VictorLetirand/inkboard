@@ -215,7 +215,8 @@ fn shortcuts_dialog(app: &mut App, ctx: &egui::Context, mut filter: String, mut 
             ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), tr!("Conflict: {} is used by \"{}\" and \"{}\"", sc.label(), t(x.label()), t(y.label())));
         }
         ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        let max_h = (ui.ctx().content_rect().height() - 260.0).max(200.0);
+        egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(max_h).show(ui, |ui| {
             let mut group = "";
             let f = filter.to_lowercase();
             for a in Action::ALL {

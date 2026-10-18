@@ -1371,7 +1371,7 @@ fn style_panel_is_a_floating_card_shown_only_when_there_is_something_to_set() {
     t.tool(Tool::Pen);
     assert!(crate::panel::visible(t.app()));
     let r = panel(&mut t).expect("panel visible with a drawing tool");
-    assert!(r.left() >= 8.0 && r.width() < 260.0, "narrow floating card: {r:?}");
+    assert!(r.left() >= 8.0 && r.width() < 300.0, "narrow floating card: {r:?}");
     // the canvas fills the whole window, the cards float above
     assert!(t.app().canvas_rect.width() >= 1299.0 && t.app().canvas_rect.min.x == 0.0);
     t.tool(Tool::Select);
@@ -1438,4 +1438,60 @@ fn french_mode_renders_every_dialog_and_panel_without_missing_translations() {
     let missing: std::collections::BTreeSet<String> = MISSING.with(|m| m.borrow().iter().cloned().collect());
     set_for_thread(None);
     assert!(missing.is_empty(), "texts shown in French mode without a translation: {missing:?}");
+}
+
+/* ------------------------------------------------------------ code languages */
+
+#[test]
+fn code_blocks_have_a_language_that_drives_the_coloring() {
+    use inkboard_core::highlight::Lang;
+    let mut t = T::new();
+    t.app().insert_code_block();
+    let id = t.objects()[0].id.clone();
+    let lang = |t: &mut T| match &t.app().ed.page().get(&id).unwrap().kind {
+        Kind::Box(b) => b.lang,
+        _ => None,
+    };
+    assert_eq!(lang(&mut t), Some(Lang::Auto));
+    // Python: `#` starts a comment; in Rust it does not
+    t.app().ed.update(&id, |o| {
+        if let Kind::Box(b) = &mut o.kind {
+            b.label.text = RichText::plain("x = 1 # note");
+        }
+    });
+    t.app().set_code_lang(std::slice::from_ref(&id), Lang::Python);
+    assert_eq!(lang(&mut t), Some(Lang::Python));
+    let comment_colored = |t: &mut T| match &t.app().ed.page().get(&id).unwrap().kind {
+        Kind::Box(b) => b.label.text.style_at(8).is_some_and(|s| s.color.is_some()),
+        _ => false,
+    };
+    assert!(comment_colored(&mut t));
+    t.app().set_code_lang(std::slice::from_ref(&id), Lang::Rust);
+    assert!(!comment_colored(&mut t), "`#` is not a comment in Rust");
+}
+
+#[test]
+fn editing_a_code_block_recolors_it_with_its_language() {
+    use inkboard_core::highlight::Lang;
+    let mut t = T::new();
+    t.app().insert_code_block();
+    let id = t.objects()[0].id.clone();
+    t.app().set_code_lang(std::slice::from_ref(&id), Lang::Sql);
+    t.app().start_editing(&id, None);
+    t.app().editing.as_mut().unwrap().buf = "SELECT 1".into();
+    t.app().commit_editing();
+    let Kind::Box(b) = &t.app().ed.page().get(&id).unwrap().kind else { panic!("not a box") };
+    assert_eq!(b.label.text.to_plain(), "SELECT 1");
+    assert!(b.label.text.style_at(0).is_some_and(|s| s.color.is_some()), "the keyword is colored after the edit");
+}
+
+#[test]
+fn starting_a_timer_resets_the_time_is_up_warning() {
+    let mut t = T::new();
+    t.app().timer_done = true;
+    t.app().start_timer(5);
+    assert!(!t.app().timer_done);
+    let (end, total) = t.app().timer.unwrap();
+    assert_eq!(total, std::time::Duration::from_secs(300));
+    assert!(end > std::time::Instant::now());
 }

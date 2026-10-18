@@ -9,13 +9,14 @@ use crate::theme::{self, Palette};
 use crate::tools::Tool;
 use eframe::egui::{self, Align2, Color32, Painter, Rect as ERect, Response, Stroke, Ui, vec2};
 use inkboard_core::editor::{AlignMode, Axis, Order};
+use inkboard_core::highlight::Lang;
 use inkboard_core::layout::{Direction, auto_layout};
 use inkboard_core::style::{FILLS, PALETTE};
 use inkboard_core::text::Format;
 use inkboard_core::*;
 
-/// Panel width (`#panel{width:226px}`).
-const WIDTH: f32 = 226.0;
+/// Panel width (the web prototype used 226 px; a little wider here for comfort).
+const WIDTH: f32 = 264.0;
 
 /// Draws a line of thickness `w` (preview for the thickness and style buttons).
 fn line_preview(p: &Painter, r: ERect, w: f32, dash: Dash, color: Color32) {
@@ -73,7 +74,7 @@ fn custom_swatch(ui: &mut Ui, current: [u8; 3]) -> Option<[u8; 3]> {
     let (resp, r) = theme::swatch_frame(ui, false);
     // rainbow disc: 6 sectors
     let c = r.center();
-    let radius = 10.0;
+    let radius = 12.0;
     let cols = [(255, 0, 0), (255, 255, 0), (0, 255, 0), (0, 255, 255), (0, 0, 255), (255, 0, 255)];
     for i in 0..6 {
         let (a0, a1) = (i as f32 / 6.0 * std::f32::consts::TAU, (i + 1) as f32 / 6.0 * std::f32::consts::TAU);
@@ -170,10 +171,13 @@ pub fn show(app: &mut App, ctx: &egui::Context, narrow: bool) {
     let max_h = (ctx.content_rect().height() - top - 78.0).max(160.0);
     theme::floating(ctx, "props", Align2::LEFT_TOP, vec2(12.0, top), 10, |ui| {
         ui.set_width(WIDTH - 24.0);
-        egui::ScrollArea::vertical().max_width(WIDTH - 24.0).max_height(max_h - 20.0).auto_shrink([false, true]).show(ui, |ui| {
-            ui.set_width(WIDTH - 24.0);
-            props(app, ui);
-        });
+        egui::ScrollArea::vertical().max_width(WIDTH - 24.0).max_height(max_h - 20.0).min_scrolled_height(max_h - 20.0).auto_shrink([false, true]).show(
+            ui,
+            |ui| {
+                ui.set_width(WIDTH - 24.0);
+                props(app, ui);
+            },
+        );
     });
     if app.prop_edit.is_some() && !ctx.input(|i| i.pointer.any_down()) {
         app.live_end();
@@ -205,7 +209,26 @@ fn props(app: &mut App, ui: &mut Ui) {
     let drawing = drawing_tool(app.tool);
 
     if has_sel || drawing {
-        // ---- couleurs
+        // ---- code blocks: language
+        let code_ids: Vec<Id> = objs.iter().filter(|o| matches!(&o.kind, Kind::Box(b) if b.lang.is_some())).map(|o| o.id.clone()).collect();
+        if !code_ids.is_empty() {
+            let cur = objs.iter().find_map(|o| if let Kind::Box(b) = &o.kind { b.lang } else { None }).unwrap_or_default();
+            let name = |l: Lang| if l == Lang::Auto { t("Auto") } else { l.label().to_owned() };
+            theme::field_label(ui, "Code language");
+            let mut chosen = None;
+            egui::ComboBox::from_id_salt("code-lang").selected_text(name(cur)).width(WIDTH - 24.0 - 8.0).show_ui(ui, |ui| {
+                for l in Lang::ALL {
+                    if ui.selectable_label(l == cur, name(l)).clicked() {
+                        chosen = Some(l);
+                    }
+                }
+            });
+            if let Some(l) = chosen {
+                app.set_code_lang(&code_ids, l);
+            }
+            ui.add_space(8.0);
+        }
+        // ---- colors
         let stroke_label = if only_text || (!has_sel && app.tool == Tool::Text) {
             "Text color"
         } else if only_pen || matches!(app.tool, Tool::Pen | Tool::Highlighter) {
