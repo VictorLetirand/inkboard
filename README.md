@@ -32,15 +32,15 @@ cargo run --release -p wb-cli -- info schema.drawio
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Compilation de tout le projet | ✔ construit, testé, utilisé | ✔ `cargo check` réussi (cross-compilation depuis Windows) | ✔ `cargo check` réussi (idem, `aarch64-apple-darwin`) |
-| Exécution / tests | ✔ | **jamais lancé** | **jamais lancé** |
+| Compilation et tests automatiques (245 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
+| Application lancée et utilisée à la main | ✔ | **jamais** | **jamais** |
 | Gomme du stylet (`wb-pen`) | ✔ (non validée sur matériel) | – (sans effet) | – (sans effet) |
 | Icône de l'exécutable, archive portable, installation par utilisateur | ✔ (`scripts/*.ps1`) | – | – |
 | Dossier des données (autosave, raccourcis, mode direct MCP) | `%APPDATA%\TableauBlanc` | `$XDG_DATA_HOME` ou `~/.local/share/TableauBlanc` | `~/Library/Application Support/TableauBlanc` |
 
-Le code est portable (Rust + egui, pas d'API propre à un système en dehors de `wb-pen`), mais seul Windows a été exécuté. Sous Linux et macOS : polices système cherchées dans les dossiers habituels
+Le code est portable (Rust + egui, pas d'API propre à un système en dehors de `wb-pen`), mais seul Windows a été lancé et utilisé à la main : sous Linux et macOS, seuls les tests automatiques (sans fenêtre) ont tourné, en intégration continue. Sous Linux et macOS : polices système cherchées dans les dossiers habituels
 (à défaut, les polices intégrées d'egui : Manuscrit et Serif y ressemblent à Sans), raccourcis avec Cmd à la place de Ctrl sous macOS, pas d'installateur ni de paquet. Le workflow CI
-(`.github/workflows/ci.yml`) teste les trois systèmes mais n'a jamais été exécuté.
+(`.github/workflows/ci.yml`) teste les trois systèmes et est vert (Rust stable 1.99).
 
 ## Contenu
 
