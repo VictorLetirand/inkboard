@@ -1,7 +1,8 @@
 name: Release
 
 # Publie des installeurs téléchargeables (GitHub Releases) quand on pousse une étiquette « v* » (ex. v0.1.0),
-# ou à la demande (workflow_dispatch : les installeurs sont alors seulement disponibles comme artefacts du workflow).
+# ou à la demande (workflow_dispatch : rien n'est publié, on vérifie seulement que les installeurs se construisent).
+# Les installeurs sont attachés directement à la Release (pas d'« artefacts » : le quota de stockage d'artefacts d'un compte gratuit est vite atteint).
 on:
   push:
     tags: ["v*"]
@@ -11,14 +12,28 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Créer la Release (pré-version si l'étiquette contient un tiret)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes             $(case "$TAG" in *-*) echo --prerelease;; esac)
+
   package:
+    needs: create-release
+    if: ${{ !cancelled() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: windows-latest, name: windows-x64 }
           - { os: ubuntu-22.04, name: linux-x64 }
-          - { os: macos-13, name: macos-x64 }
+          - { os: macos-15-intel, name: macos-x64 }
           - { os: macos-14, name: macos-arm64 }
     runs-on: ${{ matrix.os }}
     steps:
@@ -65,30 +80,15 @@ jobs:
           done
           ls -l
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: installeurs-${{ matrix.name }}
-          path: |
-            dist/*.exe
-            dist/*.msi
-            dist/*.dmg
-            dist/*.deb
-            dist/*.AppImage
-            dist/SHA256SUMS-*.txt
-          if-no-files-found: error
-
-  release:
-    needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: installeurs
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: installeurs/*
-          generate_release_notes: true
-          # une étiquette comportant un tiret (v0.1.0-alpha.1) est publiée comme pré-version
-          prerelease: ${{ contains(github.ref_name, '-') }}
+      - name: Joindre les installeurs à la Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          shopt -s nullglob
+          files=(*.exe *.msi *.dmg *.deb *.AppImage SHA256SUMS-*.txt)
+          [ ${#files[@]} -gt 0 ] || { echo "aucun installeur produit"; exit 1; }
+          gh release upload "$TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
