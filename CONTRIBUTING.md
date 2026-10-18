@@ -1,13 +1,13 @@
-# Contribuer
+# Contributing to Inkboard
 
-Merci de votre intérêt ! Ce projet est libre, sous la double licence **MIT OU Apache-2.0** (au choix de l'utilisateur), comme la plupart des projets Rust.
+Thank you for your interest! Inkboard is free software, dual-licensed **MIT OR Apache-2.0** (at the user's option), like most of the Rust ecosystem.
 
-## Licence des contributions
+## License of contributions
 
-Sauf mention contraire explicite de votre part, toute contribution que vous soumettez volontairement pour inclusion dans ce projet, au sens de la licence Apache-2.0,
-est placée sous la double licence MIT OU Apache-2.0, sans condition supplémentaire.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Inkboard, as defined in the Apache-2.0 license,
+is dual-licensed under MIT OR Apache-2.0, without any additional terms or conditions.
 
-## Avant de proposer une modification
+## Before you open a pull request
 
 ```bash
 cargo fmt --all
@@ -15,7 +15,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-- Un changement = un sujet ; le diff le plus petit possible, sans refactor non demandé.
-- Une fonctionnalité ou une correction vient avec ses tests (le moteur `inkboard-core` se teste sans interface ; l'interface se teste avec `egui_kittest`, voir `crates/inkboard-app/src/tests.rs`).
-- Les dépendances ajoutées doivent être sous licence permissive (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode, OFL pour les polices) : voir `THIRD_PARTY_LICENSES.md` et `docs/DISTRIBUTION.md`.
-- Documentation et messages en français (le code et ses identifiants restent en anglais).
+CI runs the same checks on Windows, Linux and macOS with the latest stable Rust.
+
+- One change = one topic; keep the diff as small as possible and avoid unrelated refactoring.
+- New features and fixes come with tests. The engine (`inkboard-core`) is tested without any UI; the app is tested with `egui_kittest`
+  (see `crates/inkboard-app/src/tests.rs`).
+- New dependencies must have a permissive license (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode, OFL for fonts). After changing dependencies, run
+  `python scripts/gen_third_party.py` to refresh `THIRD_PARTY_LICENSES.md` (it fails on a non-permissive license).
+- The in-depth documentation (`docs/`) is currently written in French; English contributions to it are very welcome.
+
+## Reporting bugs
+
+Please include your system (Windows/Linux/macOS and version), how you installed Inkboard (installer or source), and — for drawing problems — the `.inkboard.json` file if you can share it.
+Pen problems: attach the report from `inkboard --pen-test` ([guide](docs/STYLET.md)).
+
+## Security
+
+See [SECURITY.md](SECURITY.md).

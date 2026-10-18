@@ -1,128 +1,159 @@
 # Inkboard
 
-Inkboard (anciennement « Tableau blanc ») est un tableau blanc infini, **100 % hors ligne**, écrit en Rust. Il remplace l'application de bureau Microsoft Whiteboard et vise
-les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, draw.io, Whiteboard).
+**A fast, free, fully offline infinite whiteboard — written in Rust.**
+Draw, diagram and present on a native desktop app, import and export the formats you already use, and let an AI agent draw on your board.
 
-> État : **application native complète** (moteur, formats d'échange, texte riche, raccourcis, stylet, grands tableaux, présentation)  et **serveur MCP** pour piloter le tableau depuis un agent (niveau fichiers). Le prototype web d'origine est conservé dans
-> [`prototype-web/`](prototype-web/) et reste utilisable ; ses fichiers `.inkboard.json` s'importent dans la version Rust.
+[![CI](https://github.com/VictorLetirand/inkboard/actions/workflows/ci.yml/badge.svg)](https://github.com/VictorLetirand/inkboard/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 
-## Installer
+🇬🇧 English · 🇫🇷 [Version française](README.fr.md)
 
-Des installeurs (Windows `.exe` / `.msi`, Linux `.deb` / `.AppImage`, macOS `.dmg`) sont publiés sur la page *Releases* du dépôt à chaque version (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)) ;
-ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premier lancement). Seuls les installeurs Windows ont été construits et testés à ce jour.
+![Inkboard](docs/img/interface.png)
 
-## Démarrer
+> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (245 automated tests), but it has so far been **used by hand on Windows only**.
+> Linux and macOS builds compile and pass the automated tests in CI, yet nobody has used the app there yet — expect rough edges, and please [report them](../../issues).
+> The user interface is currently **in French**; an English interface is on the [roadmap](#roadmap).
+
+## Why Inkboard?
+
+Microsoft has announced it is retiring the desktop version of **Microsoft Whiteboard**, and the web alternatives all want an account, an internet connection, or a subscription.
+We wanted a whiteboard that is:
+
+- **Offline and private.** No account, no cloud, no telemetry. Your boards are plain files on your disk.
+- **Fast on big boards.** Complaints about lag on large boards come up again and again for Miro, Excalidraw and Whiteboard. Inkboard stays smooth with 100 000 objects (≈ 4.5 ms per frame).
+- **Interoperable.** Open and export **draw.io**, **Excalidraw**, **JSON Canvas** (Obsidian) and **Mermaid**, plus SVG, PNG and PDF. Your work is never locked in.
+- **Solid where other tools are fragile.** Connectors that really stay attached (and route around shapes), real tables, layers, rich text with per-word colour and highlight, LaTeX formulas typeset like TeX, customizable shortcuts, pen pressure.
+- **Ready for AI agents.** A built-in [MCP server](#use-it-with-ai-agents-mcp) lets Claude (or any MCP client) create and edit boards — live, in the open app, with every step undoable.
+- **Free software.** Dual-licensed **MIT OR Apache-2.0**, built on a small, UI-independent Rust engine you can reuse.
+
+Before writing a line of code we surveyed what users keep asking for in whiteboard tools (performance, fragile connectors, tables, layers, exports, offline use, pen support…); the [roadmap](docs/ROADMAP.md) tracks each of those requests.
+
+## Install
+
+### Download (recommended)
+
+Grab the installer for your system from the [**Releases**](../../releases) page (pre-releases while Inkboard is in alpha):
+
+| System | File | Notes |
+|---|---|---|
+| **Windows 10/11** | `inkboard_*_x64-setup.exe` or `inkboard_*_x64_en-US.msi` | The `.exe` installs for the current user (no administrator rights needed); the `.msi` is the classic Windows Installer package. |
+| **Linux** (x86-64) | `inkboard_*_amd64.deb` or `inkboard_*_x86_64.AppImage` | `sudo apt install ./inkboard_*.deb`, or `chmod +x *.AppImage && ./*.AppImage`. Needs OpenGL and X11/Wayland libraries (`libxkbcommon`). |
+| **macOS** (Apple Silicon / Intel) | `Inkboard_*.dmg` | Drag *Inkboard* to *Applications*. |
+
+The installers also provide the `ink` command-line tool and the `inkboard-mcp` server next to the app.
+
+> **The installers are not code-signed yet**, so your system will warn you the first time:
+> on **Windows**, SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*; on **macOS**, Control-click the app → *Open*.
+> Every release lists SHA-256 checksums so you can verify your download. Signing is planned ([why it is not done yet](docs/DISTRIBUTION.md)).
+
+### Build from source
+
+You need [Rust](https://rustup.rs) 1.90 or newer.
 
 ```bash
-cargo run --release -p inkboard-app                 # l'application
-cargo run --release -p inkboard-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 245 tests
-cargo packager --release -c Packager.toml    # installeurs (voir docs/DISTRIBUTION.md)
+git clone https://github.com/VictorLetirand/inkboard.git
+cd inkboard
+cargo run --release -p inkboard-app                    # start the app
+cargo run --release -p inkboard-app -- diagram.drawio  # …or open a file directly
 ```
 
-CLI de conversion (utile aux scripts et, plus tard, aux agents) :
+To build the installers yourself: `cargo install cargo-packager --locked`, then `cargo packager --release -c Packager.toml` ([details](docs/DISTRIBUTION.md)).
+
+## Features
+
+- **Drawing:** pen with pressure, highlighter, eraser, rectangles, ellipses, diamonds, triangles, lines, arrows, sticky notes, text, images, tables, vote dots, laser pointer. Infinite canvas, pages, layers, groups, alignment and distribution, snapping, undo/redo.
+- **Smart connectors:** arrows are *bound* to shapes and follow them; elbow connectors route around other shapes; drag a midpoint handle to add a waypoint.
+- **Rich text:** select words inside any shape, table cell or arrow label and make them bold, italic, underlined, struck, coloured or highlighted.
+- **Formulas and code:** LaTeX typeset with the STIX Two Math font (fractions, roots, sums, integrals, matrices…), editable by double-click; syntax-coloured code blocks.
+- **Present:** full-screen page-by-page mode (**F5**), timer, laser pointer (**F**).
+- **Import / export:**
+
+  | Format | Open | Save / export |
+  |---|---|---|
+  | Inkboard `.inkboard.json` | ✔ | ✔ (atomic save + autosave) |
+  | draw.io `.drawio` (compressed or not, multi-page) | ✔ | ✔ |
+  | Excalidraw `.excalidraw` | ✔ | ✔ |
+  | JSON Canvas `.canvas` (Obsidian) | ✔ | ✔ |
+  | Mermaid (flowchart, state, sequence) | ✔ | – |
+  | SVG, PNG, PDF (vector) | – | ✔ |
+
+- **Customizable shortcuts** (41 commands, several shortcuts per command, conflict handling) and a **light/dark theme** that follows the board background.
+- **Command line:** `ink convert diagram.mmd diagram.drawio`, `ink convert board.inkboard.json board.png`, `ink info file.drawio`.
+
+![Menu](docs/img/menu.png)
+
+## Use it with AI agents (MCP)
+
+`inkboard-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server: an agent can create shapes, bound connectors, tables, code blocks, formulas, images and whole Mermaid diagrams, lay them out automatically, and export.
+With Inkboard **open**, the agent edits the board you are looking at — each call is one undo step, it can see what you have selected, and it can ask what *you* changed since it last looked.
+With Inkboard **closed**, it edits the `.inkboard.json` file and the app reloads it automatically.
+
+With [Claude Code](https://claude.com/claude-code):
 
 ```bash
-cargo run --release -p inkboard-cli -- convert schema.mmd schema.drawio      # Mermaid → draw.io
-cargo run --release -p inkboard-cli -- convert ancien.inkboard.json nouveau.png
-cargo run --release -p inkboard-cli -- info schema.drawio
+claude mcp add inkboard -- /path/to/inkboard-mcp --root /path/to/your/boards
 ```
 
-## Plateformes
+**Always pass `--root`**: it confines every file the agent can read or write to that folder. The server exposes 16 tools (`add_shape`, `add_connector`, `import_mermaid`, `add_formula`, `export`, `board_changes`…) and MCP resources with change notifications.
+Full reference, security notes and limits: [docs/MCP.md](docs/MCP.md) (in French).
+
+## Platform status
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Compilation et tests automatiques (245 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
-| Application lancée et utilisée à la main | ✔ | **jamais** | **jamais** |
-| Gomme du stylet (`inkboard-pen`) | ✔ (non validée sur matériel) | – (sans effet) | – (sans effet) |
-| Icône de l'exécutable, archive portable, installation par utilisateur | ✔ (`scripts/*.ps1`) | – | – |
-| Dossier des données (autosave, raccourcis, mode direct MCP) | `%APPDATA%\Inkboard` | `$XDG_DATA_HOME` ou `~/.local/share/Inkboard` | `~/Library/Application Support/Inkboard` |
+| Builds and passes the 245 automated tests (CI) | ✔ | ✔ | ✔ |
+| App launched and used by hand | ✔ | not yet | not yet |
+| Installers | built and tested | built in CI, untested | built in CI, untested |
+| Pen eraser end (Windows Pointer API) | ✔ implemented, **not yet validated on real pen hardware** | – | – |
 
-Le code est portable (Rust + egui, pas d'API propre à un système en dehors de `inkboard-pen`), mais seul Windows a été lancé et utilisé à la main : sous Linux et macOS, seuls les tests automatiques (sans fenêtre) ont tourné, en intégration continue. Sous Linux et macOS : polices système cherchées dans les dossiers habituels
-(à défaut, les polices intégrées d'egui : Manuscrit et Serif y ressemblent à Sans), raccourcis avec Cmd à la place de Ctrl sous macOS, pas d'installateur ni de paquet. Le workflow CI
-(`.github/workflows/ci.yml`) teste les trois systèmes et est vert (Rust stable 1.99).
+Pen pressure and the eraser end are implemented and covered by tests but **have never been tried with a real pen**: run `inkboard --pen-test` for a diagnostic report ([how](docs/STYLET.md)).
 
-## Contenu
+## Performance
 
-| Crate | Rôle |
-|---|---|
-| [`inkboard-core`](crates/inkboard-core) | Modèle (pages, calques, objets), géométrie, **connecteurs liés**, historique, export SVG, mise en page automatique. Aucune dépendance à une interface. |
-| [`inkboard-formats`](crates/inkboard-formats) | Import/export draw.io, Excalidraw, JSON Canvas ; import Mermaid ; ancien format du prototype ; rendu PNG. |
-| [`inkboard-mcp`](crates/inkboard-mcp) | Serveur MCP (stdio) : un agent crée/modifie des tableaux, importe du Mermaid, exporte. Voir [docs/MCP.md](docs/MCP.md). |
-| [`inkboard-pen`](crates/inkboard-pen) | Seul crate contenant du `unsafe` : lecture de l'état de la gomme du stylet (messages `WM_POINTER*` de Windows). |
-| [`inkboard-cli`](crates/inkboard-cli) | `ink convert`, `ink info`, `ink bench`. |
-| [`inkboard-app`](crates/inkboard-app) | Application de bureau (egui) : canvas, outils, panneau de style, pages, calques, texte riche, raccourcis personnalisables, dialogues. |
+Measured on the release build with a synthetic board (60 % labelled shapes, 25 % strokes, 15 % bound connectors), continuous zoom and pan:
 
-## Interface
-
-L'interface reprend celle du prototype web : un canevas plein écran et des **cartes flottantes** (blanches, bordées, ombrées, coins de 10 px) — titre et menu en haut à gauche,
-outils au centre en haut, réglages de style à gauche (visibles seulement quand il y a quelque chose à régler), annuler / zoom en bas à gauche, pages au centre en bas, aide en bas à droite.
-Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmentés, menu principal à entrées contiguës avec raccourcis, thème **clair et sombre** qui suit le fond du tableau.
-
-![Interface](docs/img/interface.png)
-
-| Menu principal | Thème sombre et réglages de style |
-|---|---|
-| ![Menu](docs/img/menu.png) | ![Thème sombre](docs/img/theme-sombre.png) |
-
-## Fonctions notables
-
-- **Connecteurs liés** (droits, coudés, courbes) qui suivent les formes ; les coudés **contournent les formes** rencontrées ; poignées de
-  **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
-- **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `inkboard-pen`). **À valider avec un vrai stylet** : `inkboard --pen-test` affiche un diagnostic et produit un rapport ([docs/STYLET.md](docs/STYLET.md)).
-- **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
-- **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique générique), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
-  pastilles de vote (outil dédié).
-- **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).
-- **Pointeur laser** (F) : une traînée rouge qui s'efface, pour montrer sans dessiner ; en présentation, F l'active.
-- **Exports** : draw.io, Excalidraw, JSON Canvas, SVG, PNG, **PDF vectoriel**.
-- **Agents (MCP)** : `inkboard-mcp --root <dossier>` expose 16 outils (formes, connecteurs liés, tableaux, code, formules, Mermaid, mise en page, export). **Ressources MCP** (tableau affiché, fichiers) avec notifications d'abonnement, outil `board_changes` (ce que vous avez modifié depuis le dernier regard de l'agent), insertion d'images. **Mode direct** : application ouverte, l'agent agit sur le tableau affiché (une étape d'annulation par appel, il voit votre sélection) ; sinon il modifie le fichier et l'application le recharge seule.
-- **Distribution** : icône, archive portable et installation par utilisateur (voir [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
-
-## Texte riche et raccourcis
-
-- **Texte riche** : double-clic sur une forme, un tableau ou une flèche, puis sélection de mots (souris ou Maj+flèches) →
-  gras (Ctrl+B), italique (Ctrl+I), souligné (Ctrl+U), barré, **couleur** et **surlignage** par mot, via la barre flottante
-  ou le panneau de droite. Sans sélection, la mise en forme s'applique à tout le texte ; hors édition, à tout le texte des
-  objets sélectionnés. La frappe continue dans le style du caractère précédent.
-- **Raccourcis personnalisables** : menu *Affichage → Raccourcis clavier…* (41 commandes, plusieurs raccourcis par commande,
-  recherche, réinitialisation par commande ou globale, remplacement automatique en cas de conflit). Réglages dans
-  `%APPDATA%\Inkboard\keymap.json` (modifiable à la main ; les entrées invalides sont ignorées et signalées).
-  Réservés : Échap, flèches (déplacement fin), Ctrl+C/X/V.
-
-## Formats
-
-| Format | Ouvrir | Enregistrer / exporter |
+| Objects | Frame time (fit-to-screen) | Frame time (100 % zoom) |
 |---|---|---|
-| Natif `.inkboard.json` (v2, versionné) | ✔ | ✔ (enregistrement atomique + sauvegarde automatique) |
-| Prototype web `.inkboard.json` (v1) | ✔ | – |
-| draw.io `.drawio` (compressé ou non, multi-pages) | ✔ | ✔ |
-| Excalidraw `.excalidraw` | ✔ | ✔ |
-| JSON Canvas `.canvas` | ✔ | ✔ (formes avec texte et flèches entre formes) |
-| Mermaid (`flowchart`, `stateDiagram`, `sequenceDiagram`) | ✔ | – |
-| SVG, PNG, PDF | – | ✔ |
+| 2 000 | 0.8 ms | 0.3 ms |
+| 20 000 | 3.3 ms | 0.3 ms |
+| 100 000 | 4.5 ms | 0.3 ms |
 
-## Performances (mesurées)
+Reproduce with `ink bench 100000 big.inkboard.json && inkboard --bench big.inkboard.json`.
 
-`inkboard --bench fichier` mesure le temps CPU de construction d'une image en vue « tout afficher » avec zoom et défilement
-continus (build release). Plateau synthétique `ink bench N` : 60 % formes avec texte, 25 % traits, 15 % connecteurs liés.
+## Project layout
 
-| Objets | Avant optimisation | Après (vue « tout afficher ») | Après (zoom 100 %) |
-|---|---|---|---|
-| 2 000 | 2,9 ms | 0,8 ms | 0,3 ms |
-| 20 000 | 199 ms | 3,3 ms | 0,3 ms |
-| 100 000 | > 2 min (inutilisable) | 4,5 ms | 0,3 ms |
+| Crate | Role |
+|---|---|
+| [`inkboard-core`](crates/inkboard-core) | The engine: document model, geometry, bound connectors, history, SVG export, auto-layout. No UI dependency. |
+| [`inkboard-formats`](crates/inkboard-formats) | draw.io, Excalidraw, JSON Canvas, Mermaid, PNG/PDF, LaTeX typesetting. |
+| [`inkboard-app`](crates/inkboard-app) | The desktop app (egui). |
+| [`inkboard-cli`](crates/inkboard-cli) | The `ink` command-line converter. |
+| [`inkboard-mcp`](crates/inkboard-mcp) | The MCP server. |
+| [`inkboard-pen`](crates/inkboard-pen) | Pen eraser detection on Windows (the only crate with `unsafe` code). |
 
-Moyens : table des identifiants et **index spatial en grille** reconstruits une fois par modification (28 ms pour 100 000 objets),
-niveau de détail (objets de moins de 3 px dessinés comme des points), sélection et survol par l'index (< 0,01 ms).
-L'index n'est utilisé qu'à partir de 400 objets et suspendu pendant les gestes qui déplacent des objets.
+More: [architecture and design decisions](docs/ARCHITECTURE.md) · [roadmap](docs/ROADMAP.md) · [distribution and signing](docs/DISTRIBUTION.md) (the in-depth docs are currently in French).
+The original web prototype is kept in [`prototype-web/`](prototype-web/); its `.tableau.json` boards can be opened in Inkboard.
 
-## Documentation
+## Roadmap
 
-- [Architecture et décisions](docs/ARCHITECTURE.md)
-- [Feuille de route et état des « plaintes » des utilisateurs](docs/ROADMAP.md)
+Planned or wanted next:
 
-## Licence
+- **English (and other) interface languages** — the UI is French-only for now.
+- Code-signed installers (Windows via SignPath, macOS notarization) and automatic updates.
+- Validation of pen pressure and eraser on real hardware; pen eraser support on macOS/Linux.
+- First real-world usage on Linux and macOS, and fixes that come out of it.
+- Real LaTeX beyond what the typesetting library supports; per-language code highlighting.
 
-Double licence **MIT OU Apache-2.0**, à votre choix : voir [LICENSE-MIT](LICENSE-MIT) et [LICENSE-APACHE](LICENSE-APACHE). Les licences des composants tiers embarqués sont dans
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Contributions : [CONTRIBUTING.md](CONTRIBUTING.md).
+Have an idea or found a bug? [Open an issue](../../issues/new/choose) — see also [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Third-party components keep their own (permissive) licenses: see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Inkboard shall be dual-licensed as above, without any additional terms or conditions.

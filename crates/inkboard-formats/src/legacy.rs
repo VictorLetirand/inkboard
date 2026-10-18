@@ -1,4 +1,4 @@
-//! Import des tableaux enregistrés par le prototype web (`.inkboard.json` version 1).
+//! Import des tableaux enregistrés par le prototype web (`.tableau.json` version 1).
 
 use crate::common::{FormatError, Imported, Report, parse_color, parse_data_url};
 use inkboard_core::*;
