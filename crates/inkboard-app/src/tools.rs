@@ -689,9 +689,10 @@ impl App {
             let aid = self.ed.doc.add_asset(mime, bytes);
             let off = 24.0 * i as f64;
             let frame = Frame::new(at.x - w * k / 2.0 + off, at.y - h * k / 2.0 + off, w * k, h * k);
-            ids.push(
-                self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None }), Style { width: 0.0, fill: None, ..Style::default() })),
-            );
+            ids.push(self.ed.insert(Object::new(
+                Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: false }),
+                Style { width: 0.0, fill: None, ..Style::default() },
+            )));
         }
         if !ids.is_empty() {
             self.sel = ids;

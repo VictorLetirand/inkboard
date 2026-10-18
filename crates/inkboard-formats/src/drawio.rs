@@ -141,7 +141,8 @@ fn page_xml(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
             Kind::Image(img) => {
                 let Some(a) = doc.assets.get(&img.asset) else { continue };
                 let f = &img.frame;
-                let url = data_url(&a.mime, &a.data).replace(";base64,", ",");
+                let bytes = img.export_bytes(&a.mime, &a.data, st.stroke.resolve(doc.background.preset.is_dark()));
+                let url = data_url(&a.mime, &bytes).replace(";base64,", ",");
                 let rot = if f.angle != 0.0 { format!("rotation={};", round2(f.angle.to_degrees())) } else { String::new() };
                 vertex(
                     &mut cells,
@@ -587,7 +588,7 @@ impl Builder<'_> {
             let mut f = rect_of(&r);
             f.angle = angle;
             let obj = Object::new(
-                Kind::Image(ImageObj { frame: f, asset: aid, latex: None }),
+                Kind::Image(ImageObj { frame: f, asset: aid, latex: None, mono: false }),
                 Style { width: 0.0, opacity: style_for(c, true).opacity, ..Style::default() },
             );
             let id = obj.id.clone();

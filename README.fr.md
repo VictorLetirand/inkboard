@@ -20,7 +20,7 @@ ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premie
 ```bash
 cargo run --release -p inkboard-app                 # l'application
 cargo run --release -p inkboard-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 252 tests
+cargo test --workspace                        # 265 tests
 cargo packager --release -c Packager.toml    # installeurs (voir docs/fr/DISTRIBUTION.md)
 ```
 
@@ -36,7 +36,7 @@ cargo run --release -p inkboard-cli -- info schema.drawio
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Compilation et tests automatiques (252 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
+| Compilation et tests automatiques (265 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
 | Application lancée et utilisée à la main | ✔ | **jamais** | **jamais** |
 | Gomme du stylet (`inkboard-pen`) | ✔ (non validée sur matériel) | – (sans effet) | – (sans effet) |
 | Icône de l'exécutable, archive portable, installation par utilisateur | ✔ (`scripts/*.ps1`) | – | – |
@@ -75,6 +75,7 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
   **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
 - **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `inkboard-pen`). **À valider avec un vrai stylet** : `inkboard --pen-test` affiche un diagnostic et produit un rapport ([docs/STYLET.md](docs/fr/STYLET.md)).
 - **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
+- **Bibliothèque d'icônes** : environ 28 800 icônes et formes hors ligne — AWS, Azure, Google Cloud, Cisco, IBM, Kubernetes, formes d'organigramme / BPMN, symboles électriques et de procédé, éléments de maquette, 3 400 logos de marques et 14 500 icônes générales — avec recherche depuis la barre d'outils ([détails et licences](docs/fr/ICONS.md)).
 - **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique avec choix du langage), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
   pastilles de vote (outil dédié).
 - **Présentation** (F5) : plein écran sans interface, flèches / espace / Page↓ pour changer de page, Échap pour quitter ; **minuteur** (menu Affichage).

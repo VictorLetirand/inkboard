@@ -38,6 +38,7 @@ pub fn show(app: &mut App, ctx: &Context) {
     pages_card(app, ctx);
     zoom_card(app, ctx);
     help_card(app, ctx);
+    crate::library::show(app, ctx);
 }
 
 /* ---------------------------------------------------------------- titre */
@@ -123,6 +124,9 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
             }
             if theme::icon_button(ui, "image", false, true).on_hover_text(t("Insert image")).clicked() {
                 app.insert_images_dialog();
+            }
+            if theme::icon_button(ui, "library", app.palette.open, true).on_hover_text(t("Icon library")).clicked() {
+                app.palette.toggle();
             }
             let key = Action::for_tool(Tool::Laser).map(|a| app.keymap.label(a)).unwrap_or_default();
             if theme::icon_button(ui, "laser", app.tool == Tool::Laser, true).on_hover_text(format!("{} ({key})", t("Laser pointer"))).clicked() {
@@ -328,6 +332,9 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         theme::menu_label(ui, "Insert");
         if mi(ui, "image", "Image…", "") {
             app.insert_images_dialog();
+        }
+        if mi(ui, "library", "Icon library…", "") {
+            app.palette.toggle();
         }
         if mi(ui, "code", "Code block", "") {
             app.insert_code_block();

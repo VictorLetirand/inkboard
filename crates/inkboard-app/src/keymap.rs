@@ -468,13 +468,13 @@ impl Keymap {
             .iter()
             .map(|(a, v)| (a.id().to_owned(), serde_json::Value::Array(v.iter().map(|s| serde_json::Value::String(s.to_id())).collect())))
             .collect();
-        serde_json::to_string_pretty(&serde_json::json!({ "version": 1, "bindings": bindings })).expect("JSON valide")
+        serde_json::to_string_pretty(&serde_json::json!({ "version": 1, "bindings": bindings })).expect("valid JSON")
     }
 
     /// Reads a settings file. Missing actions keep their default shortcut; unknown or unreadable
     /// entries are ignored. Also returns the number of ignored entries.
     pub fn from_json(s: &str) -> Result<(Keymap, usize), String> {
-        let v: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("JSON invalide : {e}"))?;
+        let v: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("invalid JSON: {e}"))?;
         let b = v.get("bindings").and_then(|b| b.as_object()).ok_or("settings without \"bindings\"")?;
         let mut km = Keymap::default();
         let mut ignored = 0;

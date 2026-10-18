@@ -33,7 +33,7 @@ impl Client {
         let (tx, lines) = channel();
         std::thread::spawn(move || {
             for l in stdout.lines().map_while(Result::ok) {
-                let v: Value = serde_json::from_str(&l).unwrap_or_else(|e| panic!("sortie invalide ({e}) : {l}"));
+                let v: Value = serde_json::from_str(&l).unwrap_or_else(|e| panic!("invalid output ({e}): {l}"));
                 if tx.send(v).is_err() {
                     break;
                 }
@@ -147,7 +147,7 @@ fn an_agent_builds_a_diagram_and_exports_it() {
     let objs = d["page"]["objects"].as_array().unwrap();
     let types: Vec<&str> = objs.iter().map(|o| o["type"].as_str().unwrap()).collect();
     for t in ["rect", "ellipse", "connector", "table", "rect", "formula"] {
-        assert!(types.contains(&t), "{t} absent : {types:?}");
+        assert!(types.contains(&t), "{t} missing: {types:?}");
     }
     let conn = objs.iter().find(|o| o["type"] == "connector").unwrap();
     assert_eq!(conn["from"]["object"], json!(ida));

@@ -72,6 +72,12 @@ def main():
            '- **STIX Two Math** (LaTeX formula typesetting, through the `latex-rust` library): SIL Open Font License 1.1 — text below.',
            "- **egui's default fonts** (`epaint_default_fonts`: Hack, Ubuntu-Light, NotoEmoji, emoji-icon-font): MIT, Ubuntu Font Licence 1.0 and SIL OFL 1.1 — texts below.",
            "- System fonts (Segoe UI, Georgia, etc.) are **not** embedded: they are read from the user's machine.", '',
+           '## Icon library', '',
+           "Inkboard embeds a library of about 28,000 icons (`crates/inkboard-app/assets/icons.bin`, built by `scripts/build_icon_library.py`; see `docs/ICONS.md`):", '',
+           '- **draw.io shape libraries** (jgraph/drawio: AWS, Azure, Google Cloud, Cisco, IBM, Kubernetes, flowchart, UML/BPMN, electrical, P&ID, mockups…): Apache License 2.0.',
+           '- **Simple Icons** (brand logos): CC0 1.0. The logos remain trademarks of their owners.',
+           '- **Tabler Icons**: MIT. **Lucide**: ISC. **Material Design Icons** (Pictogrammers): Apache License 2.0.',
+           "- Product icons and logos (AWS, Azure, Google Cloud, Cisco, IBM, brand logos…) are trademarks or property of their respective owners and are only provided to label diagrams; Inkboard is not affiliated with or endorsed by them.", '',
            f'## Libraries ({len(rows)})', '', '| Crate | Version | License | Repository |', '|---|---|---|---|']
     out += [f'| {n} | {v} | {l} | {r} |' for n, v, l, r in rows]
     if no_file:
@@ -79,6 +85,9 @@ def main():
                 "These crates declare a standard SPDX license (MIT, Apache-2.0, Zlib, BSL-1.0: texts below) but ship no file; the authors' names and copyright are in their repository.", '']
         out += [f'- {n} {v} — {l} — {r}' for n, v, l, r in no_file]
     out += ['', '## License texts', '']
+    icon_lic = os.path.join(ROOT, 'crates', 'inkboard-app', 'assets', 'ICONS-LICENSES.txt')
+    if os.path.exists(icon_lic):
+        out += ['### Icon library sources', '', '```text', open(icon_lic, encoding='utf-8').read().rstrip(), '```', '']
     for i, (t, crates) in enumerate(sorted(texts.values(), key=lambda x: x[1][0].lower()), 1):
         names = sorted(set(crates))
         shown = ', '.join(names[:12]) + (f' … (+{len(names) - 12})' if len(names) > 12 else '')

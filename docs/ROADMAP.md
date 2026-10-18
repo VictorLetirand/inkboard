@@ -29,6 +29,7 @@ Research done in October 2026 (G2/Capterra/GetApp reviews, Excalidraw GitHub iss
 | Clipboard (images, text) | all | ✔ |
 | Driving by agents (MCP) | – | ✔ `inkboard-mcp`: files and live mode (application open, undoable, selection visible) |
 | PDF export | Whiteboard | ✔ vector |
+| Icon / shape library (draw.io, brand logos) | draw.io, Miro | ✔ 28,800 icons offline, searchable, tinted by the outline color |
 | Interface in several languages | – | ✔ English and French, detected from the system, switchable in the menu |
 
 ## To do
@@ -39,7 +40,7 @@ Research done in October 2026 (G2/Capterra/GetApp reviews, Excalidraw GitHub iss
 - Smarter syntax coloring (it is token-based, not a parser); text (`\text`) and advanced environments of the typesetting library beyond its capabilities.
 - **Validation of pen pressure and eraser on real hardware** (procedure: docs/STYLET.md); eraser on macOS/Linux (not handled).
 - Per-line alignment in the input field while editing multi-line centered text.
-- draw.io shape library (stencils) as an insertable icon palette: feasible for the Apache-2.0 generic sets.
+- More icon sets (the library is built from `scripts/build_icon_library.py`; see [ICONS.md](ICONS.md)) and drag-and-drop from the palette.
 - WASM build of the engine (same code) if a web use is wanted.
 
 ## Known limits

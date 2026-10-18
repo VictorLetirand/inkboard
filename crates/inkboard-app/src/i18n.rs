@@ -181,7 +181,7 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             let p = e.unwrap().path();
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
-            if p.extension().is_some_and(|x| x == "rs") && !matches!(name.as_str(), "i18n_fr.rs" | "i18n.rs" | "tests.rs") {
+            if p.extension().is_some_and(|x| x == "rs" || x == "toml") && !matches!(name.as_str(), "i18n_fr.rs" | "i18n.rs" | "tests.rs") {
                 v.push((name, std::fs::read_to_string(&p).unwrap()));
             }
         }
@@ -250,12 +250,34 @@ mod tests {
         // common French words that have no accent (the accent check cannot see them), looked for inside string literals
         let has_french_word = |line: &str| {
             const WORDS: &[&str] = &[
-                "Bonjour", "inconnu", "inconnue", "vide", "Titre", "Objet", "Exemple", "fichier", "tableau", "erreur", "outil", "oui", "Fin", "monde",
+                "invalide",
+                "valide",
+                "manquant",
+                "absent",
+                "volumineuse",
+                "lecture",
+                "Bonjour",
+                "inconnu",
+                "inconnue",
+                "vide",
+                "Titre",
+                "Objet",
+                "Exemple",
+                "fichier",
+                "tableau",
+                "erreur",
+                "outil",
+                "oui",
+                "Fin",
+                "monde",
                 "Nouveau",
             ];
             line.split('"').skip(1).step_by(2).any(|lit| lit.split(|c: char| !c.is_alphanumeric()).any(|w| WORDS.contains(&w)))
         };
         let allowed = [
+            "sans-serif",
+            "wb-sans",
+            "Sans serif",
             "tableau-blanc",
             ".tableau.json",
             r"\inconnu",

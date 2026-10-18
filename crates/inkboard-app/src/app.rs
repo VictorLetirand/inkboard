@@ -131,6 +131,8 @@ pub struct App {
     pub snap: bool,
     pub toast: Option<(String, Instant)>,
     pub dialog: Option<Dialog>,
+    /// Icon library palette.
+    pub palette: crate::library::Palette,
     pub prop_edit: Option<Vec<Object>>,
     pub space_down: bool,
     pub screenshot: Option<PathBuf>,
@@ -227,6 +229,7 @@ impl App {
             present_req: None,
             prev_tool: Tool::Select,
             timer: None,
+            palette: Default::default(),
             timer_done: false,
             last_autosave: Instant::now(),
             last_title: String::new(),
@@ -820,6 +823,17 @@ impl App {
             if demo.contains("code") {
                 self.insert_code_block();
             }
+            if demo.contains("icons") {
+                // e.g. `--ui-demo "icons|group=Diagram shapes"` or `"icons|q=router"`
+                self.palette.open = true;
+                for tok in demo.split('|') {
+                    if let Some(g) = tok.strip_prefix("group=") {
+                        self.palette.group = Some(g.to_owned());
+                    } else if let Some(q) = tok.strip_prefix("q=") {
+                        self.palette.query = q.to_owned();
+                    }
+                }
+            }
             if demo.contains("panel") {
                 self.set_tool(Tool::Shape(BoxGeom::Rect));
                 if let Some(id) = self.ed.page().objects.iter().find(|o| matches!(o.kind, Kind::Box(_))).map(|o| o.id.clone()) {
@@ -868,7 +882,15 @@ impl App {
             }
         }
         ctx.request_repaint();
-        if self.frames == if self.ui_demo.contains("menu") || self.ui_demo.contains("code") { 18 } else { 8 } {
+        if self.frames
+            == if self.ui_demo.contains("icons") {
+                40
+            } else if self.ui_demo.contains("menu") || self.ui_demo.contains("code") {
+                18
+            } else {
+                8
+            }
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }
         let shot = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));

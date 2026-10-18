@@ -9,6 +9,7 @@ mod i18n_fr;
 mod icons;
 mod insert;
 mod keymap;
+mod library;
 mod live;
 mod panel;
 mod pen_test;

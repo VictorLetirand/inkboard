@@ -888,7 +888,7 @@ mod tests {
         );
         let b = boxes(&o);
         for want in ["User", "API", "DB", "1. Request", "2. Read", "warm cache", "3. Response", "loop Retry"] {
-            assert!(b.iter().any(|x| x.1.label.text.to_plain() == want), "{want} manquant");
+            assert!(b.iter().any(|x| x.1.label.text.to_plain() == want), "{want} is missing");
         }
         assert!(b.iter().any(|x| x.1.geom == BoxGeom::Sticky));
         let c = conns(&o);

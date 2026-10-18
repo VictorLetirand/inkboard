@@ -217,6 +217,26 @@ pub struct ImageObj {
     /// LaTeX source when the image is a typeset formula (the image is then a white SVG tinted by the stroke color).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latex: Option<String>,
+    /// The image is a white SVG (formula or monochrome icon) that is tinted with the object's stroke color.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mono: bool,
+}
+
+impl ImageObj {
+    /// Is the image tinted with the stroke color (formula or monochrome icon)?
+    pub fn is_tinted(&self) -> bool {
+        self.mono || self.latex.is_some()
+    }
+
+    /// Bytes of the image as exported to other formats: a tinted SVG (white) gets the `stroke` color, anything else is unchanged.
+    pub fn export_bytes<'a>(&self, mime: &str, data: &'a [u8], stroke: (u8, u8, u8)) -> std::borrow::Cow<'a, [u8]> {
+        if self.is_tinted() && mime == "image/svg+xml" {
+            let hex = format!("#{:02x}{:02x}{:02x}", stroke.0, stroke.1, stroke.2);
+            std::borrow::Cow::Owned(String::from_utf8_lossy(data).replace("#ffffff", &hex).into_bytes())
+        } else {
+            std::borrow::Cow::Borrowed(data)
+        }
+    }
 }
 
 /// Freehand stroke (points in world coordinates).
@@ -665,6 +685,18 @@ mod tests {
     fn ids_are_unique() {
         let ids: std::collections::HashSet<Id> = (0..5000).map(|_| Id::new()).collect();
         assert_eq!(ids.len(), 5000);
+    }
+
+    #[test]
+    fn tinted_svgs_take_the_stroke_color_on_export_and_others_are_untouched() {
+        let svg = br##"<svg><path fill="#ffffff" stroke="#ffffff"/></svg>"##;
+        let img =
+            |mono, latex: Option<&str>| ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: AssetId::default(), latex: latex.map(str::to_owned), mono };
+        let out = img(true, None).export_bytes("image/svg+xml", svg, (255, 0, 16));
+        assert_eq!(String::from_utf8_lossy(&out), r##"<svg><path fill="#ff0010" stroke="#ff0010"/></svg>"##);
+        assert!(img(false, Some("x")).is_tinted(), "formulas are tinted too");
+        assert_eq!(&*img(false, None).export_bytes("image/svg+xml", svg, (1, 2, 3)), svg.as_slice(), "colored icons keep their colors");
+        assert_eq!(&*img(true, None).export_bytes("image/png", svg, (1, 2, 3)), svg.as_slice(), "only SVG is recolored");
     }
 
     #[test]

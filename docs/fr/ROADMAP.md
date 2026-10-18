@@ -28,16 +28,18 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Presse-papiers (images, texte) | tous | ✔ |
 | Pilotage par des agents (MCP) | – | ✔ `inkboard-mcp` : fichiers et mode direct (application ouverte, annulable, sélection visible) |
 | Export PDF | Whiteboard | ✔ vectoriel |
+| Bibliothèque d'icônes et de formes (draw.io, logos de marques) | draw.io, Miro | ✔ 28 800 icônes hors ligne, avec recherche, teintées par la couleur de contour |
+| Interface en plusieurs langues | – | ✔ anglais et français, détectés d'après le système, modifiables dans le menu |
 
 ## Reste à faire
 
-- **Interface en plusieurs langues** (anglais d'abord) : l'interface est aujourd'hui uniquement en français ; la documentation approfondie (`docs/`) aussi.
+- Plus de langues d'interface : l'anglais et le français sont intégrés ; en ajouter une revient à ajouter une table de traduction (voir `crates/inkboard-app/src/i18n_fr.rs`).
 - `inkboard-mcp` : vérifier ce que les clients réels (Claude Code, Claude Desktop) font des notifications de ressources ; notifications avec le détail du changement ; lecture du contenu des images.
 - Installateur Windows **signé** (nécessite un certificat de signature de code ; les scripts `scripts/` fournissent l'archive portable et une installation par utilisateur).
 - Coloration syntaxique plus fine (elle repose sur des jetons, pas sur un analyseur) ; texte (`\text`) et environnements avancés de la bibliothèque de composition au-delà de ses capacités.
 - **Validation de la pression et de la gomme du stylet sur du matériel réel** (procédure : docs/STYLET.md) ; gomme sous macOS/Linux (non gérée).
 - Alignement par ligne dans le champ de saisie pendant l'édition d'un texte centré multiligne.
-- Bibliothèque de formes draw.io (stencils) comme palette d'icônes insérables : réaliste pour les jeux génériques sous Apache-2.0.
+- Plus de jeux d'icônes (la bibliothèque est construite par `scripts/build_icon_library.py` ; voir [ICONS.md](../ICONS.md)) et glisser-déposer depuis la palette.
 - Version WASM du moteur (même code) si un usage web est souhaité.
 
 ## Limites connues

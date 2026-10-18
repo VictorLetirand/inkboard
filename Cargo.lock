@@ -1806,6 +1806,7 @@ dependencies = [
  "image",
  "inkboard-core",
  "inkboard-formats",
+ "inkboard-icons",
  "inkboard-mcp",
  "inkboard-pen",
  "raw-window-handle",
@@ -1849,6 +1850,15 @@ dependencies = [
  "serde_json",
  "svg2pdf",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "inkboard-icons"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide 0.8.9",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

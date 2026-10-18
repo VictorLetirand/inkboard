@@ -21,6 +21,7 @@ inkboard-pen = { path = "../inkboard-pen" }
 raw-window-handle = "0.6.2"
 inkboard-formats = { path = "../inkboard-formats" }
 inkboard-mcp = { path = "../inkboard-mcp" }
+inkboard-icons = { path = "../inkboard-icons" }
 sys-locale = "0.3"
 
 [build-dependencies]

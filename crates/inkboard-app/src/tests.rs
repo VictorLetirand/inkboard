@@ -1495,3 +1495,65 @@ fn starting_a_timer_resets_the_time_is_up_warning() {
     assert_eq!(total, std::time::Duration::from_secs(300));
     assert!(end > std::time::Instant::now());
 }
+
+/* ------------------------------------------------------------ icon library */
+
+#[test]
+fn library_icons_are_inserted_as_svg_images_tinted_when_monochrome() {
+    use inkboard_icons::{IconRef, Library};
+    let lib = Library::open(include_bytes!("../assets/icons.bin")).unwrap();
+    assert!(lib.icon_count() > 20_000, "{} icons", lib.icon_count());
+    let mut t = T::new();
+    let mono = lib.sets.iter().position(|s| s.mono).unwrap();
+    let colored = lib.sets.iter().position(|s| !s.mono).unwrap();
+    t.app().insert_icon(&lib, IconRef { set: mono, icon: 0 });
+    t.app().insert_icon(&lib, IconRef { set: colored, icon: 0 });
+    let imgs: Vec<ImageObj> = t.objects().into_iter().filter_map(|o| if let Kind::Image(i) = &o.kind { Some(i.clone()) } else { None }).collect();
+    assert_eq!(imgs.len(), 2);
+    assert!(imgs[0].mono && imgs[0].is_tinted() && !imgs[1].mono);
+    for i in &imgs {
+        assert_eq!(t.app().ed.doc.assets.get(&i.asset).unwrap().mime, "image/svg+xml");
+        assert!((i.frame.w.max(i.frame.h) - 96.0).abs() < 1e-6, "longest side 96, got {:?}", i.frame);
+    }
+    // search across the whole library finds vendor icons by name
+    assert!(!lib.search("lambda", 5).is_empty() && !lib.search("router", 5).is_empty() && !lib.search("github", 5).is_empty());
+    // one undo step per insertion
+    t.app().ed.undo();
+    assert_eq!(t.objects().len(), 1);
+}
+
+#[test]
+fn the_icon_palette_opens_filters_and_renders_thumbnails() {
+    let mut t = T::new();
+    t.app().palette.toggle();
+    t.app().palette.group = Some("Diagram shapes".into());
+    for _ in 0..6 {
+        t.h.step();
+    }
+    assert!(t.app().palette.open);
+    t.app().palette.query = "flowchart".into();
+    for _ in 0..3 {
+        t.h.step();
+    }
+    t.app().palette.toggle();
+    t.h.step();
+    assert!(!t.app().palette.open);
+}
+
+/// Every icon of the pack parses and rasterizes (slow: run with `cargo test --release -p inkboard-app -- --ignored`).
+#[test]
+#[ignore]
+fn every_library_icon_renders() {
+    use inkboard_icons::{IconRef, Library};
+    let lib = Library::open(include_bytes!("../assets/icons.bin")).unwrap();
+    let mut failures = Vec::new();
+    for (si, s) in lib.sets.iter().enumerate() {
+        for (ii, name) in s.names.iter().enumerate() {
+            let svg = lib.svg(IconRef { set: si, icon: ii }).unwrap();
+            if inkboard_formats::raster::svg_to_raster(&svg, 0.1, false).is_err() {
+                failures.push(format!("{} / {name}", s.title));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} icons do not render, e.g. {:?}", failures.len(), &failures[..failures.len().min(10)]);
+}

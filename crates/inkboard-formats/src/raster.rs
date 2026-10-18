@@ -27,13 +27,13 @@ pub struct Raster {
 pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, FormatError> {
     let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
     let opt = usvg::Options { fontdb, ..usvg::Options::default() };
-    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG : {e}")))?;
+    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     let size = tree.size();
     let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
         return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
-    let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image trop grande".into()))?;
+    let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image too large".into()))?;
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
     Ok(Raster { width: w, height: h, rgba_premultiplied: pixmap.take() })
 }
@@ -41,13 +41,13 @@ pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, 
 /// Converts an SVG to PNG. `scale`: 1.0 = SVG size, 2.0 = double resolution.
 pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, FormatError> {
     let opt = usvg::Options { fontdb: system_fonts(), ..usvg::Options::default() };
-    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG : {e}")))?;
+    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     let size = tree.size();
     let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
         return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
-    let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image trop grande".into()))?;
+    let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image too large".into()))?;
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
     pixmap.encode_png().map_err(|e| FormatError::Invalid(format!("PNG : {e}")))
 }
@@ -58,7 +58,7 @@ pub fn svg_to_pdf(svg: &str) -> Result<Vec<u8>, FormatError> {
     let mut fontdb = pdf_usvg::fontdb::Database::new();
     fontdb.load_system_fonts();
     let opt = pdf_usvg::Options { fontdb: std::sync::Arc::new(fontdb), ..pdf_usvg::Options::default() };
-    let tree = pdf_usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG : {e}")))?;
+    let tree = pdf_usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     svg2pdf::to_pdf(&tree, svg2pdf::ConversionOptions::default(), svg2pdf::PageOptions::default()).map_err(|e| FormatError::Invalid(format!("PDF : {e}")))
 }
 

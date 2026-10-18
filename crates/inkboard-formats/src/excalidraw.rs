@@ -207,7 +207,8 @@ pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
             Kind::Image(i) => {
                 let Some(a) = doc.assets.get(&i.asset) else { continue };
                 let fid = i.asset.as_str().to_owned();
-                files.insert(fid.clone(), json!({"mimeType": a.mime, "id": fid, "dataURL": data_url(&a.mime, &a.data), "created": 1, "lastRetrieved": 1}));
+                let bytes = i.export_bytes(&a.mime, &a.data, o.style.stroke.resolve(doc.background.preset.is_dark()));
+                files.insert(fid.clone(), json!({"mimeType": a.mime, "id": fid, "dataURL": data_url(&a.mime, &bytes), "created": 1, "lastRetrieved": 1}));
                 let mut e = base(o, "image", i.frame.x, i.frame.y, i.frame.w, i.frame.h, i.frame.angle);
                 e.insert("fileId".into(), json!(fid));
                 e.insert("status".into(), json!("saved"));
@@ -513,7 +514,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                 let aid = Id::new();
                 doc.assets.insert(aid.clone(), Asset { mime, data: Arc::new(bytes) });
                 let mut o = Object::new(
-                    Kind::Image(ImageObj { frame: Frame { x, y, w, h, angle }, asset: aid, latex: None }),
+                    Kind::Image(ImageObj { frame: Frame { x, y, w, h, angle }, asset: aid, latex: None, mono: false }),
                     Style { width: 0.0, opacity: style_of(e, false).opacity, ..Style::default() },
                 );
                 o.id = ids[id].clone();
@@ -566,7 +567,7 @@ mod tests {
         let els = v["elements"].as_array().unwrap();
         let types: Vec<&str> = els.iter().map(|e| e["type"].as_str().unwrap()).collect();
         for t in ["rectangle", "ellipse", "diamond", "line", "arrow", "freedraw", "image", "text"] {
-            assert!(types.contains(&t), "{t} absent de {types:?}");
+            assert!(types.contains(&t), "{t} missing from {types:?}");
         }
         assert_eq!(v["files"].as_object().unwrap().len(), 1);
         // a rectangle's text is bound to its container

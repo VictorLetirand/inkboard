@@ -107,7 +107,7 @@ pub fn export(page: &Page) -> (String, usize) {
             Kind::Box(_) => {}
         }
     }
-    (serde_json::to_string_pretty(&json!({"nodes": nodes, "edges": edges})).expect("JSON valide"), dropped)
+    (serde_json::to_string_pretty(&json!({"nodes": nodes, "edges": edges})).expect("valid JSON"), dropped)
 }
 
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
@@ -213,7 +213,7 @@ mod tests {
           {"id":"x","type":"unknown","x":0,"y":0,"width":1,"height":1}
         ],"edges":[
           {"id":"e1","fromNode":"a","toNode":"b","fromSide":"right","toSide":"left","label":"lien"},
-          {"id":"e2","fromNode":"a","toNode":"manquant"},
+          {"id":"e2","fromNode":"a","toNode":"missing"},
           {"id":"e3","fromNode":"b","toNode":"f","toEnd":"none","fromEnd":"arrow"}
         ]}"##;
         let r = import(src, "ob", &ApproxMeasurer).unwrap();

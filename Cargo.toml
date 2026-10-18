@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/inkboard-core", "crates/inkboard-formats", "crates/inkboard-cli", "crates/inkboard-app", "crates/inkboard-pen", "crates/inkboard-mcp"]
+members = ["crates/inkboard-core", "crates/inkboard-icons", "crates/inkboard-formats", "crates/inkboard-cli", "crates/inkboard-app", "crates/inkboard-pen", "crates/inkboard-mcp"]
 
 [workspace.package]
 version = "0.1.0"

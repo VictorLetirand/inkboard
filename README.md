@@ -14,7 +14,7 @@ Draw, diagram and present on a native desktop app, import and export the formats
 
 ![Inkboard](docs/img/interface.png)
 
-> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (252 automated tests), but it has so far been **used by hand on Windows only**.
+> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (265 automated tests), but it has so far been **used by hand on Windows only**.
 > Linux and macOS builds compile and pass the automated tests in CI, yet nobody has used the app there yet — expect rough edges, and please [report them](../../issues).
 > The interface is available in **English and French**; it follows your system language and can be switched from the menu (*Language*).
 
@@ -68,6 +68,7 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 - **Drawing:** pen with pressure, highlighter, eraser, rectangles, ellipses, diamonds, triangles, lines, arrows, sticky notes, text, images, tables, vote dots, laser pointer. Infinite canvas, pages, layers, groups, alignment and distribution, snapping, undo/redo.
 - **Smart connectors:** arrows are *bound* to shapes and follow them; elbow connectors route around other shapes; drag a midpoint handle to add a waypoint.
 - **Rich text:** select words inside any shape, table cell or arrow label and make them bold, italic, underlined, struck, coloured or highlighted.
+- **Icon library:** about 28,800 icons and shapes, offline — AWS, Azure, Google Cloud, Cisco, IBM, Kubernetes, flowchart / BPMN / UML-style shapes, electrical and process symbols, mockup widgets, 3,400 brand logos and 14,500 general-purpose icons — searchable from the toolbar ([details and licenses](docs/ICONS.md)).
 - **Formulas and code:** LaTeX typeset with the STIX Two Math font (fractions, roots, sums, integrals, matrices…), editable by double-click; syntax-coloured code blocks with a language picker (Rust, JavaScript/TypeScript, Python, C/C++, C#, Java, Go, Shell, SQL, JSON, HTML, CSS, YAML).
 - **Present:** full-screen page-by-page mode (**F5**), countdown timer (bottom-right clock button), laser pointer (**F**).
 - **Import / export:**
@@ -88,6 +89,8 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 |---|---|
 | ![Menu](docs/img/menu.png) | ![Dark theme](docs/img/theme-dark.png) |
 
+![Icon library](docs/img/icon-library.png)
+
 ## Use it with AI agents (MCP)
 
 `inkboard-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server: an agent can create shapes, bound connectors, tables, code blocks, formulas, images and whole Mermaid diagrams, lay them out automatically, and export.
@@ -107,7 +110,7 @@ Full reference, security notes and limits: [docs/MCP.md](docs/MCP.md).
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Builds and passes the 252 automated tests (CI) | ✔ | ✔ | ✔ |
+| Builds and passes the 265 automated tests (CI) | ✔ | ✔ | ✔ |
 | App launched and used by hand | ✔ | not yet | not yet |
 | Installers | built and tested | built in CI, untested | built in CI, untested |
 | Pen eraser end (Windows Pointer API) | ✔ implemented, **not yet validated on real pen hardware** | – | – |

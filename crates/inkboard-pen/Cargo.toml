@@ -9,7 +9,7 @@ rust-version.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
-# Seul crate du projet qui contient du code `unsafe` (appels Win32) ; les autres l'interdisent (`unsafe_code = "forbid"`).
+# The only crate of the project that contains `unsafe` code (Win32 calls); the others forbid it (`unsafe_code = "forbid"`).
 [lints.rust]
 missing_debug_implementations = "warn"
 

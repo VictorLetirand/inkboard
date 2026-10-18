@@ -47,7 +47,7 @@ fn main() {
         }
         let reply = match serde_json::from_str::<serde_json::Value>(&line) {
             Ok(msg) => server.handle(&msg),
-            Err(e) => Some(serde_json::json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("JSON invalide : {e}")}})),
+            Err(e) => Some(serde_json::json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("invalid JSON: {e}")}})),
         };
         if let Some(r) = reply
             && tx.send(r).is_err()

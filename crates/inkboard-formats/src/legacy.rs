@@ -148,7 +148,7 @@ fn convert(o: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> Op
             if !assets.contains_key(&asset) {
                 return None;
             }
-            Object::new(Kind::Image(ImageObj { frame, asset, latex: None }), Style { width: 0.0, fill: None, ..style })
+            Object::new(Kind::Image(ImageObj { frame, asset, latex: None, mono: false }), Style { width: 0.0, fill: None, ..style })
         }
         _ => return None,
     };
@@ -172,7 +172,7 @@ mod tests {
         {"id":"d","type":"pen","x":0,"y":300,"w":100,"h":40,"angle":0,"stroke":"ink","fill":"transparent","sw":4,"opacity":0.4,"hl":true,"pts":[[0,0],[0.5,1],[1,0]]},
         {"id":"e","type":"text","x":50,"y":400,"w":80,"h":26,"angle":0,"stroke":"ink","fill":"transparent","sw":0,"opacity":1,"text":"Libre","font":"mono","fontSize":20,"align":"left","locked":true},
         {"id":"f","type":"image","x":600,"y":0,"w":40,"h":30,"angle":0,"stroke":"ink","fill":"transparent","sw":0,"opacity":1,"asset":"img1"},
-        {"id":"g","type":"image","x":0,"y":0,"w":10,"h":10,"asset":"manquant"},
+        {"id":"g","type":"image","x":0,"y":0,"w":10,"h":10,"asset":"missing"},
         {"id":"h","type":"unknown"}
       ],
       "assets":{"img1":"data:image/png;base64,AQIDBA=="}

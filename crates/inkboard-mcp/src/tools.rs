@@ -251,12 +251,12 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     {
         // the file is read here (confined to the root); only the data is passed to the application
         let abs = resolve(srv, &src)?;
-        let meta = std::fs::metadata(&abs).map_err(|e| format!("lecture de {} : {e}", abs.display()))?;
+        let meta = std::fs::metadata(&abs).map_err(|e| format!("reading {}: {e}", abs.display()))?;
         if meta.len() as usize > IMAGE_MAX_BYTES {
-            return Err(format!("image trop volumineuse ({} Mio, maximum {})", meta.len() >> 20, IMAGE_MAX_BYTES >> 20));
+            return Err(format!("image too large ({} MiB, maximum {})", meta.len() >> 20, IMAGE_MAX_BYTES >> 20));
         }
         use base64::Engine;
-        let bytes = std::fs::read(&abs).map_err(|e| format!("lecture de {} : {e}", abs.display()))?;
+        let bytes = std::fs::read(&abs).map_err(|e| format!("reading {}: {e}", abs.display()))?;
         a["data_base64"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
         a.as_object_mut().map(|m| m.remove("source"));
     }
@@ -512,9 +512,9 @@ fn image_size(mime: &str, data: &[u8]) -> Option<(f64, f64)> {
 fn add_image(ed: &mut Editor, a: &Value) -> Res<Value> {
     use base64::Engine;
     let b64 = s(a, "data_base64").map_err(|_| "missing \"source\" (image file) or \"data_base64\" parameter".to_owned())?;
-    let data = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| format!("base64 invalide : {e}"))?;
+    let data = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| format!("invalid base64: {e}"))?;
     if data.len() > IMAGE_MAX_BYTES {
-        return Err(format!("image trop volumineuse ({} Mio, maximum {})", data.len() >> 20, IMAGE_MAX_BYTES >> 20));
+        return Err(format!("image too large ({} MiB, maximum {})", data.len() >> 20, IMAGE_MAX_BYTES >> 20));
     }
     let mime = sniff_image(&data).ok_or("unrecognized image format (PNG, JPEG, GIF, WebP or SVG)")?;
     let (nw, nh) = image_size(mime, &data).ok_or("image illisible (dimensions introuvables)")?;
@@ -533,7 +533,7 @@ fn add_image(ed: &mut Editor, a: &Value) -> Res<Value> {
     }
     let aid = ed.doc.add_asset(mime, data);
     let at = origin(ed, a);
-    let img = ImageObj { frame: Frame::new(at.x, at.y, w, h), asset: aid, latex: None };
+    let img = ImageObj { frame: Frame::new(at.x, at.y, w, h), asset: aid, latex: None, mono: false };
     let id = ed.insert(Object::new(Kind::Image(img), Style { width: 0.0, fill: None, ..Style::default() }));
     Ok(json!({"id": id.0, "w": w.round(), "h": h.round(), "type": mime}))
 }
@@ -654,7 +654,7 @@ fn add_formula(ed: &mut Editor, a: &Value) -> Res<Value> {
     let aid = ed.doc.add_asset("image/svg+xml", f.svg.into_bytes());
     let at = origin(ed, a);
     let style = Style { stroke: ocolor(a, "color")?.unwrap_or(Color::Ink), width: 0.0, fill: None, ..Style::default() };
-    let img = ImageObj { frame: Frame::new(at.x, at.y, f.w, f.h), asset: aid, latex: Some(latex.to_owned()) };
+    let img = ImageObj { frame: Frame::new(at.x, at.y, f.w, f.h), asset: aid, latex: Some(latex.to_owned()), mono: false };
     let id = ed.insert(Object::new(Kind::Image(img), style));
     Ok(json!({"id": id.0, "w": f.w.round(), "h": f.h.round()}))
 }

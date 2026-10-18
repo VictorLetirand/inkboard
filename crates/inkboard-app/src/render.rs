@@ -228,7 +228,7 @@ impl Renderer<'_> {
             Kind::Box(b) => self.boxed(o, b, skip_text, op),
             Kind::Pen(p) => self.pen(o, p, op),
             Kind::Connector(c) => self.connector(o, c, op, get),
-            Kind::Image(i) => self.image(i, if i.latex.is_some() { col(o.style.stroke, self.dark, op) } else { Color32::from_white_alpha((op * 255.0) as u8) }),
+            Kind::Image(i) => self.image(i, if i.is_tinted() { col(o.style.stroke, self.dark, op) } else { Color32::from_white_alpha((op * 255.0) as u8) }),
             Kind::Table(t) => self.table(o, t, op),
         }
     }

@@ -25,10 +25,10 @@ pub fn render(latex: &str, size: f64) -> Result<Formula, FormatError> {
     let font = MathFont::stix_two_math().map_err(|e| FormatError::Unsupported(format!("math font: {e}")))?;
     let opts = SvgOptions { font_size_pt: Dim::from_i64(size.round().max(6.0) as i64), color: Color::rgb(255, 255, 255), display: true };
     let svg = latex_to_svg(latex, &font, &opts).map_err(|e| FormatError::Invalid(format!("LaTeX : {e}")))?;
-    let vb = svg.split("viewBox=\"").nth(1).and_then(|s| s.split('"').next()).ok_or_else(|| FormatError::Invalid("SVG sans viewBox".into()))?;
+    let vb = svg.split("viewBox=\"").nth(1).and_then(|s| s.split('"').next()).ok_or_else(|| FormatError::Invalid("SVG without viewBox".into()))?;
     let v: Vec<f64> = vb.split_whitespace().filter_map(|t| t.parse().ok()).collect();
     let (&w, &h) =
-        (v.get(2).ok_or_else(|| FormatError::Invalid("viewBox invalide".into()))?, v.get(3).ok_or_else(|| FormatError::Invalid("viewBox invalide".into()))?);
+        (v.get(2).ok_or_else(|| FormatError::Invalid("invalid viewBox".into()))?, v.get(3).ok_or_else(|| FormatError::Invalid("invalid viewBox".into()))?);
     if w <= 0.0 || h <= 0.0 {
         return Err(FormatError::Invalid("formula without dimensions".into()));
     }

@@ -105,13 +105,13 @@ impl Server {
         if uri == LIVE_URI {
             return match live::forward(self, "__status", &json!({})) {
                 Forward::Done(Ok(v)) => v.to_string(),
-                _ => "absent".into(),
+                _ => "missing".into(),
             };
         }
         uri_path(uri)
             .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or_else(|| "absent".into(), |d| d.as_nanos().to_string())
+            .map_or_else(|| "missing".into(), |d| d.as_nanos().to_string())
     }
 
     /// Starts the watcher thread that sends resource notifications on `out` (it stops when `out` is closed).

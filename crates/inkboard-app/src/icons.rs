@@ -66,6 +66,11 @@ const ICONS: &[(&str, &str)] = &[
     ("play", r#"<path d="M7 4l13 8-13 8z"/>"#),
     ("timer", r#"<circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l3 2M9.5 3h5"/>"#),
     ("code", r#"<path d="M9 8l-5 4 5 4M15 8l5 4-5 4"/>"#),
+    ("close", r#"<path d="M6 6l12 12M18 6L6 18"/>"#),
+    (
+        "library",
+        r#"<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><circle cx="17" cy="7" r="3.5"/><path d="M7 14l3.5 6.5h-7z"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>"#,
+    ),
     ("formula", r#"<path d="M18 5H7l6 7-6 7h11"/>"#),
     ("mermaid", r#"<path d="M4 5h6v5H4zM14 14h6v5h-6zM10 7.5h4a2 2 0 012 2V14"/>"#),
     ("keyboard", r#"<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>"#),

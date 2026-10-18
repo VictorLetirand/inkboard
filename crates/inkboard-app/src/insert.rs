@@ -58,6 +58,21 @@ impl App {
         });
     }
 
+    /// Inserts an icon of the library at the center of the view (longest side: 96 board units).
+    pub fn insert_icon(&mut self, lib: &inkboard_icons::Library, r: inkboard_icons::IconRef) {
+        let Some(svg) = lib.svg(r) else { return };
+        let (w, h) = inkboard_icons::svg_dimensions(&svg).unwrap_or((24.0, 24.0));
+        let k = 96.0 / w.max(h);
+        let at = self.view_center();
+        let aid = self.ed.doc.add_asset("image/svg+xml", svg.into_bytes());
+        let frame = Frame::new(at.x - w * k / 2.0, at.y - h * k / 2.0, w * k, h * k);
+        let mono = lib.sets[r.set].mono;
+        let id =
+            self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono }), Style { width: 0.0, fill: None, ..Style::default() }));
+        self.sel = vec![id];
+        self.tool = Tool::Select;
+    }
+
     /// Inserts a typeset formula (white SVG tinted by the stroke color, source kept) or, with `editing`, replaces that of an existing object
     /// keeping its center, angle and scale.
     pub fn insert_formula(&mut self, latex: &str, editing: Option<&Id>) -> Result<(), String> {
@@ -83,7 +98,7 @@ impl App {
         let at = self.view_center();
         let frame = Frame::new(at.x - f.w / 2.0, at.y - f.h / 2.0, f.w, f.h);
         let style = Style { stroke: self.style.stroke, width: 0.0, fill: None, ..Style::default() };
-        let id = self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: Some(src) }), style));
+        let id = self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: Some(src), mono: false }), style));
         self.sel = vec![id];
         self.tool = Tool::Select;
         Ok(())
