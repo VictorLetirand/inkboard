@@ -1,3 +1,5 @@
+<p align="center"><img src="crates/inkboard-app/assets/icon.svg" width="96" alt="Logo Inkboard"></p>
+
 # Inkboard
 
 🇬🇧 [English version](README.md) · 🇫🇷 Version française (ce fichier)

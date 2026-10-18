@@ -1,3 +1,5 @@
+<p align="center"><img src="crates/inkboard-app/assets/icon.svg" width="96" alt="Inkboard logo"></p>
+
 # Inkboard
 
 **A fast, free, fully offline infinite whiteboard — written in Rust.**

@@ -52,4 +52,4 @@ Sans signature, l'installation fonctionne, avec un avertissement : **SmartScreen
 
 ## Icône
 
-`crates/inkboard-app/assets/icon.png` (fenêtre) et `icon.ico` (exécutable, intégré par `build.rs` via `embed-resource` ; installeurs : voir `icons` dans `Packager.toml`).
+`crates/inkboard-app/assets/icon.svg` (source, dessin 180 × 180), `icon.png` (fenêtre) et `icon.ico` (exécutable, intégré par `build.rs` via `embed-resource` ; installeurs : voir `icons` dans `Packager.toml`).

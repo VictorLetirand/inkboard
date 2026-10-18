@@ -53,4 +53,4 @@ Without a signature, installation works, with a warning: **SmartScreen** on Wind
 
 ## Icon
 
-`crates/inkboard-app/assets/icon.png` (window) and `icon.ico` (executable, embedded by `build.rs` through `embed-resource`; installers: see `icons` in `Packager.toml`).
+`crates/inkboard-app/assets/icon.svg` (source, a 180 × 180 drawing), `icon.png` (window) and `icon.ico` (executable, embedded by `build.rs` through `embed-resource`; installers: see `icons` in `Packager.toml`).
