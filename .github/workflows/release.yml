@@ -90,3 +90,5 @@ jobs:
         with:
           files: installeurs/*
           generate_release_notes: true
+          # une étiquette comportant un tiret (v0.1.0-alpha.1) est publiée comme pré-version
+          prerelease: ${{ contains(github.ref_name, '-') }}
