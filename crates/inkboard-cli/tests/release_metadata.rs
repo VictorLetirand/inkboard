@@ -33,3 +33,53 @@ fn project_is_dual_licensed_mit_or_apache_with_both_texts_present() {
     assert!(combined.contains("MIT") && combined.contains("Apache License"), "the text shown by the installer contains both licenses");
     assert!(read("THIRD_PARTY_LICENSES.md").contains("STIX Two Math"), "the embedded font is credited");
 }
+
+/// Targets of the released binaries (same list as `scripts/gen_third_party.py`).
+const RELEASE_TARGETS: [&str; 4] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"];
+
+/// `(name, version)` of the third-party crates compiled into the binaries for one target (normal and build dependencies, no dev dependencies).
+fn embedded_crates(target: &str) -> std::collections::BTreeSet<(String, String)> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let out = std::process::Command::new(cargo)
+        .args(["tree", "--workspace", "-e", "normal,build", "--prefix", "none", "-f", "{p}", "--offline", "--locked", "--target", target])
+        .current_dir(root())
+        .output()
+        .expect("cargo tree can be started");
+    assert!(out.status.success(), "cargo tree --target {target} failed: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let (name, version, rest) = (it.next()?, it.next()?.strip_prefix('v')?, it.next());
+            // Workspace crates are shown with their path in parentheses; registry crates have none.
+            let local = rest.is_some_and(|r| r.starts_with('(') && !r.starts_with("(proc-macro") && !r.starts_with("(*"));
+            (!local).then(|| (name.to_owned(), version.to_owned()))
+        })
+        .collect()
+}
+
+#[test]
+fn third_party_licenses_list_every_crate_embedded_in_the_binaries() {
+    let doc = read("THIRD_PARTY_LICENSES.md");
+    let listed: std::collections::BTreeSet<(String, String)> = doc
+        .lines()
+        .filter(|l| l.starts_with("| "))
+        .filter_map(|l| {
+            let mut cells = l.split('|').map(str::trim).skip(1);
+            Some((cells.next()?.to_owned(), cells.next()?.to_owned()))
+        })
+        .collect();
+    let handles: Vec<_> = RELEASE_TARGETS.iter().map(|t| std::thread::spawn(move || embedded_crates(t))).collect();
+    let mut needed = std::collections::BTreeSet::new();
+    for h in handles {
+        needed.extend(h.join().expect("cargo tree thread"));
+    }
+    assert!(needed.len() > 100, "suspiciously few crates found: {}", needed.len());
+    let missing: Vec<String> = needed.difference(&listed).map(|(n, v)| format!("{n} {v}")).collect();
+    assert!(
+        missing.is_empty(),
+        "THIRD_PARTY_LICENSES.md does not list {} embedded crate(s): {}. Regenerate it with `python scripts/gen_third_party.py`.",
+        missing.len(),
+        missing.join(", ")
+    );
+}
