@@ -32,4 +32,4 @@ workspace = true
 
 [dev-dependencies]
 base64 = "0.23.1"
-egui_kittest = { version = "0.33.3", features = ["eframe"] }
+egui_kittest = { version = "0.33.3", features = ["eframe", "snapshot", "wgpu"] }

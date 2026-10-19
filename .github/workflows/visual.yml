@@ -1,0 +1,64 @@
+name: Visual
+
+# Visual regression tests of the application (crates/inkboard-app/src/tests_visual.rs): window captures and exports compared to the
+# reference images of crates/inkboard-app/tests/snapshots/. The references are those of Linux with software rendering, so
+# this is the only job that runs them (INKBOARD_SNAPSHOTS=1).
+#
+# First run / new references: run this workflow by hand (workflow_dispatch) with `update` ticked. It renders every image,
+# uploads them as the artifact `visual-references` (kept 3 days: a free account's artifact quota is quickly reached);
+# download it and add the PNG files to crates/inkboard-app/tests/snapshots/ in a commit.
+# A normal run fails when a reference is missing or different; the new and difference images are then uploaded (3 days).
+# The `push` trigger (branches: [main]) is added back once the Linux references are committed.
+on:
+  workflow_dispatch:
+    inputs:
+      update:
+        description: "Generate the reference images (UPDATE_SNAPSHOTS=force) and upload them as an artifact"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      INKBOARD_SNAPSHOTS: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      UPDATE_SNAPSHOTS: ${{ inputs.update && 'force' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux dependencies (virtual display, software OpenGL / Vulkan)
+        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-utils libgl1-mesa-dri libxkbcommon-x11-0 mesa-vulkan-drivers
+
+      - name: Visual regression tests
+        run: xvfb-run -a cargo test -p inkboard-app tests_visual
+
+      - name: Upload the new and difference images (failure only)
+        if: failure() && !inputs.update
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-differences
+          path: |
+            crates/inkboard-app/tests/snapshots/*.diff.png
+            crates/inkboard-app/tests/snapshots/*.new.png
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Upload the generated references (update run only)
+        if: inputs.update && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-references
+          path: |
+            crates/inkboard-app/tests/snapshots/*.png
+            !crates/inkboard-app/tests/snapshots/*.old.png
+            !crates/inkboard-app/tests/snapshots/*.new.png
+            !crates/inkboard-app/tests/snapshots/*.diff.png
+          if-no-files-found: error
+          retention-days: 3

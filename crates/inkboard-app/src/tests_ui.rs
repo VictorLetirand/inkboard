@@ -38,6 +38,11 @@ const ISOLATED: &str = "INKBOARD_TEST_DATA_DIR";
 /// Needed for what touches the application data folder (`%APPDATA%\Inkboard`): environment variables cannot be changed
 /// in-process (`unsafe`, and shared with the parallel tests). The child refuses to run if the folder is not the temporary one.
 fn isolated(test: &str, body: impl FnOnce(&Path)) {
+    isolated_in("tests_ui", test, body);
+}
+
+/// Same as [`isolated`] for a test of another module (`tests_visual`).
+pub(super) fn isolated_in(module: &str, test: &str, body: impl FnOnce(&Path)) {
     if let Some(dir) = std::env::var_os(ISOLATED).map(PathBuf::from) {
         let data = inkboard_mcp::live::data_dir();
         assert!(data.starts_with(&dir), "refusing to run: the data folder {data:?} is not inside {dir:?}");
@@ -46,7 +51,7 @@ fn isolated(test: &str, body: impl FnOnce(&Path)) {
     }
     let dir = temp_dir("data");
     let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([&format!("tests_ui::{test}"), "--exact", "--include-ignored", "--test-threads=1"])
+        .args([&format!("{module}::{test}"), "--exact", "--include-ignored", "--test-threads=1"])
         .env(ISOLATED, &dir)
         .env("APPDATA", &dir)
         .env("XDG_DATA_HOME", &dir)
