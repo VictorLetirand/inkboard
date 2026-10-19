@@ -509,6 +509,9 @@ impl Keymap {
                     _ => ignored += 1,
                 }
             }
+            if scs.is_empty() && !list.is_empty() {
+                continue; // every entry unreadable: the default shortcut stays (an explicit `[]` removes it)
+            }
             km.map.insert(a, scs);
         }
         Ok((km, ignored))
@@ -613,11 +616,24 @@ mod tests {
         .unwrap();
         assert_eq!(k2.action_for(Key::K, Modifiers::NONE), Some(Action::ToolRect));
         assert_eq!(k2.bindings(Action::Undo), &[Shortcut::ctrl(Key::W)]);
-        assert!(k2.bindings(Action::Save).is_empty(), "Escape is reserved: entry ignored");
+        assert!(k2.is_default(Action::Save), "Escape is reserved: entry ignored, the default stays");
         assert_eq!(ignored, 3);
         assert!(k2.is_default(Action::Open), "actions not mentioned: default values");
         assert!(Keymap::from_json("not json").is_err());
         assert!(Keymap::from_json("{}").is_err());
+    }
+
+    #[test]
+    fn unreadable_entries_keep_the_default_but_an_empty_list_removes_it() {
+        // every entry unreadable: default kept and the entries are reported
+        let (km, ignored) = Keymap::from_json(r#"{"version":1,"bindings":{"edit.undo":["Ctrl+Thing","Nope"]}}"#).unwrap();
+        assert!(km.is_default(Action::Undo));
+        assert!(!km.bindings(Action::Undo).is_empty());
+        assert_eq!(ignored, 2);
+        // valid empty list: the shortcut is removed on purpose, nothing reported
+        let (km, ignored) = Keymap::from_json(r#"{"version":1,"bindings":{"edit.undo":[]}}"#).unwrap();
+        assert!(km.bindings(Action::Undo).is_empty());
+        assert_eq!(ignored, 0);
     }
 
     #[test]
