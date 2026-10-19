@@ -19,5 +19,8 @@ svg2pdf = { version = "0.13", default-features = false, features = ["text", "ima
 thiserror = "2.0.21"
 inkboard-core = { path = "../inkboard-core" }
 
+[dev-dependencies]
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true
