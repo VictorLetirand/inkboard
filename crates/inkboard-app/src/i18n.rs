@@ -166,6 +166,15 @@ mod tests {
     }
 
     #[test]
+    fn title_card_save_states_are_translated_clearly() {
+        set_for_thread(Some(Lang::Fr));
+        assert_eq!(t("Unsaved"), "Non enregistré");
+        assert_ne!(t("Unsaved"), "Modifications…");
+        assert_eq!(t("Saved"), "Enregistré");
+        set_for_thread(None);
+    }
+
+    #[test]
     fn french_table_has_no_duplicate_keys() {
         let mut keys: Vec<&str> = crate::i18n_fr::FR.iter().map(|(k, _)| *k).collect();
         keys.sort_unstable();

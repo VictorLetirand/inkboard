@@ -262,7 +262,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Unlock", "Déverrouiller"),
     ("Unlock the selection", "Déverrouiller la sélection"),
     ("Unreadable image", "Image illisible"),
-    ("Unsaved", "Modifications…"),
+    ("Unsaved", "Non enregistré"),
     ("Variable pressure (several levels)", "Pression variable (plusieurs niveaux)"),
     ("View", "Affichage"),
     ("Visible", "Visible"),
