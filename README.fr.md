@@ -30,7 +30,7 @@ CLI de conversion (utile aux scripts et, plus tard, aux agents) :
 
 ```bash
 cargo run --release -p inkboard-cli -- convert schema.mmd schema.drawio      # Mermaid → draw.io
-cargo run --release -p inkboard-cli -- convert ancien.inkboard.json nouveau.png
+cargo run --release -p inkboard-cli -- convert ancien.inkboard nouveau.png
 cargo run --release -p inkboard-cli -- info schema.drawio
 ```
 
@@ -101,13 +101,15 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
 
 | Format | Ouvrir | Enregistrer / exporter |
 |---|---|---|
-| Natif `.inkboard.json` (v2, versionné) | ✔ | ✔ (enregistrement atomique + sauvegarde automatique) |
+| Natif `.inkboard` (v2, versionné ; JSON) | ✔ | ✔ (enregistrement atomique + sauvegarde automatique) |
 | Prototype web `.tableau.json` (v1) | ✔ | – |
 | draw.io `.drawio` (compressé ou non, multi-pages) | ✔ | ✔ |
 | Excalidraw `.excalidraw` | ✔ | ✔ |
 | JSON Canvas `.canvas` | ✔ | ✔ (formes avec texte et flèches entre formes) |
 | Mermaid (`flowchart`, `stateDiagram`, `sequenceDiagram`) | ✔ | – |
 | SVG, PNG, PDF | – | ✔ |
+
+Les tableaux s'enregistrent en `.inkboard` (du JSON ; l'installeur associe l'extension : un double-clic ouvre le fichier). Les fichiers `.inkboard.json` des versions précédentes et les `.tableau.json` du prototype restent lisibles ; un `.inkboard.json` rouvert est réenregistré sous son propre nom.
 
 ## Performances (mesurées)
 

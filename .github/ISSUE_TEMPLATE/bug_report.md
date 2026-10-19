@@ -21,4 +21,4 @@ labels: bug
 - Pen or touch device (if relevant):
 
 **Files / screenshots**
-Attach a screenshot, and the `.inkboard.json` board if you can share it.
+Attach a screenshot, and the `.inkboard` board if you can share it.

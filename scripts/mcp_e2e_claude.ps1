@@ -59,13 +59,13 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Write-Error 'clau
 $dir = Join-Path ([IO.Path]::GetTempPath()) ("inkboard-e2e-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $dir | Out-Null
 $dir = (Resolve-Path $dir).Path
-$board = Join-Path $dir 'e2e.inkboard.json'
+$board = Join-Path $dir 'e2e.inkboard'
 $proc = $null
 $ok = $false
 
 try {
     # empty board, created by the MCP server itself (one request, then EOF ends the server)
-    $init = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_board","arguments":{"path":"e2e.inkboard.json","name":"E2E"}}}'
+    $init = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_board","arguments":{"path":"e2e.inkboard","name":"E2E"}}}'
     $init | & $mcp --root $dir --no-live | Out-Null
     if (-not (Test-Path $board)) { throw "Could not create $board" }
 

@@ -7,7 +7,7 @@ Lets an agent (Claude, or any MCP client) **create and modify boards** by callin
 - **Live** (application open): the tool acts on the board **displayed** in the application. Each call is **one undo step** (Ctrl+Z),
   the created object is selected, `describe_board` reports the **user's selection** ("modify what I selected"), and nothing is saved
   to disk until the user (or `save_board`) decides so. If the board is empty, the view fits the content.
-- **File** (application closed, or `path` of another file): the tool reads and writes the `.inkboard.json` file; if the application has this file open,
+- **File** (application closed, or `path` of another file): the tool reads and writes the `.inkboard` file; if the application has this file open,
   it **reloads it on its own** within half a second (unless there are unsaved local changes: it warns and replaces nothing).
 
 In live mode, `path` is optional; if given and it designates the displayed file, the tool acts live; if it designates another file, it acts on that file.
@@ -22,8 +22,8 @@ claude mcp add inkboard -- /path/to/inkboard/target/release/inkboard-mcp --root 
 
 For another client the configuration is the same: command `inkboard-mcp`, arguments `--root <folder>`, stdio transport.
 **Always use `--root`**: without it the agent can read and write any file your account can reach.
-With `--root`, every path (relative or absolute) must be under that folder; `..` and links (including a link as the file itself) that lead outside it are refused. Only `.inkboard.json` files
-are modified; `export` writes only `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
+With `--root`, every path (relative or absolute) must be under that folder; `..` and links (including a link as the file itself) that lead outside it are refused. Only board files
+are modified (`.inkboard`; the older `.inkboard.json` and `.tableau.json` names are still read and written under their own name, and `create_board` makes `.inkboard` files); `export` writes only `.inkboard`, `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
 
 ## How live mode works
 
@@ -50,7 +50,7 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 | `update_object` / `delete_object` | Modify (text, position, size, colors) or delete. |
 | `auto_layout` | Rearranges a graph of connected shapes (TB, LR, BT, RL). |
 | `add_page` | New page. |
-| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard.json` according to the extension. |
+| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard` according to the extension. |
 
 Without `x`/`y`, a new object is placed below the existing content. The returned ids are used to connect or modify objects.
 Errors are returned as a tool result (`isError`) with an English message the agent can act on.
@@ -60,7 +60,7 @@ Errors are returned as a tool result (`isError`) with an English message the age
 The server declares the MCP `resources` capability (with `subscribe` and `listChanged`):
 
 - `inkboard://live`: the board displayed in the application (same content as `describe_board`, with the selection) — present only when the application is open;
-- `file:///…/*.inkboard.json`: the boards under the `--root` folder (3 folder levels, 300 files at most).
+- `file:///…/*.inkboard` (also `*.inkboard.json`, `*.tableau.json`): the boards under the `--root` folder (3 folder levels, 300 files at most).
 
 `resources/subscribe` on one of them: the server sends `notifications/resources/updated` when the content changes (file modified, or — for the displayed
 board — a user modification **or selection change**), and `notifications/resources/list_changed` when the list changes. Change is

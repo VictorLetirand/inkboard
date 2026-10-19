@@ -6,7 +6,7 @@ Permet à un agent (Claude, ou tout client MCP) de **créer et modifier des tabl
 - **Direct** (application ouverte) : l'outil agit sur le tableau **affiché**, dans l'application. Chaque appel est **une étape d'annulation** (Ctrl+Z),
   l'objet créé est sélectionné, `describe_board` indique la **sélection de l'utilisateur** (« modifie ce que j'ai sélectionné »), et rien n'est enregistré
   sur le disque tant que l'utilisateur (ou `save_board`) ne le décide pas. Si le tableau est vide, la vue s'ajuste.
-- **Fichier** (application fermée, ou `path` d'un autre fichier) : l'outil lit et écrit le fichier `.inkboard.json` ; si l'application a ce fichier ouvert,
+- **Fichier** (application fermée, ou `path` d'un autre fichier) : l'outil lit et écrit le fichier `.inkboard` ; si l'application a ce fichier ouvert,
   elle le **recharge toute seule** dans la demi-seconde (sauf modifications locales non enregistrées : elle prévient et ne remplace rien).
 
 En mode direct, `path` est facultatif ; s'il est donné et désigne le fichier affiché, l'outil agit en direct ; s'il désigne un autre fichier, il agit sur ce fichier.
@@ -21,8 +21,8 @@ claude mcp add inkboard -- E:\Dev\inkboard\target\release\inkboard-mcp.exe --roo
 
 Pour un autre client, la configuration est la même : commande `inkboard-mcp.exe`, arguments `--root <dossier>`, transport stdio.
 **Utilisez toujours `--root`** : sans lui l'agent peut lire et écrire n'importe quel fichier accessible à votre compte.
-Avec `--root`, tout chemin (relatif ou absolu) doit se trouver sous ce dossier ; `..` et les liens (y compris un lien servant de fichier) qui mènent hors de ce dossier sont refusés. Seuls les fichiers `.inkboard.json`
-sont modifiés ; `export` n'écrit que `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
+Avec `--root`, tout chemin (relatif ou absolu) doit se trouver sous ce dossier ; `..` et les liens (y compris un lien servant de fichier) qui mènent hors de ce dossier sont refusés. Seuls les fichiers de tableau
+sont modifiés (`.inkboard` ; les anciens noms `.inkboard.json` et `.tableau.json` sont toujours lus et écrits sous leur propre nom, et `create_board` crée des fichiers `.inkboard`) ; `export` n'écrit que `.inkboard`, `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
 
 ## Comment le mode direct fonctionne
 
@@ -49,7 +49,7 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 | `update_object` / `delete_object` | Modifier (texte, position, taille, couleurs) ou supprimer. |
 | `auto_layout` | Réorganise un graphe de formes reliées (TB, LR, BT, RL). |
 | `add_page` | Nouvelle page. |
-| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard.json` d'après l'extension. |
+| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard` d'après l'extension. |
 
 Sans `x`/`y`, un nouvel objet est placé sous le contenu existant. Les ids renvoyés servent à relier ou modifier les objets.
 Les erreurs sont renvoyées comme résultat d'outil (`isError`) avec un message en français que l'agent peut exploiter.
@@ -59,7 +59,7 @@ Les erreurs sont renvoyées comme résultat d'outil (`isError`) avec un message 
 Le serveur déclare les capacités MCP `resources` (avec `subscribe` et `listChanged`) :
 
 - `inkboard://live` : le tableau affiché dans l'application (même contenu que `describe_board`, avec la sélection) — présent seulement quand l'application est ouverte ;
-- `file:///…/*.inkboard.json` : les tableaux sous la racine `--root` (3 niveaux de dossiers, 300 fichiers au plus).
+- `file:///…/*.inkboard` (et `*.inkboard.json`, `*.tableau.json`) : les tableaux sous la racine `--root` (3 niveaux de dossiers, 300 fichiers au plus).
 
 `resources/subscribe` sur l'une d'elles : le serveur envoie `notifications/resources/updated` quand le contenu change (fichier modifié, ou — pour le tableau
 affiché — modification **ou changement de sélection** par l'utilisateur), et `notifications/resources/list_changed` quand la liste change. Le changement est

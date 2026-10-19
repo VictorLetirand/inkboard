@@ -79,7 +79,7 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 
   | Format | Open | Save / export |
   |---|---|---|
-  | Inkboard `.inkboard.json` | ✔ | ✔ (atomic save + autosave) |
+  | Inkboard `.inkboard` | ✔ | ✔ (atomic save + autosave) |
   | draw.io `.drawio` (compressed or not, multi-page) | ✔ | ✔ |
   | Excalidraw `.excalidraw` | ✔ | ✔ |
   | JSON Canvas `.canvas` (Obsidian) | ✔ | ✔ |
@@ -87,7 +87,8 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
   | SVG, PNG, PDF (vector) | – | ✔ |
 
 - **Customizable shortcuts** (41 commands, several shortcuts per command, conflict handling) and a **light/dark theme** that follows the board background.
-- **Command line:** `ink convert diagram.mmd diagram.drawio`, `ink convert board.inkboard.json board.png`, `ink info file.drawio`.
+- **File extension:** boards are saved as `.inkboard` (a JSON file; the installer makes a double-click open it). Boards saved by earlier builds as `.inkboard.json` (and the prototype's `.tableau.json`) still open, and are saved back under their own name.
+- **Command line:** `ink convert diagram.mmd diagram.drawio`, `ink convert board.inkboard board.png`, `ink info file.drawio`.
 
 | Main menu | Dark theme |
 |---|---|
@@ -99,7 +100,7 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 
 `inkboard-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server: an agent can create shapes, bound connectors, tables, code blocks, formulas, images and whole Mermaid diagrams, lay them out automatically, and export.
 With Inkboard **open**, the agent edits the board you are looking at — each call is one undo step, it can see what you have selected, and it can ask what *you* changed since it last looked.
-With Inkboard **closed**, it edits the `.inkboard.json` file and the app reloads it automatically.
+With Inkboard **closed**, it edits the `.inkboard` file and the app reloads it automatically.
 
 With [Claude Code](https://claude.com/claude-code):
 
@@ -131,7 +132,7 @@ Measured on the release build with a synthetic board (60 % labelled shapes, 25 %
 | 20 000 | 3.3 ms | 0.3 ms |
 | 100 000 | 4.5 ms | 0.3 ms |
 
-Reproduce with `ink bench 100000 big.inkboard.json && inkboard --bench big.inkboard.json`.
+Reproduce with `ink bench 100000 big.inkboard && inkboard --bench big.inkboard`.
 
 ## Project layout
 
