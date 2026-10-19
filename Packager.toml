@@ -22,6 +22,17 @@ resources = [
   { src = "THIRD_PARTY_LICENSES.md", target = "THIRD_PARTY_LICENSES.md" },
 ]
 
+# Native board files: double-clicking a `.inkboard` file runs `inkboard <file>`. Only `extensions`, `mime-type` (Linux), `description`
+# (Windows), `name` (macOS CFBundleTypeName; also the Windows ProgID) and `role` exist in cargo-packager 0.11.8: there is no per-association
+# icon key (Windows uses the program's icon; macOS and Linux use the application icon). The older `.inkboard.json` / `.tableau.json`
+# names are deliberately not associated (".json" belongs to other programs); they still open from the application.
+[[file-associations]]
+extensions = ["inkboard"]
+mime-type = "application/x-inkboard"
+description = "Inkboard board"
+name = "Inkboard board"
+role = "editor"
+
 [[binaries]]
 path = "inkboard"
 main = true
@@ -47,6 +58,8 @@ appdata-paths = ["$APPDATA/$PRODUCTNAME"]
 # Linux (.deb): libraries loaded at runtime by egui/winit (untested: no Linux machine was available during development).
 [deb]
 depends = ["libgl1", "libxkbcommon0"]
+# declares the application/x-inkboard type (the desktop file only lists it): maps *.inkboard to it
+files = { "packaging/linux/inkboard.xml" = "usr/share/mime/packages/inkboard.xml" }
 
 # macOS (untested: no Mac was available during development).
 [macos]

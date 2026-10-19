@@ -12,6 +12,8 @@ InstallerSwitches:
   Silent: /S
   SilentWithProgress: /S
 UpgradeBehavior: install
+FileExtensions:
+  - inkboard
 ReleaseDate: "{{DATE}}"
 Installers:
   - Architecture: x64

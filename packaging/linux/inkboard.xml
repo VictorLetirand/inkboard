@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Declares the .inkboard file type to the desktop (shared-mime-info); installed by the .deb, see Packager.toml. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-inkboard">
+    <comment>Inkboard board</comment>
+    <comment xml:lang="fr">Tableau Inkboard</comment>
+    <glob pattern="*.inkboard"/>
+  </mime-type>
+</mime-info>
