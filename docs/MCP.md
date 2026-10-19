@@ -22,7 +22,7 @@ claude mcp add inkboard -- /path/to/inkboard/target/release/inkboard-mcp --root 
 
 For another client the configuration is the same: command `inkboard-mcp`, arguments `--root <folder>`, stdio transport.
 **Always use `--root`**: without it the agent can read and write any file your account can reach.
-With `--root`, every path (relative or absolute) must be under that folder; `..` and links are neutralized. Only `.inkboard.json` files
+With `--root`, every path (relative or absolute) must be under that folder; `..` and links (including a link as the file itself) that lead outside it are refused. Only `.inkboard.json` files
 are modified; `export` writes only `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
 
 ## How live mode works

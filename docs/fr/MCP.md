@@ -21,7 +21,7 @@ claude mcp add inkboard -- E:\Dev\inkboard\target\release\inkboard-mcp.exe --roo
 
 Pour un autre client, la configuration est la même : commande `inkboard-mcp.exe`, arguments `--root <dossier>`, transport stdio.
 **Utilisez toujours `--root`** : sans lui l'agent peut lire et écrire n'importe quel fichier accessible à votre compte.
-Avec `--root`, tout chemin (relatif ou absolu) doit se trouver sous ce dossier ; `..` et les liens sont neutralisés. Seuls les fichiers `.inkboard.json`
+Avec `--root`, tout chemin (relatif ou absolu) doit se trouver sous ce dossier ; `..` et les liens (y compris un lien servant de fichier) qui mènent hors de ce dossier sont refusés. Seuls les fichiers `.inkboard.json`
 sont modifiés ; `export` n'écrit que `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
 
 ## Comment le mode direct fonctionne

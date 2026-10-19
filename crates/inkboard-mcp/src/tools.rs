@@ -109,7 +109,15 @@ fn resolve(srv: &Server, p: &str) -> Res<PathBuf> {
     if !parent.starts_with(&root) {
         return Err(format!("path outside the allowed root ({})", root.display()));
     }
-    Ok(parent.join(abs.file_name().ok_or("invalid path")?))
+    let full = parent.join(abs.file_name().ok_or("invalid path")?);
+    // an existing final entry may itself be a link: resolve it too (a dangling link cannot be checked, so it is refused)
+    if std::fs::symlink_metadata(&full).is_ok() {
+        let real = full.canonicalize().map_err(|e| format!("file not accessible ({}): {e}", full.display()))?;
+        if !real.starts_with(&root) {
+            return Err(format!("path outside the allowed root ({})", root.display()));
+        }
+    }
+    Ok(full)
 }
 
 /// Name of a native file: `.inkboard.json` (or the legacy `.tableau.json`).
