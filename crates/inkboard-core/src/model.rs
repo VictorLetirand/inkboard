@@ -177,7 +177,8 @@ impl BoxObj {
             BoxGeom::Text => Rect::new(-hw + 3.0, -hh, (w - 6.0).max(1.0), h),
             BoxGeom::Sticky => Rect::new(-hw + 14.0, -hh + 14.0, (w - 28.0).max(1.0), (h - 28.0).max(1.0)),
             BoxGeom::Ellipse => Rect::new(-hw * 0.7, -hh * 0.7, w * 0.7, h * 0.7),
-            BoxGeom::Diamond => Rect::new(-hw * 0.5, -hh * 0.5, w * 0.5, h * 0.5),
+            // inscribed rectangle (0.6 + 0.4 = 1): wide rather than tall, so that a word is not split
+            BoxGeom::Diamond => Rect::new(-hw * 0.6, -hh * 0.4, w * 0.6, h * 0.4),
             BoxGeom::Triangle => Rect::new(-hw * 0.5, -hh * 0.1, w * 0.5, h * 0.5),
             BoxGeom::Rect => Rect::new(-hw + 8.0, -hh + 8.0, (w - 16.0).max(1.0), (h - 16.0).max(1.0)),
         }
@@ -200,7 +201,8 @@ impl BoxObj {
             if lay.height > avail {
                 let ratio = match self.geom {
                     BoxGeom::Ellipse => 0.7,
-                    BoxGeom::Diamond | BoxGeom::Triangle => 0.5,
+                    BoxGeom::Diamond => 0.4,
+                    BoxGeom::Triangle => 0.5,
                     _ => 1.0,
                 };
                 self.frame.h += (lay.height - avail) / ratio;
@@ -714,6 +716,24 @@ mod tests {
         assert!(img(false, Some("x")).is_tinted(), "formulas are tinted too");
         assert_eq!(&*img(false, None).export_bytes("image/svg+xml", svg, (1, 2, 3)), svg.as_slice(), "colored icons keep their colors");
         assert_eq!(&*img(true, None).export_bytes("image/png", svg, (1, 2, 3)), svg.as_slice(), "only SVG is recolored");
+    }
+
+    #[test]
+    fn diamond_label_is_not_split_mid_word() {
+        /// 0.6 em per character: "Diamond" is 84 px wide at 20 px, wider than half of 160 px.
+        struct Wide;
+        impl Measurer for Wide {
+            fn width(&self, s: &str, _: FontFamily, size: f64, _: bool) -> f64 {
+                s.chars().count() as f64 * size * 0.6
+            }
+        }
+        let b = BoxObj { geom: BoxGeom::Diamond, frame: Frame::new(0.0, 0.0, 160.0, 110.0), label: Label::new("Diamond", 20.0, Align::Center), lang: None };
+        assert_eq!(b.layout(&Wide).lines.len(), 1, "a short word must stay on one line");
+        let r = b.label_rect();
+        let (hw, hh) = (80.0, 55.0);
+        for (x, y) in [(r.x, r.y), (r.x + r.w, r.y), (r.x, r.y + r.h), (r.x + r.w, r.y + r.h)] {
+            assert!(x.abs() / hw + y.abs() / hh <= 1.0 + 1e-9, "the text area stays inside the diamond");
+        }
     }
 
     #[test]
