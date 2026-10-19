@@ -27,6 +27,31 @@ pub struct Report {
     pub approximated: usize,
     /// Skipped elements (unsupported or invalid).
     pub skipped: usize,
+    /// draw.io built-in icons (`image=img/lib/...`) that are not in the icon library: kept as a rectangle with their label.
+    pub placeholders: usize,
+}
+
+/// Finds the icon of a draw.io built-in image path (`img/lib/azure2/compute/Virtual_Machine.svg`) in an icon library.
+pub trait IconResolver {
+    /// `(svg, mono)` of the icon, or `None` when the library has no such icon.
+    fn resolve_drawio_image(&self, path: &str) -> Option<(String, bool)>;
+}
+
+/// No icon library: every built-in icon becomes a placeholder.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoIcons;
+
+impl IconResolver for NoIcons {
+    fn resolve_drawio_image(&self, _: &str) -> Option<(String, bool)> {
+        None
+    }
+}
+
+impl IconResolver for inkboard_icons::Library {
+    fn resolve_drawio_image(&self, path: &str) -> Option<(String, bool)> {
+        let r = self.find_drawio_image(path)?;
+        Some((self.svg(r)?, self.sets[r.set].mono))
+    }
 }
 
 impl Report {
@@ -37,6 +62,9 @@ impl Report {
         }
         if self.skipped > 0 {
             p.push(format!("{} element(s) skipped", self.skipped));
+        }
+        if self.placeholders > 0 {
+            p.push(format!("{} built-in icon(s) replaced by a placeholder", self.placeholders));
         }
         p.join(", ")
     }

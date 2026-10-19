@@ -153,6 +153,28 @@ impl Library {
         String::from_utf8(chunk.raw[a..b].to_vec()).ok()
     }
 
+    /// Icon that a draw.io built-in image path designates (`img/lib/azure2/compute/Virtual_Machine.svg`, also with a URL prefix).
+    ///
+    /// The `img/lib/<dir>/…/<file>.svg` files of some draw.io folders are sets named `drawio-img-<dir>`; an icon is named after its file
+    /// (`_` → space), followed by ` (<parent folder>)` when an earlier file of the set already had that name. Anything else (other folder,
+    /// raster file, file too large to be packed) gives `None`.
+    pub fn find_drawio_image(&self, path: &str) -> Option<IconRef> {
+        let rest = &path[path.find("img/lib/")? + "img/lib/".len()..];
+        let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+        let parts: Vec<&str> = rest.split('/').collect();
+        let (dir, file, parent) = (*parts.first()?, *parts.last()?, parts[parts.len().saturating_sub(2)]);
+        let stem = file.strip_suffix(".svg")?;
+        if parts.len() < 2 || stem.is_empty() {
+            return None;
+        }
+        let set = self.sets.iter().position(|s| s.id.strip_prefix("drawio-img-") == Some(dir))?;
+        let name = stem.replace('_', " ");
+        let names = &self.sets[set].names;
+        let dup = format!("{name} ({parent})");
+        let icon = names.iter().position(|n| *n == dup).or_else(|| names.iter().position(|n| *n == name))?;
+        Some(IconRef { set, icon })
+    }
+
     /// Icons whose name (or set title / group) contains every word of `query` (case-insensitive); name matches first.
     pub fn search(&self, query: &str, limit: usize) -> Vec<IconRef> {
         let words: Vec<String> = query.to_lowercase().split_whitespace().map(str::to_owned).collect();
@@ -263,6 +285,52 @@ mod tests {
         assert!(lib.sources.len() >= 5, "{:?}", lib.sources);
         assert!(lib.sources.iter().all(|s| s.commit.len() == 40 && s.repo.starts_with("https://github.com/")));
         assert!(lib.sources_summary().contains("draw.io"));
+    }
+
+    #[test]
+    fn finds_the_icon_of_a_drawio_built_in_image_path() {
+        let svgs = ["<svg id='1'/>", "<svg id='2'/>", "<svg id='3'/>"];
+        let mut raw = Vec::new();
+        for s in svgs {
+            raw.extend((s.len() as u32).to_le_bytes());
+            raw.extend(s.as_bytes());
+        }
+        let c = miniz_oxide::deflate::compress_to_vec(&raw, 6);
+        let index = serde_json::json!({"version": 1, "sets": [
+            {"id": "drawio-img-azure2", "group": "g", "title": "t", "mono": false, "license": "x", "offset": 0, "size": c.len(),
+             "names": ["Virtual Machine", "Virtual Machine (compute)", "Key"]},
+        ]});
+        let idx = miniz_oxide::deflate::compress_to_vec(index.to_string().as_bytes(), 6);
+        let mut out = MAGIC.to_vec();
+        out.extend((idx.len() as u32).to_le_bytes());
+        out.extend(idx);
+        out.extend(c);
+        let lib = Library::open(Box::leak(out.into_boxed_slice())).unwrap();
+        let find = |p: &str| lib.find_drawio_image(p).map(|r| r.icon);
+        assert_eq!(find("img/lib/azure2/compute/Virtual_Machine.svg"), Some(1), "same name as an earlier file: suffixed with the folder");
+        assert_eq!(find("img/lib/azure2/networking/Virtual_Machine.svg"), Some(0), "first file of that name: plain name");
+        assert_eq!(find("https://app.diagrams.net/img/lib/azure2/security/Key.svg?x=1"), Some(2));
+        assert_eq!(find("img/lib/azure2/Key.svg"), Some(2), "file directly in the folder");
+        for none in [
+            "img/lib/azure2/compute/Missing.svg",
+            "img/lib/azure2/compute/Key.png",
+            "img/lib/other/Key.svg",
+            "img/lib/azure2",
+            "img/lib/azure2/",
+            "Key.svg",
+            "",
+        ] {
+            assert_eq!(find(none), None, "{none}");
+        }
+    }
+
+    #[test]
+    fn the_real_pack_resolves_azure_icons_of_the_drawio_library() {
+        let lib = Library::open(include_bytes!("../../inkboard-app/assets/icons.bin")).unwrap();
+        for p in ["img/lib/azure2/compute/Virtual_Machine.svg", "img/lib/azure2/networking/Virtual_Networks.svg"] {
+            let r = lib.find_drawio_image(p).unwrap_or_else(|| panic!("{p}"));
+            assert!(lib.svg(r).is_some_and(|s| s.starts_with("<svg")), "{p}");
+        }
     }
 
     #[test]

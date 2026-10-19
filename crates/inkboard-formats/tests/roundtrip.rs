@@ -255,3 +255,30 @@ fn excalidraw_keeps_a_connector_bound_to_a_table() {
     let d = link_to_table();
     assert_link_survives(&import_any("l.excalidraw", &excalidraw::export(&d, &d.pages[0], &ApproxMeasurer), &ApproxMeasurer).unwrap());
 }
+
+/* ----------------------------------------------------- icon of the library */
+
+/// An icon dropped from the icon library (SVG image object, as `Editor` inserts it), exported to draw.io and imported back.
+#[test]
+fn drawio_keeps_an_icon_of_the_library() {
+    let lib = inkboard_icons::Library::open(include_bytes!("../../inkboard-app/assets/icons.bin")).expect("icon pack");
+    for (query, mono) in [("Virtual Machine", false), ("arrow left", true)] {
+        let found = lib.search(query, 200).into_iter().find(|r| lib.sets[r.set].mono == mono).unwrap_or_else(|| panic!("{query}"));
+        let svg = lib.svg(found).expect("svg");
+        let mut d = Document::new("Icon");
+        let aid = d.add_asset("image/svg+xml", svg.clone().into_bytes());
+        let frame = Frame::new(120.0, 80.0, 64.0, 64.0);
+        d.pages[0].objects.push(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono }), Style { width: 0.0, ..Default::default() }));
+        let imp = import_any("i.drawio", &drawio::export(&d, &ApproxMeasurer), &ApproxMeasurer).unwrap();
+        assert_eq!((imp.report.skipped, imp.report.placeholders), (0, 0), "{query}");
+        let [Kind::Image(img)] = &imp.doc.pages[0].objects.iter().map(|o| o.kind.clone()).collect::<Vec<_>>()[..] else { panic!("{query}: one image") };
+        let a = &imp.doc.assets[&img.asset];
+        assert_eq!(a.mime, "image/svg+xml", "{query}");
+        assert!(std::str::from_utf8(&a.data).unwrap().starts_with("<svg"), "{query}");
+        if !mono {
+            assert_eq!(a.data.as_slice(), svg.as_bytes(), "a colored icon comes back unchanged");
+        }
+        let f = img.frame.aabb();
+        assert!((f.w - 64.0).abs() < TOL && (f.h - 64.0).abs() < TOL, "{query}: {f:?} (the export moves the content to the origin)");
+    }
+}

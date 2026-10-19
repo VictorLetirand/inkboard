@@ -5,7 +5,7 @@
 //! Import: compressed or not, several pages, shapes, rich text, embedded images,
 //! edges (bound or free, waypoints, arrows, labels).
 
-use crate::common::{FormatError, Imported, Report, data_url, font_family, parse_color, parse_data_url, round2};
+use crate::common::{FormatError, IconResolver, Imported, NoIcons, Report, data_url, font_family, parse_color, parse_data_url, round2};
 use crate::xml::{self, Node, esc};
 use flate2::read::DeflateDecoder;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
@@ -486,6 +486,7 @@ fn inflate(raw: &str) -> Result<String, FormatError> {
 
 struct Builder<'a> {
     m: &'a dyn Measurer,
+    icons: &'a dyn IconResolver,
     assets: std::collections::BTreeMap<AssetId, Asset>,
     report: Report,
 }
@@ -577,6 +578,40 @@ impl Builder<'_> {
         page
     }
 
+    /// Text of an image shape, placed below it (draw.io default), above it or over it according to `verticalLabelPosition`.
+    fn image_label(&mut self, c: &Cell, r: Rect, out: &mut Vec<Object>) {
+        let label = label_for(c, Align::Center);
+        if label.text.is_empty() {
+            return;
+        }
+        let mut tb = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), style_for(c, true), label);
+        if let Kind::Box(b) = &mut tb.kind {
+            b.fit(self.m);
+            b.frame.x = r.x + r.w / 2.0 - b.frame.w / 2.0;
+            b.frame.y = match c.style.get("verticalLabelPosition").map(String::as_str) {
+                Some("top") => r.y - b.frame.h - 2.0,
+                Some("middle") => r.y + r.h / 2.0 - b.frame.h / 2.0,
+                _ => r.bottom() + 2.0,
+            };
+        }
+        out.push(tb);
+    }
+
+    /// A built-in icon that is not in the icon library: a rectangle with its label (never lost), counted in `Report::placeholders`.
+    fn placeholder(&mut self, c: &Cell, r: Rect, angle: f64, out: &mut Vec<Object>) -> Id {
+        self.report.placeholders += 1;
+        let mut frame = rect_of(&r);
+        frame.angle = angle;
+        let mut style = style_for(c, false);
+        style.fill = style.fill.or(Some(Color::Rgb(0xdd, 0xdd, 0xdd)));
+        style.stroke = Color::Ink;
+        style.width = 2.0;
+        let obj = Object::new_box(BoxGeom::Rect, frame, style, label_for(c, Align::Center));
+        let id = obj.id.clone();
+        out.push(obj);
+        id
+    }
+
     /// Creates the object of a vertex; returns its id when it can receive connectors.
     fn vertex(&mut self, c: &Cell, r: Rect, out: &mut Vec<Object>) -> Option<Id> {
         let s = &c.style;
@@ -584,20 +619,31 @@ impl Builder<'_> {
         let angle = s.get("rotation").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).to_radians();
         // images
         if s.get("shape").is_some_and(|v| v == "image") || (s.contains_key("image") && !c.names.iter().any(|n| n == "text")) {
-            let Some((mime, data)) = s.get("image").and_then(|u| parse_data_url(&format!("data:{}", u.trim_start_matches("data:")))) else {
-                self.report.skipped += 1;
-                return None;
+            let url = s.get("image").map_or("", String::as_str);
+            let embedded = parse_data_url(&format!("data:{}", url.trim_start_matches("data:")));
+            // built-in draw.io icon: the library's one, else a rectangle; the label of an image is kept as a text next to it
+            let (mime, data, mono) = match embedded {
+                Some((mime, data)) => (mime, data, false),
+                None if url.contains("img/lib/") => match self.icons.resolve_drawio_image(url) {
+                    Some((svg, mono)) => ("image/svg+xml".to_owned(), svg.into_bytes(), mono),
+                    None => return Some(self.placeholder(c, r, angle, out)),
+                },
+                None => {
+                    self.report.skipped += 1;
+                    return None;
+                }
             };
             let aid = Id::new();
             self.assets.insert(aid.clone(), Asset { mime, data: Arc::new(data) });
             let mut f = rect_of(&r);
             f.angle = angle;
             let obj = Object::new(
-                Kind::Image(ImageObj { frame: f, asset: aid, latex: None, mono: false }),
+                Kind::Image(ImageObj { frame: f, asset: aid, latex: None, mono }),
                 Style { width: 0.0, opacity: style_for(c, true).opacity, ..Style::default() },
             );
             let id = obj.id.clone();
             out.push(obj);
+            self.image_label(c, r, out);
             return Some(id);
         }
         // free text
@@ -743,6 +789,11 @@ impl Builder<'_> {
 
 /// Imports a draw.io file (compressed or not, one or several pages).
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
+    import_with_icons(content, name, m, &NoIcons)
+}
+
+/// Like [`import`], resolving the built-in icons (`image=img/lib/...`) in `icons`.
+pub fn import_with_icons(content: &str, name: &str, m: &dyn Measurer, icons: &dyn IconResolver) -> Result<Imported, FormatError> {
     let root = xml::parse(content).map_err(FormatError::Invalid)?;
     let mut diagrams: Vec<&Node> = Vec::new();
     if root.name == "mxGraphModel" {
@@ -753,7 +804,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
             return Err(FormatError::Invalid("no draw.io diagram".into()));
         }
     }
-    let mut b = Builder { m, assets: Default::default(), report: Report::default() };
+    let mut b = Builder { m, icons, assets: Default::default(), report: Report::default() };
     let mut doc = Document::new(name);
     doc.pages.clear();
     for (i, d) in diagrams.iter().enumerate() {
@@ -942,5 +993,66 @@ mod tests {
         assert_eq!(r.0.iter().find(|s| s.text == "green").unwrap().style.color, Some(Color::Rgb(0, 255, 0)));
         assert!(html_to_rich("<b>x</b>").0[0].style.bold);
         assert!(html_to_rich("").is_empty());
+    }
+
+    /// One icon only: `img/lib/azure2/compute/Virtual_Machine.svg`.
+    struct OneIcon;
+
+    impl IconResolver for OneIcon {
+        fn resolve_drawio_image(&self, path: &str) -> Option<(String, bool)> {
+            (path == "img/lib/azure2/compute/Virtual_Machine.svg").then(|| ("<svg viewBox=\"0 0 10 10\"/>".to_owned(), false))
+        }
+    }
+
+    const BUILT_IN: &str = r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+ <mxCell id="vm" value="SEA_VM_1" style="aspect=fixed;html=1;align=center;image;fontSize=12;image=img/lib/azure2/compute/Virtual_Machine.svg;fontColor=#336699;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="68" height="68" as="geometry"/></mxCell>
+ <mxCell id="no" value="Unknown" style="aspect=fixed;html=1;image;image=img/lib/azure2/compute/Nope.svg;" vertex="1" parent="1"><mxGeometry x="300" y="100" width="60" height="40" as="geometry"/></mxCell>
+ <mxCell id="e" style="html=1;" edge="1" parent="1" source="vm" target="no"><mxGeometry relative="1" as="geometry"/></mxCell>
+ </root></mxGraphModel>"##;
+
+    fn texts(p: &Page) -> Vec<String> {
+        p.objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some(b.label.text.to_plain()) } else { None }).collect()
+    }
+
+    #[test]
+    fn a_built_in_icon_found_in_the_library_becomes_an_image_with_its_label_below() {
+        let r = import_with_icons(BUILT_IN, "x", &ApproxMeasurer, &OneIcon).unwrap();
+        let p = &r.doc.pages[0];
+        let img = p.objects.iter().find_map(|o| if let Kind::Image(i) = &o.kind { Some(i) } else { None }).expect("image object");
+        assert_eq!(img.frame.aabb(), Rect::new(100.0, 100.0, 68.0, 68.0));
+        let asset = &r.doc.assets[&img.asset];
+        assert_eq!(asset.mime, "image/svg+xml");
+        assert!(asset.data.starts_with(b"<svg"));
+        let label =
+            p.objects.iter().find_map(|o| if let Kind::Box(b) = &o.kind { (b.label.text.to_plain() == "SEA_VM_1").then_some((b, &o.style)) } else { None });
+        let (label, style) = label.expect("label kept");
+        assert!(label.frame.y >= 168.0, "under the icon");
+        assert_eq!(style.stroke, parse_color("#336699").unwrap(), "font color");
+        assert!(p.objects.iter().any(|o| matches!(&o.kind, Kind::Connector(c) if c.targets().count() == 2)), "connectors stay bound");
+        assert_eq!((r.report.skipped, r.report.placeholders), (0, 1), "only the unknown icon is a placeholder");
+    }
+
+    #[test]
+    fn a_built_in_icon_missing_from_the_library_becomes_a_rectangle_with_its_label() {
+        let r = import(BUILT_IN, "x", &ApproxMeasurer).unwrap();
+        let p = &r.doc.pages[0];
+        assert!(!p.objects.iter().any(|o| matches!(o.kind, Kind::Image(_))));
+        let mut got = texts(p);
+        got.sort();
+        assert_eq!(got, ["SEA_VM_1", "Unknown"], "no label lost");
+        let rect = p.objects.iter().find_map(|o| if let Kind::Box(b) = &o.kind { (b.label.text.to_plain() == "Unknown").then_some(b) } else { None }).unwrap();
+        assert_eq!((rect.geom, rect.frame.aabb()), (BoxGeom::Rect, Rect::new(300.0, 100.0, 60.0, 40.0)));
+        assert!(p.objects.iter().any(|o| matches!(&o.kind, Kind::Connector(c) if c.targets().count() == 2)), "connectors stay bound");
+        assert_eq!((r.report.skipped, r.report.placeholders), (0, 2));
+        assert!(r.report.summary().contains("2 built-in icon(s) replaced by a placeholder"));
+    }
+
+    #[test]
+    fn an_image_without_a_usable_source_is_still_skipped() {
+        let src = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+ <mxCell id="a" value="Web" style="shape=image;image=https://example.com/a.png;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="40" height="40" as="geometry"/></mxCell>
+ </root></mxGraphModel>"#;
+        let r = import(src, "x", &ApproxMeasurer).unwrap();
+        assert_eq!((r.report.skipped, r.report.placeholders), (1, 0));
     }
 }

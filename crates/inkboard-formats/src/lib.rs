@@ -18,7 +18,7 @@ pub mod mermaid;
 pub mod raster;
 mod xml;
 
-pub use common::{FormatError, Imported, Report};
+pub use common::{FormatError, IconResolver, Imported, NoIcons, Report};
 
 use inkboard_core::text::Measurer;
 
@@ -69,6 +69,11 @@ pub fn detect(file_name: &str, content: &str) -> Option<Format> {
 
 /// Opens content in any recognized format.
 pub fn import_any(file_name: &str, content: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
+    import_any_with_icons(file_name, content, m, &NoIcons)
+}
+
+/// Like [`import_any`], resolving the built-in icons of draw.io (`image=img/lib/...`) in `icons` (e.g. an `inkboard_icons::Library`).
+pub fn import_any_with_icons(file_name: &str, content: &str, m: &dyn Measurer, icons: &dyn IconResolver) -> Result<Imported, FormatError> {
     let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
     let base = base.split('.').next().unwrap_or(base);
     match detect(file_name, content).ok_or(FormatError::Unknown)? {
@@ -76,7 +81,7 @@ pub fn import_any(file_name: &str, content: &str, m: &dyn Measurer) -> Result<Im
             Ok(Imported { doc: inkboard_core::serial::from_json(content).map_err(|e| FormatError::Invalid(e.to_string()))?, report: Report::default() })
         }
         Format::Legacy => legacy::import(content),
-        Format::DrawIo => drawio::import(content, base, m),
+        Format::DrawIo => drawio::import_with_icons(content, base, m, icons),
         Format::Excalidraw => excalidraw::import(content, base, m),
         Format::JsonCanvas => jsoncanvas::import(content, base, m),
         Format::Mermaid => mermaid::import(content, base, m),

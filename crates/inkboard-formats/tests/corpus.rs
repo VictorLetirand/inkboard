@@ -4,7 +4,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use flate2::read::DeflateDecoder;
 use inkboard_core::{ApproxMeasurer, Kind};
-use inkboard_formats::{FormatError, Imported, import_any};
+use inkboard_formats::{FormatError, Imported, import_any, import_any_with_icons};
 use regex::Regex;
 use serde_json::Value;
 use std::io::Read;
@@ -31,6 +31,12 @@ fn files(format: &str) -> Vec<(String, String)> {
 /// `import_any`, which must never panic whatever the file.
 fn import(name: &str, content: &str) -> Result<Imported, FormatError> {
     catch_unwind(AssertUnwindSafe(|| import_any(name, content, &ApproxMeasurer))).unwrap_or_else(|_| panic!("import_any panicked on {name}"))
+}
+
+/// Same as [`import`], with the icon library of the application (resolves the built-in icons of draw.io files).
+fn import_with_library(name: &str, content: &str) -> Result<Imported, FormatError> {
+    let lib = inkboard_icons::Library::open(include_bytes!("../../inkboard-app/assets/icons.bin")).expect("icon pack");
+    catch_unwind(AssertUnwindSafe(|| import_any_with_icons(name, content, &ApproxMeasurer, &lib))).unwrap_or_else(|_| panic!("import panicked on {name}"))
 }
 
 fn blank(s: &str) -> bool {
@@ -69,8 +75,8 @@ fn assert_no_problem(bad: Vec<String>) {
     assert!(bad.is_empty(), "{} problem(s):\n{}", bad.len(), bad.join("\n"));
 }
 
-/// The import must give back exactly the labels of the source. A label may be missing only when the
-/// import reports it: each skipped element can explain one missing label (`Report::skipped`).
+/// The import must give back at most the labels of the source, and miss one only when the import reports it:
+/// each skipped element can explain one missing label (`Report::skipped`). draw.io is stricter (see its test).
 fn compare_labels(name: &str, source: usize, imp: &Imported, bad: &mut Vec<String>) {
     let got = labelled(imp);
     if got > source || source - got > imp.report.skipped {
@@ -118,15 +124,42 @@ fn drawio_labels(src: &str) -> usize {
 fn drawio_files_import_without_losing_labels() {
     let mut bad = Vec::new();
     for (name, src) in files("drawio") {
-        match import(&name, &src) {
+        match import_with_library(&name, &src) {
             Ok(imp) => {
                 check_common(&name, &imp, &mut bad);
-                compare_labels(&name, drawio_labels(&src), &imp, &mut bad);
+                // a built-in icon (`image=img/lib/...`) keeps its label, found in the library or not
+                let (source, got) = (drawio_labels(&src), labelled(&imp));
+                if got != source {
+                    bad.push(format!("{name}: {source} label(s) in the source, {got} after import (report: {:?})", imp.report));
+                }
+                // the same file without the library: every icon is a placeholder, no label lost either
+                let plain = import(&name, &src).expect("import without library");
+                if labelled(&plain) != source || plain.report.skipped != imp.report.skipped {
+                    bad.push(format!("{name}: without the library, {} label(s) of {source}, report {:?}", labelled(&plain), plain.report));
+                }
             }
             Err(e) => bad.push(format!("{name}: {e}")),
         }
     }
     assert_no_problem(bad);
+}
+
+/// Built-in draw.io icons of the corpus (`image=img/lib/...`): how many exist and how many the library resolves.
+#[test]
+fn drawio_corpus_built_in_icons_are_resolved_by_the_library() {
+    let (mut total, mut placeholders) = (0, 0);
+    let re = Regex::new(r#"image=(img/lib/[^;&"]*)"#).unwrap();
+    let diagram = Regex::new(r"(?s)<diagram\b[^>]*>([^<]+)</diagram>").unwrap();
+    for (name, src) in files("drawio") {
+        let mut all = src.clone();
+        for c in diagram.captures_iter(&src) {
+            all.push_str(&inflate(&c[1]));
+        }
+        total += re.captures_iter(&all).count();
+        placeholders += import_with_library(&name, &src).expect("import").report.placeholders;
+    }
+    assert_eq!(total, 5, "built-in icons in the corpus");
+    assert_eq!(placeholders, 0, "every one of them is in the icon library");
 }
 
 /* -------------------------------------------------------- Excalidraw */
