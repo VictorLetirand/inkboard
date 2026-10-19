@@ -1864,3 +1864,42 @@ all of you",
         assert!((caret.0 - end).abs() < 3.0, "{align:?}: caret at {} but the text ends at {end}", caret.0);
     }
 }
+
+/* --------------------------------------------- opening a corrupted file */
+
+#[test]
+fn opening_a_corrupted_file_shows_an_error_and_keeps_the_current_board() {
+    let mut t = T::new();
+    t.add_rect(10.0, 10.0, 50.0, 50.0);
+    t.add_rect(100.0, 10.0, 50.0, 50.0);
+    let doc = t.app().ed.doc.clone();
+    let revision = t.app().ed.revision();
+    let dir = std::env::temp_dir().join(format!("inkboard-app-corrupt-{}", Id::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let good = inkboard_core::serial::to_json(&doc, false);
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("truncated.inkboard.json", good.as_bytes()[..good.len() / 2].to_vec()),
+        ("garbage.inkboard.json", b"\x00\x01 not json at all".to_vec()),
+        ("too-new.inkboard.json", br#"{"format":"inkboard","version":99,"document":{"name":"x","pages":[]}}"#.to_vec()),
+        ("foreign.inkboard.json", br#"{"format":"other","version":1,"document":{"name":"x","pages":[]}}"#.to_vec()),
+        ("broken.drawio", b"<mxfile><diagram><mxGraphModel".to_vec()),
+        ("not-utf8.inkboard.json", vec![0xff, 0xfe, 0xfd]),
+    ];
+    for (name, bytes) in cases {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        t.app().toast = None;
+        t.app().open_path(&path);
+        t.h.step();
+        let toast = t.app().toast.clone().map(|(m, _)| m);
+        assert!(toast.as_deref().is_some_and(|m| !m.trim().is_empty()), "{name}: an error must be shown");
+        assert_eq!(t.app().ed.doc, doc, "{name}: the current board must be kept");
+        assert_eq!(t.app().ed.revision(), revision, "{name}: nothing must be recorded in the history");
+        assert!(t.app().path.is_none(), "{name}: the current file must not change");
+    }
+    t.app().toast = None;
+    t.app().open_path(&dir.join("missing.inkboard.json"));
+    assert!(t.app().toast.is_some(), "a missing file is reported");
+    assert_eq!(t.app().ed.doc, doc);
+    std::fs::remove_dir_all(&dir).ok();
+}
