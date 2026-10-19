@@ -94,13 +94,13 @@ fn main() -> Result<()> {
             } else if out_name.ends_with(".png") {
                 let svg = export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("the page is empty: nothing to export")?;
                 let png = inkboard_formats::raster::svg_to_png(&svg, 2.0)?;
-                std::fs::write(&output, png).with_context(|| format!("writing {}", output.display()))?;
+                inkboard_core::serial::write_atomic(&output, &png).with_context(|| format!("writing {}", output.display()))?;
                 println!("{} → {}", input.display(), output.display());
                 return Ok(());
             } else if out_name.ends_with(".pdf") {
                 let svg = export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("the page is empty: nothing to export")?;
                 let pdf = inkboard_formats::raster::svg_to_pdf(&svg)?;
-                std::fs::write(&output, pdf).with_context(|| format!("writing {}", output.display()))?;
+                inkboard_core::serial::write_atomic(&output, &pdf).with_context(|| format!("writing {}", output.display()))?;
                 println!("{} → {}", input.display(), output.display());
                 return Ok(());
             } else if out_name.ends_with(".svg") {
@@ -108,7 +108,7 @@ fn main() -> Result<()> {
             } else {
                 bail!("unrecognized output extension: {out_name} (expected: .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf)");
             };
-            std::fs::write(&output, text).with_context(|| format!("writing {}", output.display()))?;
+            inkboard_core::serial::write_atomic(&output, text.as_bytes()).with_context(|| format!("writing {}", output.display()))?;
             println!("{} → {}{}", input.display(), output.display(), if report.is_empty() { String::new() } else { format!("  (note: {report})") });
             Ok(())
         }

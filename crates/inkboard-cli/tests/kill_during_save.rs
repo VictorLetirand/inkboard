@@ -189,12 +189,10 @@ fn killing_a_save_never_leaves_a_half_written_board() {
     assert!(out.new + out.old + out.absent == TRIALS);
 }
 
-/// `ink convert` to a native file. It writes the target in place (`std::fs::write` truncates it first), unlike `serial::save`.
-/// Reported as BUG-7 in `context/PLAN_TESTS_AUTO.md`. On Windows the write of a whole file is never seen half done (the kill
-/// always lands before or after it), so this test passes there; it is not trustworthy as a regression test on a system where
-/// a kill can interrupt a large write, hence `#[ignore]`: run it with `--ignored` on Linux/macOS.
+/// `ink convert` to a native file goes through `serial::write_atomic` (temporary file + rename), like `serial::save`: this was
+/// BUG-7 (see `context/PLAN_TESTS_AUTO.md`). On Windows a kill never lands in the middle of a whole-file write, so only
+/// Linux/macOS can show a regression.
 #[test]
-#[ignore = "BUG-7 : `ink convert` writes a native output in place (no temporary file + rename); a kill during the write can leave a truncated board"]
 fn killing_a_conversion_never_leaves_a_half_written_board() {
     let dir = TempDir::new("convert");
     let big = dir.path("big.inkboard.json");

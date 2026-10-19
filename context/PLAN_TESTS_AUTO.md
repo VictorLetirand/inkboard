@@ -495,3 +495,8 @@ nouveau : `crates/inkboard-pen/tests/synthetic.rs`.
   - Décider du comportement attendu pour les champs inconnus (ignorés aujourd'hui).
   - Observation (pas un bug testé) : `serial::save` n'appelle pas `sync_all` avant le `rename` ; un arrêt brutal de la machine (pas du processus) peut, sur certains systèmes de fichiers, laisser un fichier vide après `rename`. Non testable sans coupure réelle.
   - Lancer `bench.yml` (push / `workflow_dispatch`, à demander) et recaler `THRESHOLD_MS` sur une mesure du runner.
+
+### Correctif BUG-7 — 2026-10-19
+- `crates/inkboard-core/src/serial.rs` : nouvelle `write_atomic(path, bytes)` (fichier `.tmp-save`, `sync_all`, `rename`) ; `save` l'utilise (ajoute donc le `sync_all` signalé au lot E).
+- `crates/inkboard-cli/src/main.rs` : les trois écritures de `ink convert` (PNG, PDF, texte) passent par `write_atomic`.
+- `tests/kill_during_save.rs` : `#[ignore]` retiré. Le bug restait non reproduit sous Windows (lecture du code seulement).

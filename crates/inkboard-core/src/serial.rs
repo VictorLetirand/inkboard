@@ -98,11 +98,20 @@ pub fn sanitize(doc: &mut Document) {
     }
 }
 
-/// Saves through a temporary file then a rename: a crash never leaves a truncated file.
-pub fn save(doc: &Document, path: &Path) -> Result<(), LoadError> {
+/// Writes through a temporary file, flushed to disk, then a rename: a crash never leaves a truncated file.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
     let tmp = path.with_extension("tmp-save");
-    std::fs::write(&tmp, to_json(doc, false))?;
-    std::fs::rename(&tmp, path)?;
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)
+}
+
+/// Saves atomically (see [`write_atomic`]).
+pub fn save(doc: &Document, path: &Path) -> Result<(), LoadError> {
+    write_atomic(path, to_json(doc, false).as_bytes())?;
     Ok(())
 }
 
