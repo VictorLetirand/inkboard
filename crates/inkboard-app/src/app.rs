@@ -388,8 +388,8 @@ impl App {
 
     pub fn open_dialog(&mut self) {
         if let Some(p) = rfd::FileDialog::new()
-            .add_filter(t("All boards"), &["json", "drawio", "excalidraw", "canvas", "mmd", "mermaid", "xml"])
-            .add_filter("Inkboard", &["json"])
+            .add_filter(t("All boards"), &["inkboard", "json", "drawio", "excalidraw", "canvas", "mmd", "mermaid", "xml"])
+            .add_filter("Inkboard", &["inkboard", "json"])
             .pick_file()
         {
             self.open_path(&p);
@@ -404,9 +404,10 @@ impl App {
     }
 
     pub fn save_as(&mut self) {
-        let name = format!("{}.inkboard.json", self.ed.doc.name);
-        if let Some(p) = rfd::FileDialog::new().add_filter("Inkboard", &["json"]).set_file_name(&name).save_file() {
-            let p = if p.to_string_lossy().ends_with(".inkboard.json") { p } else { p.with_extension("inkboard.json") };
+        let name = format!("{}.{}", self.ed.doc.name, inkboard_core::serial::NATIVE_EXT);
+        if let Some(p) = rfd::FileDialog::new().add_filter("Inkboard", &[inkboard_core::serial::NATIVE_EXT]).set_file_name(&name).save_file() {
+            // a name typed with an older native extension (.inkboard.json, .tableau.json) is kept as typed
+            let p = if inkboard_core::serial::is_native_name(&p.to_string_lossy()) { p } else { p.with_extension(inkboard_core::serial::NATIVE_EXT) };
             self.save_to(&p);
         }
     }

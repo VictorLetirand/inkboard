@@ -126,7 +126,7 @@ fn check_action(a: Action, sc: Shortcut) -> Check {
         }
         Action::Save => {
             let dir = temp_dir("save");
-            let path = dir.join("board.inkboard.json");
+            let path = dir.join("board.inkboard");
             t.app().path = Some(path.clone()); // without a path, saving asks for one with a native dialog
             ensure!(t.app().dirty(), "the new board is not dirty before saving");
             press(t, sc);
@@ -336,6 +336,32 @@ fn ctrl_n_with_unsaved_changes_asks_first_and_removes_the_autosave_only_when_con
         assert!(t.app().sel.is_empty() && t.app().path.is_none());
         assert!(!t.app().dirty(), "a new board is clean");
         assert!(!autosave_file().exists(), "the autosave is removed after confirmation");
+    });
+}
+
+/// The safety copy keeps its historical name (`autosave.inkboard.json`) so that the copies already on a user's disk are still
+/// found after the move to `.inkboard` (D8): it is written under that name and an existing one is restored at startup.
+#[test]
+fn the_autosave_keeps_its_name_and_an_existing_one_is_restored() {
+    isolated("the_autosave_keeps_its_name_and_an_existing_one_is_restored", |dir| {
+        let data = autosave_file().parent().unwrap().to_path_buf();
+        assert!(data.starts_with(dir), "never the real data folder");
+        assert_eq!(autosave_file().file_name().unwrap(), "autosave.inkboard.json");
+        std::fs::create_dir_all(&data).unwrap();
+
+        // writing: a modified board is saved under the historical name only
+        let (mut t, _) = board();
+        assert!(t.app().dirty());
+        t.app().last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        t.h.step();
+        assert!(autosave_file().exists(), "the safety copy is written as autosave.inkboard.json");
+        assert!(!data.join("autosave.inkboard").exists(), "no new-style safety copy");
+        assert_eq!(inkboard_core::serial::load(&autosave_file()).unwrap().pages[0].objects.len(), 3);
+
+        // reading: a copy left by a previous version is restored at startup
+        let mut t2 = harness((1300.0, 850.0), true);
+        assert_eq!(t2.objects().len(), 3, "the previous board is restored");
+        assert!(t2.app().path.is_none());
     });
 }
 

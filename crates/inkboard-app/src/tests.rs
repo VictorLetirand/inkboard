@@ -389,6 +389,34 @@ fn save_and_reopen_roundtrip_and_foreign_formats() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `.inkboard`, `.inkboard.json`, `.tableau.json` and a plain `.json` (recognized by its content) all open as the current file,
+/// and "Save" writes back under the same name (no silent rename, no extra file).
+#[test]
+fn every_native_name_opens_and_save_keeps_the_name() {
+    let mut t = T::new();
+    t.add_rect(100.0, 100.0, 50.0, 50.0);
+    let json = inkboard_core::serial::to_json(&t.app().ed.doc, false);
+    let dir = std::env::temp_dir().join(format!("inkboard-app-ext-{}", Id::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.inkboard", "b.inkboard.json", "c.tableau.json", "d.json"] {
+        let path = dir.join(name);
+        std::fs::write(&path, &json).unwrap();
+        let mut t2 = T::new();
+        t2.app().open_path(&path);
+        assert_eq!(t2.objects().len(), 1, "{name}");
+        assert_eq!(t2.app().path.as_deref(), Some(path.as_path()), "{name}: a native file becomes the current file");
+        t2.add_rect(300.0, 100.0, 50.0, 50.0);
+        t2.app().save();
+        assert_eq!(t2.app().path.as_deref(), Some(path.as_path()), "{name}: saved under its own name");
+        assert_eq!(inkboard_core::serial::load(&path).unwrap().pages[0].objects.len(), 2, "{name}: the file was updated");
+        assert!(!t2.app().dirty(), "{name}");
+    }
+    let mut files: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    files.sort();
+    assert_eq!(files, ["a.inkboard", "b.inkboard.json", "c.tableau.json", "d.json"], "no file created or renamed by saving");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn background_and_pages_are_undoable() {
     let mut t = T::new();
@@ -1121,7 +1149,7 @@ fn external_edit(path: &std::path::Path, text: &str) {
 }
 
 fn temp_board(tag: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("wb-watch-{tag}-{}.inkboard.json", std::process::id()))
+    std::env::temp_dir().join(format!("wb-watch-{tag}-{}.inkboard", std::process::id()))
 }
 
 #[test]
@@ -1220,7 +1248,7 @@ fn an_agent_edits_the_open_board_live_and_each_call_is_one_undo_step() {
 fn live_calls_target_the_open_file_only() {
     let mut t = T::new();
     let live = start_live(&mut t, "path");
-    let mine = std::env::temp_dir().join(format!("wb-live-mine-{}.inkboard.json", std::process::id()));
+    let mine = std::env::temp_dir().join(format!("wb-live-mine-{}.inkboard", std::process::id()));
     t.add_rect(0.0, 0.0, 50.0, 50.0);
     t.app().save_to(&mine);
     // same file: applied in the application
@@ -1228,7 +1256,7 @@ fn live_calls_target_the_open_file_only() {
     assert!(!err, "{r}");
     assert_eq!(t.objects().len(), 2);
     // other file: the application is untouched, file mode takes over
-    let other = std::env::temp_dir().join(format!("wb-live-other-{}.inkboard.json", std::process::id()));
+    let other = std::env::temp_dir().join(format!("wb-live-other-{}.inkboard", std::process::id()));
     inkboard_core::serial::save(&Document::new("Other"), &other).unwrap();
     let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"path": other.to_str().unwrap(), "geom": "rect", "text": "in the file"}));
     assert!(!err, "{r}");
@@ -1782,7 +1810,7 @@ fn undoing_a_text_edit_restores_the_text_and_the_size_in_one_step() {
 fn typed_text_survives_saving_page_changes_and_the_safety_copy() {
     let mut t = T::new();
     let id = add_text_box(&mut t, BoxGeom::Rect, Frame::new(300.0, 200.0, 200.0, 80.0), "old", Align::Center);
-    let path = std::env::temp_dir().join(format!("wb-pending-{}.inkboard.json", std::process::id()));
+    let path = std::env::temp_dir().join(format!("wb-pending-{}.inkboard", std::process::id()));
     t.app().path = Some(path.clone());
     t.app().start_editing(&id, None);
     t.app().editing.as_mut().unwrap().buf = "typed but not validated".into();
