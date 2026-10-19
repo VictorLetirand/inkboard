@@ -1,0 +1,57 @@
+# cargo-deny configuration (licenses, advisories, duplicate versions, sources).
+# Run: cargo deny check -W unmaintained   (CI: job `deny` in .github/workflows/ci.yml)
+# `-W unmaintained` turns "unmaintained" advisories into warnings: the lint level
+# of unmaintained crates cannot be set in this file (cargo-deny 0.20).
+
+[graph]
+# Same targets as the released binaries.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+
+[advisories]
+# Known vulnerabilities always fail the check; unmaintained crates (with
+# `-W unmaintained`) and yanked versions only warn.
+unmaintained = "all"
+yanked = "warn"
+ignore = [
+    # quick-xml 0.38.4, only through zbus_xml 5.1.0 <- zbus-lockstep <- atspi-common
+    # <- accesskit_unix <- accesskit_winit <- egui-winit <- eframe (Linux
+    # accessibility, D-Bus introspection XML from the local session bus, not
+    # untrusted files). Fix needs quick-xml >= 0.41, i.e. zbus_xml 6 and a newer
+    # egui/accesskit stack: no change of dependency in this step.
+    # Ignored on 2026-10-19, to be decided by the maintainer (see PLAN_TESTS_AUTO.md, lot G).
+    "RUSTSEC-2026-0194", # quadratic run time on a start tag with many attributes
+    "RUSTSEC-2026-0195", # unbounded namespace-declaration allocation in NsReader
+]
+
+[licenses]
+# Permissive licenses only. No GPL / AGPL / LGPL.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "OFL-1.1", # fonts (STIX Two Math, egui default fonts)
+    # Below: licenses reported by `cargo deny check`, all permissive.
+    "BSL-1.0", # clipboard-win, error-code (via arboard, clipboard support)
+    "CC0-1.0", # hexf-parse (via naga / wgpu, GPU shader compiler)
+    "Ubuntu-font-1.0", # epaint_default_fonts (egui default fonts, listed in THIRD_PARTY_LICENSES.md)
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
