@@ -374,34 +374,6 @@ impl Drop for TempDir {
     }
 }
 
-/// Rounds every float to a multiple of 1/64: such numbers are read back exactly (see `bug_5_saving_then_loading_keeps_every_float`).
-fn snap(mut d: DocSpec) -> DocSpec {
-    let q = |v: &mut f64| *v = (*v * 64.0).round() / 64.0;
-    for s in &mut d.objs {
-        let f = &mut s.frame;
-        [&mut f.x, &mut f.y, &mut f.w, &mut f.h, &mut f.angle, &mut s.width].into_iter().for_each(q);
-        s.opacity = (s.opacity * 64.0).round() / 64.0;
-        match &mut s.shape {
-            Shape::Pen { pts, .. } => pts.iter_mut().for_each(|p| {
-                q(&mut p.0);
-                q(&mut p.1);
-            }),
-            Shape::Connector { start, end, via, .. } => {
-                via.iter_mut().for_each(|p| {
-                    q(&mut p.0);
-                    q(&mut p.1);
-                });
-                for (fx, fy) in [start, end].into_iter().filter_map(|e| e.frac.as_mut()) {
-                    q(fx);
-                    q(fy);
-                }
-            }
-            _ => {}
-        }
-    }
-    d
-}
-
 fn assert_round_trip(doc: &Document) -> Result<(), TestCaseError> {
     let dir = TempDir::new();
     let path = dir.0.join("board.inkboard.json");
@@ -418,13 +390,7 @@ proptest! {
     #![proptest_config(config())]
 
     #[test]
-    fn saving_then_loading_gives_an_equal_document(doc in doc_spec(200).prop_map(snap)) {
-        assert_round_trip(&build(&doc))?;
-    }
-
-    #[test]
-    #[ignore = "BUG-5 : serde_json reads some f64 one ulp off (feature `float_roundtrip` is off), so a reloaded board differs from the saved one"]
-    fn bug_5_saving_then_loading_keeps_every_float(doc in doc_spec(200)) {
+    fn saving_then_loading_gives_an_equal_document(doc in doc_spec(200)) {
         assert_round_trip(&build(&doc))?;
     }
 }
@@ -519,17 +485,14 @@ struct Cell {
     angle: f64,
 }
 
-fn cell(triangles: bool) -> impl Strategy<Value = Cell> {
-    let mut geoms = vec![Some(BoxGeom::Rect), Some(BoxGeom::Ellipse), Some(BoxGeom::Diamond), Some(BoxGeom::Sticky), None];
-    if triangles {
-        geoms.push(Some(BoxGeom::Triangle));
-    }
+fn cell() -> impl Strategy<Value = Cell> {
+    let geoms = vec![Some(BoxGeom::Rect), Some(BoxGeom::Ellipse), Some(BoxGeom::Diamond), Some(BoxGeom::Sticky), Some(BoxGeom::Triangle), None];
     (prop::sample::select(geoms), 1usize..3, (20.0..120.0f64, 20.0..120.0f64), (-20.0..20.0f64, -20.0..20.0f64), -3.2..3.2f64)
         .prop_map(|(geom, rows, size, shift, angle)| Cell { geom, rows, size, shift, angle })
 }
 
-fn scene(triangles: bool) -> impl Strategy<Value = (Vec<Cell>, Vec<(Index, Index)>)> {
-    (prop::collection::vec(cell(triangles), 2..=24), prop::collection::vec((any::<Index>(), any::<Index>()), 1..10))
+fn scene() -> impl Strategy<Value = (Vec<Cell>, Vec<(Index, Index)>)> {
+    (prop::collection::vec(cell(), 2..=24), prop::collection::vec((any::<Index>(), any::<Index>()), 1..10))
 }
 
 /// Grid page with elbow connectors; the shapes are rotated by their `angle` only when `rotated`.
@@ -605,28 +568,12 @@ proptest! {
     #![proptest_config(config())]
 
     #[test]
-    fn elbow_connectors_go_around_unrelated_shapes((cells, links) in scene(false)) {
-        let page = scene_page(&cells, &links, false);
-        if let Some(why) = first_crossing(&page) {
-            prop_assert!(false, "{}", why);
-        }
-    }
-
-    #[test]
-    #[ignore = "BUG-6 : elbow routing gives up (straight path through other shapes) when the exit point is inside the box of its own shape, e.g. the E/W sides of a triangle"]
-    fn bug_6_elbow_connectors_go_around_unrelated_shapes_with_triangles((cells, links) in scene(true)) {
-        let page = scene_page(&cells, &links, false);
-        if let Some(why) = first_crossing(&page) {
-            prop_assert!(false, "{}", why);
-        }
-    }
-
-    #[test]
-    #[ignore = "BUG-6 : same cause for any rotated shape (the exit stub follows the world axes, the outline point the rotated frame)"]
-    fn bug_6_elbow_connectors_go_around_unrelated_rotated_shapes((cells, links) in scene(true)) {
-        let page = scene_page(&cells, &links, true);
-        if let Some(why) = first_crossing(&page) {
-            prop_assert!(false, "{}", why);
+    fn elbow_connectors_go_around_unrelated_shapes((cells, links) in scene()) {
+        // upright shapes, then the same scene with every shape rotated by its own angle
+        for rotated in [false, true] {
+            if let Some(why) = first_crossing(&scene_page(&cells, &links, rotated)) {
+                prop_assert!(false, "rotated: {}: {}", rotated, why);
+            }
         }
     }
 }

@@ -354,6 +354,10 @@ impl Page {
         }
         let a1 = a.side.map_or(a.pt, |s| a.pt + s.dir() * STUB);
         let b1 = b.side.map_or(b.pt, |s| b.pt + s.dir() * STUB);
+        // An end shape whose margin-grown box contains a stub tip (triangle, rotated shape) would make
+        // the search start inside an obstacle and give up: it is left out, the others are still avoided.
+        let holds = |r: &Rect, p: Pt| r.expand(CLEARANCE).contains(p);
+        own.retain(|r| !holds(r, a1) && !holds(r, b1));
         let all: Vec<Rect> = others.into_iter().chain(own).collect();
         let Some(mid) = crate::route::route_around(a1, b1, a.side.map(Side::horizontal), &all, CLEARANCE) else { return path };
         let mut out = vec![a.pt];
