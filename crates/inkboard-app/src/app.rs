@@ -182,6 +182,8 @@ impl App {
             crate::i18n::Pref::Lang(crate::i18n::Lang::En)
         };
         crate::theme::apply(&cc.egui_ctx, false);
+        // Ctrl+= / Ctrl+- / Ctrl+0 zoom the board only, not the whole interface
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let measurer = EguiMeasurer(cc.egui_ctx.clone());
         let mut app = Self {
             caches: Caches::default(),
@@ -247,8 +249,8 @@ impl App {
         };
         if restore {
             let kp = autosave_path().with_file_name("keymap.json");
-            if let Ok(text) = std::fs::read_to_string(&kp) {
-                match Keymap::from_json(&text) {
+            match std::fs::read(&kp) {
+                Ok(bytes) => match Keymap::decode_text(&bytes).and_then(|text| Keymap::from_json(&text)) {
                     Ok((km, ignored)) => {
                         app.keymap = km;
                         if ignored > 0 {
@@ -256,7 +258,9 @@ impl App {
                         }
                     }
                     Err(e) => app.toast(&tr!("Shortcuts file ignored: {}", e)),
-                }
+                },
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => app.toast(&tr!("Shortcuts file ignored: {}", e)),
+                Err(_) => {}
             }
             app.keymap_path = Some(kp);
         }

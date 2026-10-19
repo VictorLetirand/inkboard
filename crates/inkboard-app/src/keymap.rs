@@ -471,6 +471,21 @@ impl Keymap {
         serde_json::to_string_pretty(&serde_json::json!({ "version": 1, "bindings": bindings })).expect("valid JSON")
     }
 
+    /// Text of a settings file: UTF-16 (LE/BE, with BOM, e.g. a PowerShell 5 redirection) or UTF-8.
+    pub fn decode_text(bytes: &[u8]) -> Result<String, String> {
+        let utf16 = |b: &[u8], from: fn([u8; 2]) -> u16| {
+            if !b.len().is_multiple_of(2) {
+                return Err("truncated UTF-16 file".to_owned());
+            }
+            String::from_utf16(&b.chunks_exact(2).map(|c| from([c[0], c[1]])).collect::<Vec<_>>()).map_err(|_| "invalid UTF-16 file".to_owned())
+        };
+        match bytes {
+            [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
+            [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
+            _ => String::from_utf8(bytes.to_vec()).map_err(|_| "file is neither UTF-8 nor UTF-16".to_owned()),
+        }
+    }
+
     /// Reads a settings file. Missing actions keep their default shortcut; unknown or unreadable
     /// entries are ignored. Also returns the number of ignored entries.
     pub fn from_json(s: &str) -> Result<(Keymap, usize), String> {
@@ -483,8 +498,12 @@ impl Keymap {
                 ignored += 1;
                 continue;
             };
+            let Some(list) = list.as_array() else {
+                ignored += 1; // not a list (e.g. "R" instead of ["R"]): the default shortcut stays
+                continue;
+            };
             let mut scs = Vec::new();
-            for item in list.as_array().map(Vec::as_slice).unwrap_or_default() {
+            for item in list {
                 match item.as_str().and_then(Shortcut::parse) {
                     Some(sc) if !is_reserved(&sc) => scs.push(sc),
                     _ => ignored += 1,
@@ -599,6 +618,18 @@ mod tests {
         assert!(k2.is_default(Action::Open), "actions not mentioned: default values");
         assert!(Keymap::from_json("not json").is_err());
         assert!(Keymap::from_json("{}").is_err());
+    }
+
+    #[test]
+    fn settings_text_is_decoded_from_utf8_and_utf16() {
+        let text = "{\u{e9}}";
+        let le: Vec<u8> = [0xFF, 0xFE].into_iter().chain(text.encode_utf16().flat_map(u16::to_le_bytes)).collect();
+        let be: Vec<u8> = [0xFE, 0xFF].into_iter().chain(text.encode_utf16().flat_map(u16::to_be_bytes)).collect();
+        assert_eq!(Keymap::decode_text(&le).unwrap(), text);
+        assert_eq!(Keymap::decode_text(&be).unwrap(), text);
+        assert_eq!(Keymap::decode_text(text.as_bytes()).unwrap(), text);
+        assert!(Keymap::decode_text(&[0xFF, 0xFE, 0x41]).is_err(), "odd length");
+        assert!(Keymap::decode_text(&[0x80, 0x81]).is_err(), "not UTF-8");
     }
 
     #[test]

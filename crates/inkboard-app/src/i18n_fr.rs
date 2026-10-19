@@ -127,6 +127,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Icon library unavailable: {}", "Bibliothèque d'icônes indisponible : {}"),
     ("Icon library…", "Bibliothèque d'icônes…"),
     ("Image copied", "Image copiée"),
+    ("Image…", "Image…"),
     ("Import Mermaid", "Importer du Mermaid"),
     ("Import Mermaid…", "Importer du Mermaid…"),
     ("Ink (follows the theme)", "Encre (suit le thème)"),

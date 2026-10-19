@@ -301,7 +301,6 @@ fn ctrl_n_starts_a_new_board_in_an_isolated_data_folder() {
 }
 
 #[test]
-#[ignore = "BUG-8 : Ctrl+= / Ctrl+- / Ctrl+0 zoom the board and also rescale the whole interface (egui keyboard zoom)"]
 fn keyboard_zoom_does_not_rescale_the_whole_interface() {
     // egui also zooms its UI on Ctrl+Plus / Ctrl+Minus / Ctrl+0, the same keys as the board zoom
     let mut t = T::new();
@@ -610,7 +609,6 @@ fn in_french_in_a_1024_by_700_window_the_toolbar_and_the_menu_fit_without_overla
 }
 
 #[test]
-#[ignore = "BUG-11 : the menu entry Image... has no entry in i18n_fr.rs (same word in French, so nothing is visibly wrong)"]
 fn bug_11_the_french_toolbar_cards_and_menu_have_no_missing_translation() {
     let mut t = french_app();
     open_main_menu(&mut t);
@@ -688,7 +686,6 @@ fn a_partly_invalid_keymap_file_keeps_its_valid_entries_and_reports_the_rest() {
 }
 
 #[test]
-#[ignore = "BUG-9 : a shortcut list that is not an array is dropped silently and the action loses its default"]
 fn bug_9_a_binding_that_is_not_a_list_is_reported_and_keeps_the_default() {
     // `{"tool.rect": "R"}` (a string instead of ["R"]) is easy to write by hand
     let (km, ignored) = Keymap::from_json(r#"{"version":1,"bindings":{"tool.rect":"R","tool.pen":42}}"#).unwrap();
@@ -697,7 +694,6 @@ fn bug_9_a_binding_that_is_not_a_list_is_reported_and_keeps_the_default() {
 }
 
 #[test]
-#[ignore = "BUG-10 : a keymap.json that is not UTF-8 (PowerShell redirection writes UTF-16) is ignored without any message"]
 fn bug_10_a_keymap_file_that_cannot_be_read_is_reported() {
     isolated("bug_10_a_keymap_file_that_cannot_be_read_is_reported", |_| {
         let json = r#"{"version":1,"bindings":{"tool.rect":["K"]}}"#;
