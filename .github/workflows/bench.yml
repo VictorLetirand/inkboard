@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/bench.inkboard.json"
+          out="$RUNNER_TEMP/bench.inkboard"
           times=()
           for i in 1 2 3 4 5; do
             start=$(date +%s%N)

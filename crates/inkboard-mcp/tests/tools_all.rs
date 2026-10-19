@@ -81,7 +81,7 @@ fn tools_list_returns_the_16_documented_tools() {
 fn every_tool_changes_the_file_when_called_correctly() {
     let dir = temp_dir("valid");
     let mut c = Client::start(&dir);
-    let board = dir.join("b.inkboard.json");
+    let board = dir.join("b.inkboard");
     let p = board.to_str().unwrap();
 
     c.tool("create_board", json!({"path": p, "name": "Tools"})).unwrap();
@@ -160,7 +160,7 @@ fn every_tool_changes_the_file_when_called_correctly() {
 fn every_tool_rejects_invalid_arguments_and_the_server_keeps_answering() {
     let dir = temp_dir("invalid");
     let mut c = Client::start(&dir);
-    let board = dir.join("b.inkboard.json");
+    let board = dir.join("b.inkboard");
     let p = board.to_str().unwrap();
     c.tool("create_board", json!({"path": p})).unwrap();
     let a = id_of(&c.tool("add_shape", json!({"path": p, "geom": "rect", "text": "A"})).unwrap());
@@ -209,7 +209,7 @@ fn malformed_json_on_stdin_does_not_stop_the_server() {
     }
     // a truncated tool call, then a good one
     c.send_raw(r#"{"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"name":"create_board","arguments":{"pa"#);
-    let board = dir.join("after.inkboard.json");
+    let board = dir.join("after.inkboard");
     c.tool("create_board", json!({"path": board.to_str().unwrap()})).unwrap();
     assert!(board.exists());
 }

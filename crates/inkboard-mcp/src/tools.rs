@@ -10,14 +10,14 @@ use std::path::{Path, PathBuf};
 type Res<T> = Result<T, String>;
 
 /// File extensions the tools accept to write.
-const EXPORTS: [&str; 8] = [".inkboard.json", ".drawio", ".excalidraw", ".canvas", ".svg", ".png", ".pdf", ".json"];
+const EXPORTS: [&str; 9] = [".inkboard", ".inkboard.json", ".drawio", ".excalidraw", ".canvas", ".svg", ".png", ".pdf", ".json"];
 
 fn obj(props: Value, required: &[&str]) -> Value {
     json!({"type": "object", "properties": props, "required": required})
 }
 
 fn path_prop() -> Value {
-    json!({"type": "string", "description": "Path of the board file (.inkboard.json). Optional when the application is open: the tool then acts live on the displayed board (undoable with Ctrl+Z)."})
+    json!({"type": "string", "description": "Path of the board file (.inkboard; .inkboard.json and .tableau.json also accepted). Optional when the application is open: the tool then acts live on the displayed board (undoable with Ctrl+Z)."})
 }
 
 fn page_prop() -> Value {
@@ -37,7 +37,7 @@ fn pos_props(mut p: Value) -> Value {
 pub fn list() -> Vec<Value> {
     let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
     vec![
-        json!({"name": "create_board", "description": "Creates an empty board (.inkboard.json file).",
+        json!({"name": "create_board", "description": "Creates an empty board (.inkboard file).",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
         json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
             "inputSchema": obj(json!({}), &[])}),
@@ -75,7 +75,7 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."}}), &[])}),
         json!({"name": "add_page", "description": "Adds a page. Returns its number.",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
-        json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard.json.",
+        json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard.",
             "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop()}), &["output"])}),
     ]
 }
@@ -120,11 +120,6 @@ fn resolve(srv: &Server, p: &str) -> Res<PathBuf> {
     Ok(full)
 }
 
-/// Name of a native file: `.inkboard.json` (or the legacy `.tableau.json`).
-pub fn is_native_name(lower: &str) -> bool {
-    lower.ends_with(".inkboard.json") || lower.ends_with(".tableau.json")
-}
-
 fn lower_name(p: &Path) -> String {
     p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase()
 }
@@ -137,9 +132,9 @@ fn load(path: &Path) -> Res<Document> {
 
 /// Saving: native format only, so a file from another tool is never overwritten with different content.
 fn save(doc: &Document, path: &Path) -> Res<()> {
-    // `.tableau.json`: legacy name (before "Inkboard"), still accepted for existing files
-    if !is_native_name(&lower_name(path)) {
-        return Err("changes are saved to an .inkboard.json file (use `export` for other formats)".into());
+    // `.inkboard.json` / `.tableau.json`: older names, still accepted for existing files
+    if !inkboard_core::serial::is_native_name(&lower_name(path)) {
+        return Err("changes are saved to an .inkboard file (or an existing .inkboard.json / .tableau.json; use `export` for other formats)".into());
     }
     inkboard_core::serial::save(doc, path).map_err(|e| format!("writing {}: {e}", path.display()))
 }
@@ -284,7 +279,7 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
         return Ok(json!({"path": path.display().to_string(), "pages": 1}).to_string());
     }
     let Some(path) = os(&a, "path").map(PathBuf::from) else {
-        return Err("missing \"path\" parameter: no board is open in the application (or it is closed); give the .inkboard.json file".into());
+        return Err("missing \"path\" parameter: no board is open in the application (or it is closed); give the .inkboard file".into());
     };
     let mut ed = Editor::new(load(&path)?);
     let mut tracker = srv.trackers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&path);

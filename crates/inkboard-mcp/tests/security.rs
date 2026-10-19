@@ -30,11 +30,11 @@ fn symlink(target: &Path, link: &Path, dir: bool) -> bool {
 fn dot_dot_escape_is_refused() {
     let root = temp_dir("sec-dd");
     let mut c = Client::start(&root);
-    let err = c.tool("create_board", json!({"path": "../evil.inkboard.json"})).unwrap_err();
+    let err = c.tool("create_board", json!({"path": "../evil.inkboard"})).unwrap_err();
     assert!(err.contains(OUTSIDE), "{err}");
-    let err = c.tool("create_board", json!({"path": "sub/../../evil.inkboard.json"})).unwrap_err();
+    let err = c.tool("create_board", json!({"path": "sub/../../evil.inkboard"})).unwrap_err();
     assert!(err.contains(OUTSIDE) || err.contains("not accessible"), "{err}");
-    assert!(!root.parent().unwrap().join("evil.inkboard.json").exists());
+    assert!(!root.parent().unwrap().join("evil.inkboard").exists());
 }
 
 #[test]
@@ -42,13 +42,13 @@ fn absolute_path_outside_the_root_is_refused() {
     let root = temp_dir("sec-abs");
     let outside = temp_dir("sec-abs-out");
     let mut c = Client::start(&root);
-    let target = outside.join("evil.inkboard.json");
+    let target = outside.join("evil.inkboard");
     let err = c.tool("create_board", json!({"path": target.to_str().unwrap()})).unwrap_err();
     assert!(err.contains(OUTSIDE), "{err}");
     assert!(!target.exists());
     // the same for the output of an export and the source of an image
-    c.tool("create_board", json!({"path": "b.inkboard.json"})).unwrap();
-    let err = c.tool("export", json!({"path": "b.inkboard.json", "output": outside.join("o.svg").to_str().unwrap()})).unwrap_err();
+    c.tool("create_board", json!({"path": "b.inkboard"})).unwrap();
+    let err = c.tool("export", json!({"path": "b.inkboard", "output": outside.join("o.svg").to_str().unwrap()})).unwrap_err();
     assert!(err.contains(OUTSIDE), "{err}");
     assert!(!outside.join("o.svg").exists());
 }
@@ -61,21 +61,21 @@ fn symlinked_folder_pointing_outside_the_root_is_refused() {
         return;
     }
     let mut c = Client::start(&root);
-    let err = c.tool("create_board", json!({"path": "link/evil.inkboard.json"})).unwrap_err();
+    let err = c.tool("create_board", json!({"path": "link/evil.inkboard"})).unwrap_err();
     assert!(err.contains(OUTSIDE), "{err}");
-    assert!(!outside.join("evil.inkboard.json").exists());
+    assert!(!outside.join("evil.inkboard").exists());
 }
 
-/// A real board outside the root, reachable through `link.inkboard.json` inside the root. `None` if links cannot be created.
+/// A real board outside the root, reachable through `link.inkboard` inside the root. `None` if links cannot be created.
 fn root_with_link_to_outside_file(tag: &str) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let root = temp_dir(&format!("{tag}-root"));
     let outside = temp_dir(&format!("{tag}-out"));
-    let secret = outside.join("secret.inkboard.json");
+    let secret = outside.join("secret.inkboard");
     {
         let mut c = Client::start(&outside);
         c.tool("create_board", json!({"path": secret.to_str().unwrap()})).unwrap();
     }
-    symlink(&secret, &root.join("link.inkboard.json"), false).then_some((root, secret))
+    symlink(&secret, &root.join("link.inkboard"), false).then_some((root, secret))
 }
 
 // A final file that is a link to a file outside the root must be refused (reading and writing).
@@ -83,8 +83,8 @@ fn root_with_link_to_outside_file(tag: &str) -> Option<(std::path::PathBuf, std:
 fn symlinked_final_file_pointing_outside_the_root_is_refused() {
     let Some((root, secret)) = root_with_link_to_outside_file("sec-file") else { return };
     let mut c = Client::start(&root);
-    let read = c.tool("describe_board", json!({"path": "link.inkboard.json"}));
-    let write = c.tool("add_shape", json!({"path": "link.inkboard.json", "geom": "rect", "text": "pwned"}));
+    let read = c.tool("describe_board", json!({"path": "link.inkboard"}));
+    let write = c.tool("add_shape", json!({"path": "link.inkboard", "geom": "rect", "text": "pwned"}));
     assert!(read.is_err() && write.is_err(), "link to a file outside the root accepted: read {read:?}, write {write:?}");
     assert!(secret.exists());
 }
@@ -94,6 +94,28 @@ fn symlinked_final_file_pointing_outside_the_root_is_never_modified() {
     let Some((root, secret)) = root_with_link_to_outside_file("sec-file-w") else { return };
     let before = std::fs::read(&secret).unwrap();
     let mut c = Client::start(&root);
-    let _ = c.tool("add_shape", json!({"path": "link.inkboard.json", "geom": "rect", "text": "pwned"}));
+    let _ = c.tool("add_shape", json!({"path": "link.inkboard", "geom": "rect", "text": "pwned"}));
     assert_eq!(std::fs::read(&secret).unwrap(), before, "the file outside the root was modified through the link");
+}
+
+/// The confinement does not depend on the extension: links named `.inkboard.json` or `.tableau.json` are refused too.
+#[test]
+fn symlinks_with_the_older_native_names_are_refused_too() {
+    let root = temp_dir("sec-old-root");
+    let outside = temp_dir("sec-old-out");
+    let secret = outside.join("secret.inkboard");
+    {
+        let mut c = Client::start(&outside);
+        c.tool("create_board", json!({"path": secret.to_str().unwrap()})).unwrap();
+    }
+    let before = std::fs::read(&secret).unwrap();
+    let mut c = Client::start(&root);
+    for name in ["old.inkboard.json", "older.tableau.json"] {
+        if !symlink(&secret, &root.join(name), false) {
+            return;
+        }
+        assert!(c.tool("describe_board", json!({"path": name})).is_err(), "{name}: read through the link accepted");
+        assert!(c.tool("add_shape", json!({"path": name, "geom": "rect", "text": "pwned"})).is_err(), "{name}: write through the link accepted");
+    }
+    assert_eq!(std::fs::read(&secret).unwrap(), before);
 }

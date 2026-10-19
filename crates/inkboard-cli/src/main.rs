@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! ink convert schema.mmd schema.drawio
-//! ink convert ancien.inkboard.json nouveau.inkboard.json
+//! ink convert ancien.inkboard.json nouveau.inkboard
 //! ink info schema.drawio
 //! ```
 
@@ -23,8 +23,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Converts a file. Input: .inkboard.json, .json (prototype), .drawio, .excalidraw, .canvas, .mmd.
-    /// Output (by extension): .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf.
+    /// Converts a file. Input: .inkboard (or the older .inkboard.json), .json (prototype), .drawio, .excalidraw, .canvas, .mmd.
+    /// Output (by extension): .inkboard, .drawio, .excalidraw, .canvas, .svg, .png, .pdf.
     Convert {
         input: PathBuf,
         output: PathBuf,
@@ -79,7 +79,7 @@ fn main() -> Result<()> {
             let (doc, report) = read(&input)?;
             let idx = page.checked_sub(1).filter(|i| *i < doc.pages.len()).with_context(|| format!("page {page} does not exist (1 to {})", doc.pages.len()))?;
             let out_name = output.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
-            let text = if out_name.ends_with(".inkboard.json") || out_name.ends_with(".tableau.json") || out_name.ends_with(".wb") {
+            let text = if inkboard_core::serial::is_native_name(&out_name) || out_name.ends_with(".wb") {
                 inkboard_core::serial::to_json(&doc, true)
             } else if out_name.ends_with(".drawio") {
                 inkboard_formats::drawio::export(&doc, &ApproxMeasurer)
@@ -106,7 +106,7 @@ fn main() -> Result<()> {
             } else if out_name.ends_with(".svg") {
                 export_svg(&doc, &doc.pages[idx], None, &ApproxMeasurer, &SvgOptions::default()).context("the page is empty: nothing to export")?
             } else {
-                bail!("unrecognized output extension: {out_name} (expected: .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf)");
+                bail!("unrecognized output extension: {out_name} (expected: .inkboard, .inkboard.json, .drawio, .excalidraw, .canvas, .svg, .png, .pdf)");
             };
             inkboard_core::serial::write_atomic(&output, text.as_bytes()).with_context(|| format!("writing {}", output.display()))?;
             println!("{} → {}{}", input.display(), output.display(), if report.is_empty() { String::new() } else { format!("  (note: {report})") });

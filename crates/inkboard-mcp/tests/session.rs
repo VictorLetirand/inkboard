@@ -32,7 +32,7 @@ fn handshake_lists_the_tools() {
 fn an_agent_builds_a_diagram_and_exports_it() {
     let dir = temp_dir("diag");
     let mut c = Client::start(&dir);
-    let board = dir.join("schema.inkboard.json");
+    let board = dir.join("schema.inkboard");
     let p = board.to_str().unwrap();
 
     c.tool("create_board", json!({"path": p, "name": "Archi"})).unwrap();
@@ -91,18 +91,18 @@ fn files_are_confined_to_the_root_and_only_native_files_are_written() {
     let dir = temp_dir("root");
     let outside = temp_dir("outside");
     let mut c = Client::start(&dir);
-    let err = c.tool("create_board", json!({"path": outside.join("x.inkboard.json").to_str().unwrap()})).unwrap_err();
+    let err = c.tool("create_board", json!({"path": outside.join("x.inkboard").to_str().unwrap()})).unwrap_err();
     assert!(err.contains("outside the allowed root"), "{err}");
-    let err = c.tool("create_board", json!({"path": dir.join("..").join("y.inkboard.json").to_str().unwrap()})).unwrap_err();
+    let err = c.tool("create_board", json!({"path": dir.join("..").join("y.inkboard").to_str().unwrap()})).unwrap_err();
     assert!(err.contains("outside the allowed root"), "{err}");
     // relative path: resolved under the root
-    c.tool("create_board", json!({"path": "rel.inkboard.json"})).unwrap();
-    assert!(dir.join("rel.inkboard.json").exists());
+    c.tool("create_board", json!({"path": "rel.inkboard"})).unwrap();
+    assert!(dir.join("rel.inkboard").exists());
     // no saving outside the native format
     let err = c.tool("create_board", json!({"path": "other.drawio"})).unwrap_err();
-    assert!(err.contains(".inkboard.json"), "{err}");
+    assert!(err.contains(".inkboard"), "{err}");
     // export to an unsupported extension
-    let err = c.tool("export", json!({"path": "rel.inkboard.json", "output": "script.ps1"})).unwrap_err();
+    let err = c.tool("export", json!({"path": "rel.inkboard", "output": "script.ps1"})).unwrap_err();
     assert!(err.contains("extension"), "{err}");
 }
 
@@ -110,7 +110,7 @@ fn files_are_confined_to_the_root_and_only_native_files_are_written() {
 fn table_columns_grow_to_fit_long_text() {
     let dir = temp_dir("tbl");
     let mut c = Client::start(&dir);
-    let p = dir.join("t.inkboard.json");
+    let p = dir.join("t.inkboard");
     let p = p.to_str().unwrap();
     c.tool("create_board", json!({"path": p})).unwrap();
     c.tool("add_table", json!({"path": p, "rows": [["short", "a cell with a really very long text to display"]]})).unwrap();
@@ -127,7 +127,7 @@ fn images_are_added_from_files_or_base64_and_validated() {
     use std::io::Write as _;
     let dir = temp_dir("img");
     let mut c = Client::start(&dir);
-    let p = dir.join("i.inkboard.json");
+    let p = dir.join("i.inkboard");
     let p = p.to_str().unwrap();
     c.tool("create_board", json!({"path": p})).unwrap();
     // from a file under the root: natural size kept (small image)
@@ -189,7 +189,7 @@ fn user_edit(path: &Path, f: impl FnOnce(&mut inkboard_core::Document)) {
 fn board_changes_reports_what_the_user_did_but_not_what_the_agent_did() {
     let dir = temp_dir("chg");
     let mut c = Client::start(&dir);
-    let board = dir.join("c.inkboard.json");
+    let board = dir.join("c.inkboard");
     let p = board.to_str().unwrap();
     c.tool("create_board", json!({"path": p})).unwrap();
     let first = c.tool("board_changes", json!({"path": p})).unwrap();
@@ -240,7 +240,7 @@ fn resources_are_listed_read_and_subscribers_are_notified_of_changes() {
     let mut c = Client::start(&dir);
     let init = c.request("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}));
     assert_eq!(init["result"]["capabilities"]["resources"]["subscribe"], true);
-    let board = dir.join("Café diagram.inkboard.json");
+    let board = dir.join("Café diagram.inkboard");
     let p = board.to_str().unwrap();
     c.tool("create_board", json!({"path": p})).unwrap();
     c.tool("add_shape", json!({"path": p, "geom": "rect", "text": "First"})).unwrap();
@@ -250,7 +250,7 @@ fn resources_are_listed_read_and_subscribers_are_notified_of_changes() {
     assert_eq!(res.len(), 1, "no application: only the file: {list}");
     let uri = res[0]["uri"].as_str().unwrap().to_owned();
     assert!(uri.starts_with("file:///") && uri.is_ascii() && uri.contains("%C3%A9"), "{uri}");
-    assert_eq!(res[0]["name"], "Café diagram.inkboard.json");
+    assert_eq!(res[0]["name"], "Café diagram.inkboard");
 
     let read = c.request("resources/read", json!({"uri": uri}));
     let body: Value = serde_json::from_str(read["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
@@ -275,6 +275,36 @@ fn resources_are_listed_read_and_subscribers_are_notified_of_changes() {
     f.set_modified(std::time::SystemTime::now() + Duration::from_secs(9)).unwrap();
     assert!(c.wait_notification("notifications/resources/updated", Some(&uri), Duration::from_millis(2000)).is_none());
     // a new file changes the list
-    c.tool("create_board", json!({"path": dir.join("second.inkboard.json").to_str().unwrap()})).unwrap();
+    c.tool("create_board", json!({"path": dir.join("second.inkboard").to_str().unwrap()})).unwrap();
     assert!(c.wait_notification("notifications/resources/list_changed", None, Duration::from_secs(8)).is_some(), "list_changed expected");
+}
+
+/// New boards are `.inkboard`; `.inkboard.json` and `.tableau.json` boards are still read, modified (under their own name) and listed.
+#[test]
+fn the_three_native_extensions_are_accepted_and_new_boards_are_inkboard() {
+    let dir = temp_dir("ext3");
+    let mut c = Client::start(&dir);
+    c.tool("create_board", json!({"path": "new.inkboard", "name": "New"})).unwrap();
+    c.tool("add_shape", json!({"path": "new.inkboard", "geom": "rect", "text": "Same content"})).unwrap();
+    assert!(dir.join("new.inkboard").exists());
+    let bytes = std::fs::read(dir.join("new.inkboard")).unwrap();
+    for name in ["older.inkboard.json", "oldest.tableau.json", "UPPER.INKBOARD"] {
+        std::fs::write(dir.join(name), &bytes).unwrap();
+        let d = c.tool("describe_board", json!({"path": name})).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(d["page"]["objects"][0]["text"], "Same content", "{name}");
+        c.tool("add_shape", json!({"path": name, "geom": "ellipse", "text": "More"})).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let d = c.tool("describe_board", json!({"path": name})).unwrap();
+        assert_eq!(d["page"]["objects"].as_array().unwrap().len(), 2, "{name}: saved under its own name");
+    }
+    assert!(!dir.join("older.inkboard").exists() && !dir.join("oldest.inkboard").exists(), "no silent rename");
+    // resources: the three extensions are listed
+    let list = c.request("resources/list", json!({}));
+    let mut names: Vec<String> = list["result"]["resources"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap().to_owned()).collect();
+    names.sort();
+    assert_eq!(names, ["UPPER.INKBOARD", "new.inkboard", "older.inkboard.json", "oldest.tableau.json"], "{list}");
+    // export to the native format by default extension
+    c.tool("export", json!({"path": "new.inkboard", "output": "copy.inkboard"})).unwrap();
+    assert!(inkboard_core::serial::load(&dir.join("copy.inkboard")).is_ok());
+    // a non-native name is still refused
+    assert!(c.tool("create_board", json!({"path": "board.json"})).is_err());
 }

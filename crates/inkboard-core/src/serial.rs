@@ -16,6 +16,16 @@ pub fn is_native_format(format: &str) -> bool {
 }
 pub const VERSION: u32 = 2;
 
+/// Extension given to new native files (`board.inkboard`).
+pub const NATIVE_EXT: &str = "inkboard";
+
+/// Is `file_name` (a name or a path) the name of a native file? `.inkboard` (current), `.inkboard.json` and `.tableau.json` (older
+/// names, still read and kept as is when reopened and saved). Case-insensitive.
+pub fn is_native_name(file_name: &str) -> bool {
+    let lower = file_name.to_ascii_lowercase();
+    [".inkboard", ".inkboard.json", ".tableau.json"].iter().any(|ext| lower.ends_with(ext))
+}
+
 #[derive(Debug, Error)]
 pub enum LoadError {
     #[error("invalid JSON: {0}")]
@@ -194,14 +204,26 @@ mod tests {
     }
 
     #[test]
+    fn native_names_cover_the_three_extensions() {
+        for n in ["a.inkboard", "A.INKBOARD", "a.inkboard.json", "dir/a b.tableau.json", r"C:\x\y.Inkboard.JSON"] {
+            assert!(is_native_name(n), "{n}");
+        }
+        for n in ["a.json", "a.inkboard.png", "a.inkboardx", "inkboard", "a.drawio"] {
+            assert!(!is_native_name(n), "{n}");
+        }
+    }
+
+    #[test]
     fn save_and_load_through_disk() {
         let dir = std::env::temp_dir().join(format!("wb-test-{}", Id::new()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("a.inkboard.json");
         let d = sample();
-        save(&d, &path).unwrap();
-        assert!(!path.with_extension("tmp-save").exists());
-        assert_eq!(load(&path).unwrap(), d);
+        for name in ["a.inkboard", "b.inkboard.json", "c.tableau.json"] {
+            let path = dir.join(name);
+            save(&d, &path).unwrap();
+            assert!(!path.with_extension("tmp-save").exists());
+            assert_eq!(load(&path).unwrap(), d, "{name}");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 

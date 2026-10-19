@@ -173,7 +173,7 @@ fn convert_args(input: &Path, out: &Path) -> Command {
 #[test]
 fn killing_a_save_never_leaves_a_half_written_board() {
     let dir = TempDir::new("save");
-    let target = dir.path("board.inkboard.json");
+    let target = dir.path("board.inkboard");
     run_ok(bench_args(SMALL, &target));
     let old = std::fs::read(&target).unwrap();
     let old_count = serial::load(&target).expect("the old version is valid").pages[0].objects.len();
@@ -195,11 +195,11 @@ fn killing_a_save_never_leaves_a_half_written_board() {
 #[test]
 fn killing_a_conversion_never_leaves_a_half_written_board() {
     let dir = TempDir::new("convert");
-    let big = dir.path("big.inkboard.json");
-    let small = dir.path("small.inkboard.json");
+    let big = dir.path("big.inkboard");
+    let small = dir.path("small.inkboard");
     run_ok(bench_args(BIG, &big));
     run_ok(bench_args(SMALL, &small));
-    let target = dir.path("out.inkboard.json");
+    let target = dir.path("out.inkboard");
     run_ok(convert_args(&small, &target));
     let old = std::fs::read(&target).unwrap();
     let full_time = run_ok(convert_args(&big, &target));

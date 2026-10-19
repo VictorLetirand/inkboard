@@ -2,7 +2,7 @@
 //!
 //! | Format | Import | Export |
 //! |---|---|---|
-//! | Prototype web (`.inkboard.json` v1) | yes | – |
+//! | Prototype web (`.tableau.json` v1) | yes | – |
 //! | draw.io (`.drawio`, compressed or not) | yes | yes |
 //! | Excalidraw (`.excalidraw`) | yes | yes |
 //! | JSON Canvas (`.canvas`) | yes | yes |
@@ -33,7 +33,8 @@ pub enum Format {
     Mermaid,
 }
 
-/// Guesses the format from the file name and its beginning.
+/// Guesses the format from the file name and its beginning. Native boards (`.inkboard`, `.inkboard.json`, `.tableau.json`, or any
+/// `.json`) are recognized by their `format` field, not by the extension.
 pub fn detect(file_name: &str, content: &str) -> Option<Format> {
     let ext = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {

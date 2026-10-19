@@ -1,4 +1,4 @@
-//! MCP resources: the board shown in the application (`inkboard://live`) and the `.inkboard.json` files of the allowed root,
+//! MCP resources: the board shown in the application (`inkboard://live`) and the board files (`.inkboard`, `.inkboard.json`, `.tableau.json`) of the allowed root,
 //! with subscription: the server notifies the client (`notifications/resources/updated`) when the content changes.
 //!
 //! Change is detected by polling (every 600 ms): a file's modification time, or the application's "revision + selection".
@@ -55,7 +55,7 @@ fn collect(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
         let p = e.path();
         if p.is_dir() && depth < MAX_DEPTH {
             collect(&p, depth + 1, out);
-        } else if p.file_name().and_then(|n| n.to_str()).is_some_and(|n| crate::tools::is_native_name(&n.to_ascii_lowercase())) {
+        } else if p.file_name().and_then(|n| n.to_str()).is_some_and(inkboard_core::serial::is_native_name) {
             out.push(p);
         }
     }
@@ -66,7 +66,7 @@ fn live_available(srv: &Server) -> bool {
 }
 
 impl Server {
-    /// Available resources: the application's board if it is open, and the `.inkboard.json` files under the root.
+    /// Available resources: the application's board if it is open, and the board files (`.inkboard`, `.inkboard.json`, `.tableau.json`) under the root.
     pub fn list_resources(&self) -> Vec<Value> {
         let mut v = Vec::new();
         if live_available(self) {

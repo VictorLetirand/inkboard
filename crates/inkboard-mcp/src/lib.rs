@@ -1,4 +1,4 @@
-//! MCP (Model Context Protocol) server of the whiteboard, level A: the tools read and write `.inkboard.json` files.
+//! MCP (Model Context Protocol) server of the whiteboard, level A: the tools read and write `.inkboard` files (and the older `.inkboard.json` / `.tableau.json`).
 //!
 //! The protocol is implemented by hand (JSON-RPC 2.0, one JSON message per line on stdin/stdout): `initialize`, `ping`, `tools/list`, `tools/call`.
 //! See [`tools`] for the list of tools.
@@ -50,7 +50,7 @@ impl Server {
                         "protocolVersion": version,
                         "capabilities": {"tools": {"listChanged": false}, "resources": {"subscribe": true, "listChanged": true}},
                         "serverInfo": {"name": "inkboard-mcp", "title": "Inkboard", "version": env!("CARGO_PKG_VERSION")},
-                        "instructions": "Inkboard, an offline whiteboard. When the application is open, the tools act live on the displayed board (without `path`); otherwise they take the `path` of an .inkboard.json file (created by create_board). board_changes reports what the user changed. \
+                        "instructions": "Inkboard, an offline whiteboard. When the application is open, the tools act live on the displayed board (without `path`); otherwise they take the `path` of an .inkboard file (created by create_board). board_changes reports what the user changed. \
                                          Created objects return their `id`, to reuse for connecting shapes (add_connector) or modifying them. \
                                          Without x/y, a new object is placed below the existing content. For a complete diagram, import_mermaid is the fastest."
                     }),
