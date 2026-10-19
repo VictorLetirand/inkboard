@@ -128,6 +128,99 @@ jobs:
           [ ${#files[@]} -gt 0 ] || { echo "no installer produced"; exit 1; }
           gh release upload "$TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
+      # --- Installer checks (manual runs only) ------------------------------------------------------
+      # Install each installer for real, launch the INSTALLED application (--screenshot + scripts/check_png.py), uninstall, check the
+      # uninstall. They run only for workflow_dispatch and come after every build / sign / publish step, so a real tag publication
+      # (installers already attached to the Release) can never be blocked or changed by them. Here a failure is meant to be red.
+      # File names in dist/ come from cargo-packager: each step expects exactly one match of its glob and lists dist/ otherwise.
+      # Every launch is bounded to 120 s; logs and screenshots are uploaded only on failure (3 days).
+      - name: Check the NSIS installer (Windows)
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $f = @(Get-ChildItem dist -Filter '*-setup.exe')
+          if ($f.Count -ne 1) { Get-ChildItem dist | Out-Host; throw "expected one *-setup.exe in dist/, found $($f.Count)" }
+          ./scripts/check_installer_windows.ps1 -Kind nsis -Installer $f[0].FullName -Png installer-check/nsis.png
+
+      - name: Check the MSI installer (Windows)
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $f = @(Get-ChildItem dist -Filter '*.msi')
+          if ($f.Count -ne 1) { Get-ChildItem dist | Out-Host; throw "expected one *.msi in dist/, found $($f.Count)" }
+          ./scripts/check_installer_windows.ps1 -Kind msi -Installer $f[0].FullName -Png installer-check/msi.png
+
+      - name: Check the .deb and the AppImage (Linux)
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 15
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p installer-check
+          sudo apt-get update && sudo apt-get install -y xvfb mesa-utils libgl1-mesa-dri libxkbcommon-x11-0 mesa-vulkan-drivers
+          one() { # one <glob in dist/>: prints the single matching file
+            local f=( dist/$1 )
+            if [ ${#f[@]} -ne 1 ] || [ ! -e "${f[0]}" ]; then echo "expected exactly one $1 in dist/:" >&2; ls -l dist >&2; exit 1; fi
+            echo "${f[0]}"
+          }
+          launch() { xvfb-run -a -s "-screen 0 1920x1080x24" /usr/bin/timeout 120 "$@"; }
+
+          # .deb: install with its dependencies, launch the installed binary, remove, check it is gone
+          deb=$(one '*.deb')
+          pkg=$(dpkg-deb -f "$deb" Package)
+          sudo apt-get install -y "$PWD/$deb"
+          bin=""
+          for p in $(dpkg -L "$pkg" | grep -E '/inkboard$'); do
+            if [ -f "$p" ] && [ -x "$p" ]; then bin=$p; break; fi
+          done
+          [ -n "$bin" ] || { echo "no inkboard executable in package $pkg:" >&2; dpkg -L "$pkg" >&2; exit 1; }
+          echo "Installed binary: $bin"
+          launch "$bin" --screenshot installer-check/deb.png
+          python3 scripts/check_png.py installer-check/deb.png
+          sudo apt-get remove -y "$pkg"
+          if [ -e "$bin" ] || dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'; then echo "$pkg is still installed after apt-get remove" >&2; exit 1; fi
+
+          # AppImage: no FUSE needed with --appimage-extract-and-run
+          img=$(one '*.AppImage')
+          chmod +x "$img"
+          launch "$PWD/$img" --appimage-extract-and-run --screenshot installer-check/appimage.png
+          python3 scripts/check_png.py installer-check/appimage.png
+
+      - name: Check the .dmg (macOS)
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'macOS'
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          mkdir -p installer-check
+          f=( dist/*.dmg )
+          if [ ${#f[@]} -ne 1 ] || [ ! -e "${f[0]}" ]; then echo "expected exactly one *.dmg in dist/:" >&2; ls -l dist >&2; exit 1; fi
+          mnt=$(mktemp -d)
+          hdiutil attach "${f[0]}" -mountpoint "$mnt" -nobrowse -readonly
+          trap 'hdiutil detach "$mnt" -force >/dev/null 2>&1 || true' EXIT
+          app=$(find "$mnt" -maxdepth 1 -name '*.app' | head -n 1)
+          [ -n "$app" ] || { echo "no .app in the dmg:" >&2; ls -l "$mnt" >&2; exit 1; }
+          ditto "$app" "$RUNNER_TEMP/installed.app"
+          hdiutil detach "$mnt"
+          exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$RUNNER_TEMP/installed.app/Contents/Info.plist")
+          echo "Installed binary: $RUNNER_TEMP/installed.app/Contents/MacOS/$exe"
+          perl -e 'alarm 120; exec @ARGV' -- "$RUNNER_TEMP/installed.app/Contents/MacOS/$exe" --screenshot installer-check/dmg.png
+          python3 scripts/check_png.py installer-check/dmg.png
+          rm -rf "$RUNNER_TEMP/installed.app"
+
+      - name: Upload the installer check logs and screenshots (failure only)
+        if: failure() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-check-${{ matrix.name }}
+          path: installer-check/
+          if-no-files-found: ignore
+          retention-days: 3
+
   # Publishes the new version to the Windows Package Manager (winget) once the installers are attached. Only for stable tags (no hyphen),
   # and only when the secret WINGET_TOKEN (a classic token with `public_repo`) is set. The first version of a package is submitted by hand
   # (see docs/DISTRIBUTION.md); this job then keeps it up to date.
