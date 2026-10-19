@@ -58,8 +58,13 @@ pub fn to_json(doc: &Document, pretty: bool) -> String {
     r.expect("serializing a document cannot fail")
 }
 
+/// Removes a UTF-8 byte order mark (written by Notepad and PowerShell 5): neither JSON nor the text formats accept it.
+pub fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{feff}').unwrap_or(s)
+}
+
 pub fn from_json(s: &str) -> Result<Document, LoadError> {
-    let env: EnvelopeIn = serde_json::from_str(s)?;
+    let env: EnvelopeIn = serde_json::from_str(strip_bom(s))?;
     if !is_native_format(&env.format) {
         return Err(LoadError::WrongFormat(env.format));
     }

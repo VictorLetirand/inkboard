@@ -36,6 +36,7 @@ pub enum Format {
 /// Guesses the format from the file name and its beginning. Native boards (`.inkboard`, `.inkboard.json`, `.tableau.json`, or any
 /// `.json`) are recognized by their `format` field, not by the extension.
 pub fn detect(file_name: &str, content: &str) -> Option<Format> {
+    let content = inkboard_core::serial::strip_bom(content);
     let ext = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
         "drawio" => return Some(Format::DrawIo),
@@ -75,6 +76,7 @@ pub fn import_any(file_name: &str, content: &str, m: &dyn Measurer) -> Result<Im
 
 /// Like [`import_any`], resolving the built-in icons of draw.io (`image=img/lib/...`) in `icons` (e.g. an `inkboard_icons::Library`).
 pub fn import_any_with_icons(file_name: &str, content: &str, m: &dyn Measurer, icons: &dyn IconResolver) -> Result<Imported, FormatError> {
+    let content = inkboard_core::serial::strip_bom(content);
     let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
     let base = base.split('.').next().unwrap_or(base);
     match detect(file_name, content).ok_or(FormatError::Unknown)? {
