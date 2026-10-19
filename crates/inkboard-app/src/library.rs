@@ -12,6 +12,20 @@ use std::sync::Arc;
 /// The pack built by `scripts/build_icon_library.py`.
 pub static PACK: &[u8] = include_bytes!("../assets/icons.bin");
 
+/// The pack opened once for the whole process (resolves the built-in icons of an imported draw.io file); `None` if the pack is unreadable.
+pub fn shared() -> Option<&'static Library> {
+    static SHARED: std::sync::OnceLock<Option<Library>> = std::sync::OnceLock::new();
+    SHARED.get_or_init(|| Library::open(PACK).ok()).as_ref()
+}
+
+/// `inkboard_formats::import_any`, with the icon library to resolve the built-in icons of draw.io files.
+pub fn import(name: &str, content: &str, m: &dyn inkboard_core::text::Measurer) -> Result<inkboard_formats::Imported, inkboard_formats::FormatError> {
+    match shared() {
+        Some(lib) => inkboard_formats::import_any_with_icons(name, content, m, lib),
+        None => inkboard_formats::import_any(name, content, m),
+    }
+}
+
 const WIDTH: f32 = 372.0;
 const CELL: f32 = 62.0;
 /// Thumbnails rasterized per frame (the others wait for the next frame).

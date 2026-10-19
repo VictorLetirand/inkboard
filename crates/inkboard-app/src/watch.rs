@@ -28,7 +28,7 @@ impl App {
         }
         let Ok(content) = std::fs::read_to_string(&path) else { return };
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let Ok(imp) = inkboard_formats::import_any(name, &content, &self.measurer) else { return };
+        let Ok(imp) = crate::library::import(name, &content, &self.measurer) else { return };
         // keep the displayed page and the views (zoom, position) of the pages that still exist
         let (current, views): (_, Vec<_>) = (self.ed.current.clone(), self.ed.doc.pages.iter().map(|p| (p.id.clone(), p.view)).collect());
         let mut doc = imp.doc;

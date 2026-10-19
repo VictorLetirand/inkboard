@@ -365,7 +365,7 @@ impl App {
             Ok(c) => c,
             Err(e) => return self.toast(&tr!("Cannot read file: {}", e)),
         };
-        match inkboard_formats::import_any(name, &content, &self.measurer) {
+        match crate::library::import(name, &content, &self.measurer) {
             Ok(imp) => {
                 let native = inkboard_formats::detect(name, &content) == Some(inkboard_formats::Format::Native);
                 let mut doc = imp.doc;
