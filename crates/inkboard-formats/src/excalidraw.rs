@@ -217,6 +217,12 @@ pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
                 els.push(e);
             }
             Kind::Table(t) => {
+                // invisible outline carrying the table id: the element a bound connector points to
+                if page.objects.iter().any(|p| matches!(&p.kind, Kind::Connector(c) if c.targets().any(|t| *t == o.id))) {
+                    let bb = page.bounds(o);
+                    let outline = Object { style: Style { width: 0.0, fill: None, ..o.style.clone() }, ..o.clone() };
+                    els.push(base(&outline, "rectangle", bb.x, bb.y, bb.w, bb.h, 0.0));
+                }
                 for r in 0..t.rows() {
                     for c in 0..t.cols() {
                         let cr = t.cell_rect(r, c);
@@ -365,6 +371,8 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
     }
     // pre-allocated ids: lets bindings be resolved whatever the order
     let ids: HashMap<&str, Id> = els.iter().filter_map(|e| text(e, "id").map(|i| (i, Id::new()))).collect();
+    // an element without "id" gets a synthetic one
+    let own_id = |id: &str| ids.get(id).cloned().unwrap_or_else(Id::new);
     let kind_of: HashMap<&str, &str> = els.iter().filter_map(|e| Some((text(e, "id")?, text(e, "type")?))).collect();
     let mut labels: HashMap<&str, &Value> = HashMap::new();
     for e in &els {
@@ -400,13 +408,14 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                     st.stroke = c;
                 }
                 let mut o = Object::new_box(geom, Frame { x, y, w, h, angle }, st, label);
-                o.id = ids[id].clone();
+                o.id = own_id(id);
                 out.push(finish(o, e));
             }
             "text" => {
                 let container = text(e, "containerId");
                 if container.is_some_and(|c| {
-                    labels.get(c).is_some_and(|t| std::ptr::eq(*t, *e)) && matches!(kind_of.get(c), Some(&("rectangle" | "ellipse" | "diamond")))
+                    labels.get(c).is_some_and(|t| std::ptr::eq(*t, *e))
+                        && matches!(kind_of.get(c), Some(&("rectangle" | "ellipse" | "diamond" | "arrow" | "line")))
                 }) {
                     continue;
                 }
@@ -416,7 +425,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                     b.frame.angle = angle;
                 }
                 o.style.stroke = text(e, "strokeColor").and_then(parse_color).unwrap_or(Color::Ink);
-                o.id = ids[id].clone();
+                o.id = own_id(id);
                 out.push(finish(o, e));
             }
             "line" | "arrow" => {
@@ -440,14 +449,14 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                     let apex_up = (pts[0].x - bb.center().x).abs() < bb.w * 0.1 && (pts[0].y - bb.y).abs() < 1.0;
                     if apex_up {
                         let mut o = Object::new_box(BoxGeom::Triangle, Frame::from_rect(bb), style_of(e, false), Label::default());
-                        o.id = ids[id].clone();
+                        o.id = own_id(id);
                         out.push(finish(o, e));
                         continue;
                     }
                 }
                 let bind = |key: &str| -> Option<End> {
                     let t = e.get(key)?.get("elementId")?.as_str()?;
-                    (matches!(kind_of.get(t), Some(&("rectangle" | "ellipse" | "diamond" | "image" | "text")))).then(|| End::bound(ids[t].clone()))
+                    (matches!(kind_of.get(t), Some(&("rectangle" | "ellipse" | "diamond" | "image" | "text")))).then(|| End::bound(own_id(t)))
                 };
                 let mut c = Connector::new(
                     bind("startBinding").unwrap_or_else(|| End::free(pts[0])),
@@ -472,7 +481,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                     c.label = Some(Label { align: Align::Center, ..label_of(t) });
                 }
                 let mut o = Object::new(Kind::Connector(c), Style { fill: None, ..style_of(e, false) });
-                o.id = ids[id].clone();
+                o.id = own_id(id);
                 out.push(finish(o, e));
             }
             "freedraw" => {
@@ -502,7 +511,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                     Object::new_pen(pts, false, pen_style)
                 };
                 o.style.width = (num(e, "strokeWidth").max(1.0) * 1.5).max(1.5);
-                o.id = ids[id].clone();
+                o.id = own_id(id);
                 out.push(finish(o, e));
             }
             "image" => {
@@ -517,14 +526,14 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                     Kind::Image(ImageObj { frame: Frame { x, y, w, h, angle }, asset: aid, latex: None, mono: false }),
                     Style { width: 0.0, opacity: style_of(e, false).opacity, ..Style::default() },
                 );
-                o.id = ids[id].clone();
+                o.id = own_id(id);
                 out.push(finish(o, e));
             }
             "frame" | "magicframe" => {
                 report.approximated += 1;
                 let mut o =
                     Object::new_box(BoxGeom::Rect, Frame::new(x, y, w, h), Style { dash: Dash::Dashed, width: 2.0, ..Style::default() }, Label::default());
-                o.id = ids[id].clone();
+                o.id = own_id(id);
                 out.push(o);
                 if let Some(n) = text(e, "name").filter(|n| !n.is_empty()) {
                     let mut t = Object::new_box(

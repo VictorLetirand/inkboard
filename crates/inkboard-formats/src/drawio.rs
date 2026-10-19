@@ -165,6 +165,11 @@ fn page_xml(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
                 );
             }
             Kind::Table(t) => {
+                // invisible outline carrying the table id: the end of a connector bound to the table
+                if page.objects.iter().any(|p| matches!(&p.kind, Kind::Connector(c) if c.targets().any(|t| *t == o.id))) {
+                    let bb = page.bounds(o);
+                    vertex(&mut cells, &id, "", "rounded=0;html=1;fillColor=none;strokeColor=none;", geo(bb.x, bb.y, bb.w, bb.h));
+                }
                 for r in 0..t.rows() {
                     for c in 0..t.cols() {
                         let cr = t.cell_rect(r, c);
