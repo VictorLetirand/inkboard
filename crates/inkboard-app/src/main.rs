@@ -190,3 +190,5 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_ui;

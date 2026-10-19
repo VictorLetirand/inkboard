@@ -6,12 +6,12 @@ use eframe::egui::{self, Event, Key, Modifiers, PointerButton, Pos2, pos2, vec2}
 use egui_kittest::Harness;
 use inkboard_core::*;
 
-struct T {
-    h: Harness<'static, App>,
+pub(super) struct T {
+    pub(super) h: Harness<'static, App>,
 }
 
 impl T {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let mut h = Harness::builder().with_size(vec2(1300.0, 850.0)).build_eframe(|cc| {
             let mut app = App::build(cc, None, None, false);
             app.system_image = || None; // never the real clipboard in tests
@@ -26,30 +26,30 @@ impl T {
         t
     }
     /// Switches tool then lets the style panel (a floating card) settle: its first frames cover too wide an area.
-    fn tool(&mut self, tool: Tool) {
+    pub(super) fn tool(&mut self, tool: Tool) {
         self.app().set_tool(tool);
         for _ in 0..3 {
             self.h.step();
         }
     }
-    fn app(&mut self) -> &mut App {
+    pub(super) fn app(&mut self) -> &mut App {
         self.h.state_mut()
     }
     /// Screen position of a world point (view at scale 1, canvas origin).
-    fn at(&mut self, x: f64, y: f64) -> Pos2 {
+    pub(super) fn at(&mut self, x: f64, y: f64) -> Pos2 {
         let r = self.app().canvas_rect;
         let v = self.app().ed.page().view;
         pos2(r.min.x + (x * v.zoom + v.x) as f32, r.min.y + (y * v.zoom + v.y) as f32)
     }
-    fn mv(&mut self, p: Pos2) {
+    pub(super) fn mv(&mut self, p: Pos2) {
         self.h.event(Event::PointerMoved(p));
         self.h.step();
     }
-    fn button(&mut self, p: Pos2, pressed: bool, modifiers: Modifiers) {
+    pub(super) fn button(&mut self, p: Pos2, pressed: bool, modifiers: Modifiers) {
         self.h.event(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed, modifiers });
         self.h.step();
     }
-    fn drag_mods(&mut self, from: (f64, f64), to: (f64, f64), mods: Modifiers) {
+    pub(super) fn drag_mods(&mut self, from: (f64, f64), to: (f64, f64), mods: Modifiers) {
         self.h.input_mut().modifiers = mods;
         let a = self.at(from.0, from.1);
         let b = self.at(to.0, to.1);
@@ -63,34 +63,34 @@ impl T {
         self.h.input_mut().modifiers = Modifiers::NONE;
         self.mv(b);
     }
-    fn drag(&mut self, from: (f64, f64), to: (f64, f64)) {
+    pub(super) fn drag(&mut self, from: (f64, f64), to: (f64, f64)) {
         self.drag_mods(from, to, Modifiers::NONE);
     }
-    fn click(&mut self, at: (f64, f64)) {
+    pub(super) fn click(&mut self, at: (f64, f64)) {
         let p = self.at(at.0, at.1);
         self.mv(p);
         self.button(p, true, Modifiers::NONE);
         self.button(p, false, Modifiers::NONE);
     }
-    fn objects(&mut self) -> Vec<Object> {
+    pub(super) fn objects(&mut self) -> Vec<Object> {
         self.app().ed.page().objects.clone()
     }
-    fn boxes(&mut self) -> Vec<(Object, BoxObj)> {
+    pub(super) fn boxes(&mut self) -> Vec<(Object, BoxObj)> {
         self.objects().into_iter().filter_map(|o| if let Kind::Box(b) = o.kind.clone() { Some((o, b)) } else { None }).collect()
     }
-    fn add_rect(&mut self, x: f64, y: f64, w: f64, h: f64) -> Id {
+    pub(super) fn add_rect(&mut self, x: f64, y: f64, w: f64, h: f64) -> Id {
         let o = Object::new_box(BoxGeom::Rect, Frame::new(x, y, w, h), Style { fill: Some(Color::rgb(200, 220, 255)), ..Style::default() }, Label::default());
         self.app().ed.insert(o)
     }
-    fn frame(&mut self, id: &Id) -> Frame {
+    pub(super) fn frame(&mut self, id: &Id) -> Frame {
         self.app().ed.page().get(id).and_then(Object::frame).expect("object with a frame")
     }
-    fn key(&mut self, k: Key) {
+    pub(super) fn key(&mut self, k: Key) {
         self.h.key_press(k);
         self.h.step();
         self.h.step();
     }
-    fn key_mod(&mut self, m: Modifiers, k: Key) {
+    pub(super) fn key_mod(&mut self, m: Modifiers, k: Key) {
         self.h.key_press_modifiers(m, k);
         self.h.step();
         self.h.step();
