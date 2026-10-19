@@ -26,6 +26,8 @@ pub enum Dialog {
         filter: String,
         recording: Option<Action>,
     },
+    /// Confirmation before replacing a board that has unsaved changes with a new one.
+    ConfirmNew,
     /// LaTeX formula: insertion, or editing of the object `editing`.
     Formula {
         src: String,
@@ -336,6 +338,15 @@ impl App {
     pub fn title(&self) -> String {
         let name = self.path.as_ref().and_then(|p| p.file_name()).and_then(|n| n.to_str()).map_or_else(|| self.ed.doc.name.clone(), str::to_owned);
         format!("{}{} — Inkboard", if self.dirty() { "● " } else { "" }, name)
+    }
+
+    /// "New board": asks first when the current board has content and unsaved changes (the safety copy stays until confirmed).
+    pub fn request_new_document(&mut self) {
+        if self.dirty() && self.ed.doc.pages.iter().any(|p| !p.objects.is_empty()) {
+            self.dialog = Some(Dialog::ConfirmNew);
+        } else {
+            self.new_document();
+        }
     }
 
     pub fn new_document(&mut self) {
@@ -690,7 +701,7 @@ impl App {
         }
         let sel = self.sel.clone();
         match a {
-            Action::New => self.new_document(),
+            Action::New => self.request_new_document(),
             Action::Open => self.open_dialog(),
             Action::Save => self.save(),
             Action::SaveAs => self.save_as(),

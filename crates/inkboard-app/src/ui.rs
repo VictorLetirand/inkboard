@@ -148,6 +148,22 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
         Dialog::Shortcuts { filter, recording } => {
             keep = shortcuts_dialog(app, ctx, filter, recording);
         }
+        Dialog::ConfirmNew => {
+            let mut confirmed = false;
+            let mut cancelled = false;
+            modal(t("Unsaved changes")).show(ctx, |ui| {
+                ui.label(t("This board has unsaved changes. Start a new board anyway?"));
+                ui.horizontal(|ui| {
+                    confirmed = ui.button(t("New board")).clicked();
+                    cancelled = ui.button(t("Cancel")).clicked();
+                });
+            });
+            if confirmed {
+                app.new_document();
+            } else if !cancelled {
+                keep = Some(Dialog::ConfirmNew);
+            }
+        }
         Dialog::RenamePage { id, mut name } => {
             let mut open = true;
             let mut accepted = false;

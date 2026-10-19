@@ -290,7 +290,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         theme::menu_style(ui);
         ui.set_min_width(238.0);
         if mi(ui, "filenew", "New board", &key(app, Action::New)) {
-            app.new_document();
+            app.request_new_document();
         }
         if mi(ui, "folder", "Open / import a file…", &key(app, Action::Open)) {
             app.open_dialog();

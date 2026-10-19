@@ -1,14 +1,14 @@
 //! UI tests, lot F of `context/PLAN_TESTS_AUTO.md`: every command, every tool, translations, custom shortcuts.
 //! Same approach as `tests.rs` (real egui cycle without a window); see the plan's journal for what is already covered there.
 
-use crate::app::App;
+use crate::app::{App, Dialog};
 use crate::i18n::{Lang, MISSING, set_for_thread};
 use crate::keymap::{Action, Keymap, Shortcut};
 use crate::tests::T;
 use crate::tools::Tool;
 use eframe::egui::{self, Event, Key, Pos2, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::NodeT;
+use egui_kittest::kittest::{NodeT, Queryable};
 use inkboard_core::text::SpanStyle;
 use inkboard_core::*;
 use std::path::{Path, PathBuf};
@@ -118,7 +118,7 @@ fn check_action(a: Action, sc: Shortcut) -> Check {
     let (mut t, [x, y, z]) = board();
     let t = &mut t;
     match a {
-        // Deletes the safety copy in the data folder: see `ctrl_n_starts_a_new_board_in_an_isolated_data_folder`.
+        // Deletes the safety copy in the data folder: see `ctrl_n_with_unsaved_changes_asks_first_and_removes_the_autosave_only_when_confirmed`.
         Action::New => {}
         // Native file dialogs would block the test: only check that the shortcut is bound to the action.
         Action::Open | Action::SaveAs => {
@@ -291,18 +291,87 @@ fn every_keymap_action_works_from_its_default_shortcut() {
     assert!(failures.is_empty(), "{} action(s) failed:\n{}", failures.len(), failures.join("\n"));
 }
 
+fn autosave_file() -> PathBuf {
+    inkboard_mcp::live::data_dir().join("autosave.inkboard.json")
+}
+
+fn confirm_new_is_open(t: &mut T) -> bool {
+    matches!(t.app().dialog, Some(Dialog::ConfirmNew))
+}
+
 #[test]
-fn ctrl_n_starts_a_new_board_in_an_isolated_data_folder() {
+fn ctrl_n_with_unsaved_changes_asks_first_and_removes_the_autosave_only_when_confirmed() {
     // `new_document` removes the autosave of the data folder: never run it against the real one
-    isolated("ctrl_n_starts_a_new_board_in_an_isolated_data_folder", |_| {
+    isolated("ctrl_n_with_unsaved_changes_asks_first_and_removes_the_autosave_only_when_confirmed", |_| {
         let (mut t, [x, ..]) = board();
         t.app().sel = vec![x];
         t.app().path = Some(PathBuf::from("old.inkboard.json"));
+        std::fs::create_dir_all(autosave_file().parent().unwrap()).unwrap();
+        std::fs::write(autosave_file(), "{}").unwrap();
+        assert!(t.app().dirty(), "setup: the board has unsaved changes");
+
+        // Ctrl+N: confirmation, nothing changed yet
         press(&mut t, Keymap::default_for(Action::New)[0]);
+        assert!(confirm_new_is_open(&mut t), "no confirmation dialog");
+        assert_eq!(t.objects().len(), 3);
+        assert!(autosave_file().exists(), "the autosave must stay until confirmed");
+
+        // Cancel: everything is kept
+        t.h.get_by_label("Cancel").click();
+        t.h.step();
+        t.h.step();
+        assert!(!confirm_new_is_open(&mut t), "the dialog is closed");
+        assert_eq!(t.objects().len(), 3, "cancel keeps the board");
+        assert!(t.app().path.is_some() && t.app().sel.len() == 1 && t.app().dirty());
+        assert!(autosave_file().exists(), "cancel keeps the autosave");
+
+        // Ctrl+N again then confirm: new empty board, autosave removed
+        press(&mut t, Keymap::default_for(Action::New)[0]);
+        assert!(confirm_new_is_open(&mut t));
+        t.h.get_by_label("New board").click();
+        t.h.step();
+        t.h.step();
+        assert!(!confirm_new_is_open(&mut t));
         assert!(t.objects().is_empty(), "the board is emptied");
         assert!(t.app().sel.is_empty() && t.app().path.is_none());
         assert!(!t.app().dirty(), "a new board is clean");
+        assert!(!autosave_file().exists(), "the autosave is removed after confirmation");
     });
+}
+
+#[test]
+fn ctrl_n_without_unsaved_changes_starts_a_new_board_without_asking() {
+    isolated("ctrl_n_without_unsaved_changes_starts_a_new_board_without_asking", |_| {
+        let new = Keymap::default_for(Action::New)[0];
+        // saved board
+        let (mut t, [x, ..]) = board();
+        t.app().sel = vec![x];
+        t.app().path = Some(PathBuf::from("old.inkboard.json"));
+        t.app().saved_rev = t.app().ed.revision();
+        assert!(!t.app().dirty(), "setup: the board is saved");
+        press(&mut t, new);
+        assert!(!confirm_new_is_open(&mut t), "a saved board needs no confirmation");
+        assert!(t.objects().is_empty() && t.app().path.is_none() && t.app().sel.is_empty());
+        // empty board
+        let mut t = T::new();
+        press(&mut t, new);
+        assert!(!confirm_new_is_open(&mut t), "an empty board needs no confirmation");
+        assert!(t.objects().is_empty());
+    });
+}
+
+#[test]
+fn the_new_board_confirmation_is_translated() {
+    set_for_thread(Some(Lang::Fr));
+    let (mut t, _) = board();
+    press(&mut t, Keymap::default_for(Action::New)[0]);
+    assert!(confirm_new_is_open(&mut t));
+    for en in ["Cancel", "New board", "Unsaved changes"] {
+        let fr = crate::i18n::t(en);
+        assert_ne!(fr, en, "{en} is not translated");
+        t.h.get_by_label(&fr);
+    }
+    set_for_thread(None);
 }
 
 #[test]
