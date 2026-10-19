@@ -34,6 +34,43 @@ fn project_is_dual_licensed_mit_or_apache_with_both_texts_present() {
     assert!(read("THIRD_PARTY_LICENSES.md").contains("STIX Two Math"), "the embedded font is credited");
 }
 
+/// cargo-packager 0.11.8 reads `association.ext` (a field that does not exist; the real one is `extensions`) in its WiX template and in the
+/// uninstall part of its NSIS template: the `.msi` registered no association and the `.exe` removed none. The repository carries corrected
+/// copies of both templates; this offline test checks that they are wired in and keep the fix.
+#[test]
+fn installer_templates_handle_the_file_association_fields_correctly() {
+    let pk = read("Packager.toml");
+    assert!(pk.contains("extensions = [\"inkboard\"]"), "the .inkboard association is declared");
+    assert!(pk.contains("template = \"packaging/wix/main.wxs\""), "[wix] uses the corrected template");
+    assert!(pk.contains("template = \"packaging/nsis/installer.nsi\""), "[nsis] uses the corrected template");
+
+    let wxs = read("packaging/wix/main.wxs");
+    assert!(wxs.contains("{{#each association.extensions as |ext|"), "WiX: the association loop reads `extensions`");
+    assert!(!wxs.contains("association.ext "), "WiX: no loop on the nonexistent `association.ext`");
+    assert!(wxs.contains("<ProgId") && wxs.contains("<Extension") && wxs.contains("<Verb Id=\"open\""), "WiX: ProgId / Extension / Verb are written");
+
+    let nsi = read("packaging/nsis/installer.nsi");
+    assert!(nsi.contains("!insertmacro APP_ASSOCIATE "), "NSIS: the installer registers the association");
+    assert!(!nsi.contains("association.ext "), "NSIS: no loop on the nonexistent `association.ext`");
+    assert!(!nsi.contains("!insertmacro APP_UNASSOCIATE"), "NSIS: the uninstaller does not use the macro that leaves keys behind");
+    let uninstall = nsi.split("Section Uninstall").nth(1).expect("the uninstall section exists");
+    assert!(
+        uninstall.contains("{{#each association.extensions as |ext|")
+            && uninstall.contains("!insertmacro INKBOARD_UNASSOCIATE \"{{ext}}\" \"{{or association.name ext}}\""),
+        "NSIS: the uninstaller removes every declared extension"
+    );
+    let mac = nsi.split("!macro INKBOARD_UNASSOCIATE").nth(1).and_then(|m| m.split("!macroend").next()).expect("the macro exists");
+    let mac = mac.replace('\\', "/");
+    for needle in [
+        "DeleteRegKey SHCTX \"Software/Classes/${FILECLASS}\"",
+        "DeleteRegKey /ifempty SHCTX \"Software/Classes/.${EXT}\"",
+        "DeleteRegValue SHCTX \"Software/Classes/.${EXT}\" \"${FILECLASS}_backup\"",
+    ] {
+        assert!(mac.contains(needle), "NSIS: the uninstall macro contains `{needle}`");
+    }
+    assert!(!mac.contains("DeleteRegKey SHCTX \"Software/Classes/.${EXT}\""), "NSIS: the extension key is never deleted when it still holds something else");
+}
+
 /// Targets of the released binaries (same list as `scripts/gen_third_party.py`).
 const RELEASE_TARGETS: [&str; 4] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"];
 

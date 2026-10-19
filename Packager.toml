@@ -54,6 +54,13 @@ sidebar-image = "packaging/installer/sidebar.bmp"
 header-image = "packaging/installer/header.bmp"
 # the uninstaller offers to remove the user's data (custom shortcuts, language, autosaves); kept by default
 appdata-paths = ["$APPDATA/$PRODUCTNAME"]
+# copy of the default template of cargo-packager 0.11.8 whose uninstaller really removes the `.inkboard` association (see the header of the file)
+template = "packaging/nsis/installer.nsi"
+
+# Windows installer (.msi): copy of the default template of cargo-packager 0.11.8 that reads `association.extensions` (see the header of the file),
+# otherwise the `.inkboard` association (Extension / ProgId / Verb tables) is missing from the package.
+[wix]
+template = "packaging/wix/main.wxs"
 
 # Linux (.deb): libraries loaded at runtime by egui/winit (untested: no Linux machine was available during development).
 [deb]
