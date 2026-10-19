@@ -477,7 +477,7 @@ impl Keymap {
             if !b.len().is_multiple_of(2) {
                 return Err("truncated UTF-16 file".to_owned());
             }
-            String::from_utf16(&b.chunks_exact(2).map(|c| from([c[0], c[1]])).collect::<Vec<_>>()).map_err(|_| "invalid UTF-16 file".to_owned())
+            String::from_utf16(&b.as_chunks::<2>().0.iter().map(|c| from(*c)).collect::<Vec<_>>()).map_err(|_| "invalid UTF-16 file".to_owned())
         };
         match bytes {
             [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),

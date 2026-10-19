@@ -301,7 +301,7 @@ fn export_demo_board_svg_rendered_to_png() {
         // pixels of `raster.rs` (thumbnail path): premultiplied RGBA -> straight RGBA
         let r = inkboard_formats::raster::svg_to_raster_fit(&svg, 900, true).expect("SVG rendered");
         let mut pixels = r.rgba_premultiplied;
-        for p in pixels.chunks_exact_mut(4) {
+        for p in pixels.as_chunks_mut::<4>().0 {
             let a = u32::from(p[3]);
             if a != 0 && a != 255 {
                 for c in &mut p[..3] {
