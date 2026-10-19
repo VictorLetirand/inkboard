@@ -414,3 +414,20 @@ nouveau : `crates/inkboard-pen/tests/synthetic.rs`.
 - `crates/inkboard-mcp/src/tools.rs` → `resolve` : si l'entrée finale existe (`symlink_metadata`), elle est canonicalisée et doit rester sous la racine ; un lien cassé est refusé.
 - `tests/security.rs` : `#[ignore]` retiré. `docs/MCP.md` et `docs/fr/MCP.md` : phrase corrigée.
 - `cargo fmt`, `clippy -D warnings` OK ; `cargo test --workspace` : 305 réussis, 0 échec, 2 ignorés (aucun BUG).
+
+### Lot C — 2026-10-19
+- Fait : étape 1 validée sous Windows : `cargo run --release -p inkboard-app -- --screenshot out/win.png` quitte seul (code 0, ~1,5 s, PNG 1700×1075). Même chose vérifiée avec `--ui-demo menu` et l'ouverture d'un `.drawio` et d'un `.excalidraw` du corpus (code 0, PNG valides). `scripts/check_png.py` (stdlib : `zlib` + `struct`, PNG 8 bits non entrelacé) : code 1 si < 800×600, si < 50 couleurs distinctes sur un échantillon (1 pixel sur 3 d'une ligne sur 5), ou si le fichier est absent / illisible. `smoke.yml` écrit, **non lancé**.
+- Fichiers créés / modifiés : `scripts/check_png.py`, `.github/workflows/smoke.yml` (créés). Aucun changement dans `src/`, `ci.yml`, `release.yml`.
+- Commandes et résultats :
+  - `check_png.py` : PNG réel → OK (58 couleurs, 0,5 s) ; PNG uniforme 1000×700 → code 1 (« 1 distinct colors ») ; PNG 400×300 → code 1 ; fichier absent → code 1.
+  - Le corps du pas « Launch » du workflow, exécuté localement avec `RUNNER_OS=Windows` : 4 lancements + 4 `check_png` OK.
+  - `actionlint` : indisponible (pas installé ; Docker Desktop est arrêté). Relecture + `yaml.safe_load` (PyYAML 6.0.3) : OK (5 lignes de matrice, `timeout-minutes: 15`, déclencheurs `push` sur `main` + `workflow_dispatch`).
+  - `cargo fmt --all --check` OK ; `cargo clippy --workspace --all-targets -- -D warnings` OK ; `cargo test --workspace` : 305 réussis, 0 échec, 2 ignorés (11,8 s, cache chaud).
+- Bugs trouvés : aucun.
+- Écarts au plan et pourquoi :
+  - Matrice : windows, linux (rendu par défaut), linux-wgpu, linux-glow, macos (5 lignes ; `INKBOARD_RENDERER` vide pour les 3 autres).
+  - Linux : ajout de `mesa-vulkan-drivers` à la liste d'installation (lavapipe), sinon la ligne `wgpu` n'aurait pas de Vulkan logiciel et risquerait un faux échec ; `xvfb-run -a -s "-screen 0 1920x1080x24"` (l'écran par défaut 640×480×8 est trop petit pour GL et pour la fenêtre 1360×860).
+  - Délai de 120 s : `/usr/bin/timeout` (Git Bash et Linux) ; macOS n'a pas `timeout` : `perl -e 'alarm 120; exec @ARGV'`.
+  - Fichiers ouverts : `drawio/nogibjj__p3.drawio` et `excalidraw/JonRC__sample.excalidraw` (testés en local). Sous Windows, le build release est une application « GUI » : aucune sortie console, c'est sans importance ici.
+  - PNG envoyés `if: failure()`, `retention-days: 3`, nom `smoke-<ligne>`.
+- Reste à faire / besoin d'une décision : **un vrai test exige un push** (déclencheur `push` sur `main` ou `workflow_dispatch`) : à demander à l'utilisateur, non fait. Points à surveiller au premier lancement : Windows (le runner n'a probablement pas d'OpenGL 3 : repli `wgpu` attendu), `linux-wgpu` (Vulkan logiciel), macOS (session graphique du runner). Relancer `actionlint` si un poste en dispose.

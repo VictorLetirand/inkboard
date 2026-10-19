@@ -1,0 +1,83 @@
+name: Smoke
+
+# Launches the real application (release build) on the 3 systems: --screenshot, --ui-demo menu, and opening a corpus file.
+# Each launch must exit by itself within 120 s and produce a PNG that scripts/check_png.py accepts (>= 800x600, not blank).
+# PNGs are uploaded only on failure (a free account's artifact storage quota is quickly reached).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows, os: windows-latest, bin: target/release/inkboard.exe, renderer: "" }
+          - { name: linux, os: ubuntu-latest, bin: target/release/inkboard, renderer: "" }
+          - { name: linux-wgpu, os: ubuntu-latest, bin: target/release/inkboard, renderer: wgpu }
+          - { name: linux-glow, os: ubuntu-latest, bin: target/release/inkboard, renderer: glow }
+          - { name: macos, os: macos-latest, bin: target/release/inkboard, renderer: "" }
+    env:
+      BIN: ${{ matrix.bin }}
+      INKBOARD_RENDERER: ${{ matrix.renderer }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux dependencies (virtual display, software OpenGL / Vulkan)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-utils libgl1-mesa-dri libxkbcommon-x11-0 mesa-vulkan-drivers
+
+      - name: Build (release)
+        run: cargo build --release -p inkboard-app
+
+      - name: Launch the application and check the screenshots
+        shell: bash
+        env:
+          LIBGL_ALWAYS_SOFTWARE: ${{ runner.os == 'Linux' && '1' || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p smoke
+          corpus=crates/inkboard-formats/tests/corpus
+          py=python3
+          if [ "$RUNNER_OS" = Windows ]; then py=python; fi
+
+          # every launch is bounded to 120 s: a hang is a failure
+          launch() {
+            case "$RUNNER_OS" in
+              Linux) xvfb-run -a -s "-screen 0 1920x1080x24" /usr/bin/timeout 120 "$@" ;;
+              macOS) perl -e 'alarm 120; exec @ARGV' -- "$@" ;; # no GNU timeout on macOS runners
+              *) /usr/bin/timeout 120 "$@" ;;
+            esac
+          }
+          check() { # check <png> <application arguments...>
+            local png=$1
+            shift
+            echo "::group::$*"
+            launch "$BIN" --screenshot "$png" "$@"
+            "$py" scripts/check_png.py "$png"
+            echo "::endgroup::"
+          }
+
+          check smoke/screenshot.png
+          check smoke/menu.png --ui-demo menu
+          check smoke/open-drawio.png "$corpus/drawio/nogibjj__p3.drawio"
+          check smoke/open-excalidraw.png "$corpus/excalidraw/JonRC__sample.excalidraw"
+
+      - name: Upload the screenshots (failure only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.name }}
+          path: smoke/*.png
+          if-no-files-found: ignore
+          retention-days: 3
