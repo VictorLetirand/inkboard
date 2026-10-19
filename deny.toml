@@ -17,16 +17,7 @@ targets = [
 # `-W unmaintained`) and yanked versions only warn.
 unmaintained = "all"
 yanked = "warn"
-ignore = [
-    # quick-xml 0.38.4, only through zbus_xml 5.1.0 <- zbus-lockstep <- atspi-common
-    # <- accesskit_unix <- accesskit_winit <- egui-winit <- eframe (Linux
-    # accessibility, D-Bus introspection XML from the local session bus, not
-    # untrusted files). Fix needs quick-xml >= 0.41, i.e. zbus_xml 6 and a newer
-    # egui/accesskit stack: no change of dependency in this step.
-    # Ignored on 2026-10-19, to be decided by the maintainer (see PLAN_TESTS_AUTO.md, lot G).
-    "RUSTSEC-2026-0194", # quadratic run time on a start tag with many attributes
-    "RUSTSEC-2026-0195", # unbounded namespace-declaration allocation in NsReader
-]
+ignore = []
 
 [licenses]
 # Permissive licenses only. No GPL / AGPL / LGPL.
