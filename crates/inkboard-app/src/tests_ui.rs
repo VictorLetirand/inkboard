@@ -573,6 +573,112 @@ fn text_tool_with_the_lock_ends_the_edit_on_the_next_click_without_an_empty_box(
     assert!(t.app().editing.is_some() && t.objects().len() == 2);
 }
 
+/* --------------------------------------------- tool lock (D9) */
+
+/// Center of the toolbar button with this accessible name (English; the lock button has its own name).
+fn button_center(t: &T, name: &str) -> Pos2 {
+    let b = t.h.get_by_label(name).accesskit_node().bounding_box().unwrap_or_else(|| panic!("button {name} has no box"));
+    Pos2::new(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
+}
+
+/// Accessible state of a button: `Some(true)` pressed / locked, `Some(false)` not pressed.
+fn is_pressed(t: &T, name: &str) -> Option<bool> {
+    t.h.get_by_label(name).accesskit_node().data().toggled().map(|v| v == egui::accesskit::Toggled::True)
+}
+
+fn double_click_button(t: &mut T, name: &str) {
+    let p = button_center(t, name);
+    t.mv(p);
+    // each step advances the clock by 0.25 s, more than egui's double-click delay: give the events explicit, close times
+    let t0 = t.h.ctx.input(|i| i.time);
+    for (k, pressed) in [true, false, true, false].into_iter().enumerate() {
+        t.h.input_mut().time = Some(t0 + 0.05 * (k + 1) as f64);
+        t.button(p, pressed, egui::Modifiers::NONE);
+    }
+    for _ in 0..3 {
+        t.h.step();
+    }
+}
+
+fn click_button(t: &mut T, name: &str) {
+    let p = button_center(t, name);
+    t.mv(p);
+    t.button(p, true, egui::Modifiers::NONE);
+    t.button(p, false, egui::Modifiers::NONE);
+    for _ in 0..3 {
+        t.h.step();
+    }
+}
+
+#[test]
+fn double_clicking_a_creation_tool_locks_it_and_the_state_is_visible_in_the_ui() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    let lock = "Keep the tool active after drawing";
+    assert_eq!(is_pressed(&t, lock), Some(false));
+    double_click_button(&mut t, "Rectangle");
+    assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Rect));
+    assert!(t.app().tool_lock, "double-click should lock the tool");
+    assert_eq!(is_pressed(&t, lock), Some(true), "the global lock button reflects the state");
+    assert_eq!(is_pressed(&t, "Rectangle (locked)"), Some(true), "the locked tool is exposed as locked");
+    assert_eq!(is_pressed(&t, "Ellipse"), Some(false));
+    t.click(P1);
+    t.click(P2);
+    assert_eq!(t.objects().len(), 2, "the tool stays active: a second rectangle is created");
+    assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Rect));
+    set_for_thread(None);
+}
+
+#[test]
+fn a_single_click_on_a_tool_does_not_lock_it_and_other_tools_have_no_lock() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    click_button(&mut t, "Rectangle");
+    assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Rect));
+    assert!(!t.app().tool_lock, "a single click must not lock");
+    assert_eq!(is_pressed(&t, "Rectangle"), Some(true), "active but not locked");
+    t.click(P1);
+    assert_eq!(t.app().tool, Tool::Select, "unlocked: the hand is given back");
+    for name in ["Select", "Hand", "Pen", "Eraser"] {
+        double_click_button(&mut t, name);
+        assert!(!t.app().tool_lock, "double-click on {name} must not lock");
+    }
+    set_for_thread(None);
+}
+
+#[test]
+fn the_lock_button_toggles_and_the_tool_tips_are_translated() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    click_button(&mut t, "Keep the tool active after drawing");
+    assert!(t.app().tool_lock);
+    click_button(&mut t, "Keep the tool active after drawing");
+    assert!(!t.app().tool_lock);
+    set_for_thread(Some(Lang::Fr));
+    for en in ["Keep the tool active after drawing", "Double-click to lock", "locked"] {
+        assert_ne!(crate::i18n::t(en), en, "{en} is not translated");
+    }
+    set_for_thread(None);
+}
+
+#[test]
+fn the_lock_tool_tip_shows_the_current_shortcut_of_the_action() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    let sc = Shortcut::key(Key::J);
+    t.app().keymap.reset_all();
+    t.app().keymap.remove(Action::ToolLock, &Shortcut::key(Key::Q));
+    t.app().keymap.add(Action::ToolLock, sc).unwrap();
+    let p = button_center(&t, "Keep the tool active after drawing");
+    t.mv(p);
+    t.mv(p + vec2(1.0, 0.0));
+    for _ in 0..30 {
+        t.h.step();
+    }
+    t.h.get_by_label("Keep the tool active after drawing (J)");
+    set_for_thread(None);
+}
+
 /* ------------------------------------------------------ translations */
 
 #[test]

@@ -83,6 +83,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Dots", "Points"),
     ("Dotted", "Pointillés"),
     ("Double-click to edit the code", "Double-clic pour modifier le code"),
+    ("Double-click to lock", "Double-clic pour verrouiller"),
     (
         "Draw with the pen (vary the pressure), then flip the pen to erase, then press the barrel button. Copy the report.",
         "Dessinez avec le crayon (variez la pression), puis retournez le stylet pour effacer, puis appuyez sur le bouton latéral. Copiez le rapport.",
@@ -143,6 +144,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Italic (Ctrl+I)", "Italique (Ctrl+I)"),
     ("JSON Canvas: {} elements that cannot be represented were skipped", "JSON Canvas : {} élément(s) non représentables ignorés"),
     ("Keep the tool active", "Garder l'outil actif"),
+    ("Keep the tool active after drawing", "Garder l'outil actif après le tracé"),
     ("Keyboard shortcuts", "Raccourcis clavier"),
     ("Keyboard shortcuts…", "Raccourcis clavier…"),
     (
@@ -290,6 +292,7 @@ pub const FR: &[(&str, &str)] = &[
         "flowchart TD\n  A[Idea] --> B{Feasible?}\n  B -->|Yes| C[Prototype]\n  B -->|No| D[Drop it]",
         "flowchart TD\n  A[Idée] --> B{Faisable ?}\n  B -->|Oui| C[Prototype]\n  B -->|Non| D[Abandon]",
     ),
+    ("locked", "verrouillé"),
     ("mouse", "souris"),
     ("no", "non"),
     ("no message received", "aucun message reçu"),

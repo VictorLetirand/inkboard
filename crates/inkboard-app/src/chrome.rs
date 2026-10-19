@@ -116,8 +116,23 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
                 }
                 for (tool, icon, label) in *group {
                     let key = Action::for_tool(*tool).map(|a| app.keymap.label(a)).unwrap_or_default();
-                    let tip = if key.is_empty() { t(label) } else { format!("{} ({key})", t(label)) };
-                    if theme::icon_button(ui, icon, app.tool == *tool, true).on_hover_text(tip).clicked() {
+                    let mut tip = if key.is_empty() { t(label) } else { format!("{} ({key})", t(label)) };
+                    let lockable = lockable(*tool);
+                    if lockable {
+                        tip = format!("{tip}\n{}", t("Double-click to lock"));
+                    }
+                    let (active, locked) = (app.tool == *tool, app.tool == *tool && app.tool_lock && lockable);
+                    let resp = theme::icon_button(ui, icon, active, true);
+                    if locked {
+                        theme::lock_badge(ui, resp.rect);
+                    }
+                    let name = if locked { format!("{} ({})", t(label), t("locked")) } else { t(label) };
+                    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, &name));
+                    let resp = resp.on_hover_text(tip);
+                    if resp.double_clicked() && lockable {
+                        app.set_tool(*tool);
+                        app.tool_lock = true;
+                    } else if resp.clicked() {
                         app.set_tool(*tool);
                     }
                 }
@@ -133,12 +148,20 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
                 app.set_tool(Tool::Laser);
             }
             theme::vsep(ui);
-            let tip = format!("{} ({})", t("Keep the tool active"), app.keymap.label(Action::ToolLock));
-            if theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, true).on_hover_text(tip).clicked() {
+            let name = t("Keep the tool active after drawing");
+            let tip = format!("{name} ({})", app.keymap.label(Action::ToolLock));
+            let resp = theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, true);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, app.tool_lock, &name));
+            if resp.on_hover_text(tip).clicked() {
                 app.tool_lock = !app.tool_lock;
             }
         });
     });
+}
+
+/// Tools that create an object and then give the hand back, so the lock makes sense for them (not Select, Hand, Eraser, Laser, nor the continuous Pen, Highlighter, Vote).
+fn lockable(tool: Tool) -> bool {
+    matches!(tool, Tool::Shape(_) | Tool::Line | Tool::Arrow | Tool::Text | Tool::Sticky | Tool::Table)
 }
 
 /* ---------------------------------------------------------- barre du bas */

@@ -146,6 +146,14 @@ pub fn icon_button(ui: &mut Ui, name: &str, active: bool, enabled: bool) -> Resp
     resp
 }
 
+/// Small padlock badge in the bottom-right corner of an icon button: the tool is locked (stays active after drawing).
+pub fn lock_badge(ui: &Ui, button: egui::Rect) {
+    let p = current(ui.ctx());
+    let c = button.right_bottom() - vec2(8.0, 8.0);
+    ui.painter().circle(c, 7.0, p.ac, Stroke::new(1.0_f32, p.ui));
+    icons::paint(ui.painter(), "lock", egui::Rect::from_center_size(c, vec2(9.0, 9.0)), p.ui);
+}
+
 /// Compact text button of the bottom bar (`.btn.txt`).
 pub fn text_button(ui: &mut Ui, text: &str) -> Response {
     let p = current(ui.ctx());
