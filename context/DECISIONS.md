@@ -39,4 +39,4 @@
 | D7 | Fait : licences régénérées + test de contrôle | `e76cd73`, `a4a09f8` |
 | D8 | Fait (association `.msi` probablement absente, installeurs jamais lancés) | `09feeca`, `d1b006a`, `60d5eb9`, `7cf662a` |
 | D9 | Fait (rendu du badge non vérifié à l'écran) | `b26a8ec` |
-| D1 | En cours, branche à part | – |
+| D1 | Fait par `Cargo.lock` seul (`zbus_xml` 5.2.1, pas de montée egui), voir Journal « D1 » | branche `chore/upgrade-egui` |

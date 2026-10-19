@@ -19,7 +19,7 @@ Inkboard embeds a library of about 28,000 icons (`crates/inkboard-app/assets/ico
 - **Tabler Icons**: MIT. **Lucide**: ISC. **Material Design Icons** (Pictogrammers): Apache License 2.0.
 - Product icons and logos (AWS, Azure, Google Cloud, Cisco, IBM, brand logos…) are trademarks or property of their respective owners and are only provided to label diagrams; Inkboard is not affiliated with or endorsed by them.
 
-## Libraries (406)
+## Libraries (407)
 
 | Crate | Version | License | Repository |
 |---|---|---|---|
@@ -252,7 +252,6 @@ Inkboard embeds a library of about 28,000 icons (`crates/inkboard-app/assets/ico
 | profiling | 1.0.18 | MIT OR Apache-2.0 | https://github.com/aclysma/profiling |
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/pxfm |
 | quick-error | 2.0.1 | MIT/Apache-2.0 | http://github.com/tailhook/quick-error |
-| quick-xml | 0.38.4 | MIT | https://github.com/tafia/quick-xml |
 | quick-xml | 0.41.0 | MIT | https://github.com/tafia/quick-xml |
 | quote | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
 | range-alloc | 0.1.5 | MIT OR Apache-2.0 | https://github.com/gfx-rs/range-alloc |
@@ -414,8 +413,9 @@ Inkboard embeds a library of about 28,000 icons (`crates/inkboard-app/assets/ico
 | zbus-lockstep | 0.5.2 | MIT | https://github.com/luukvanderduim/zbus-lockstep |
 | zbus-lockstep-macros | 0.5.2 | MIT | https://github.com/luukvanderduim/zbus-lockstep |
 | zbus_macros | 5.13.2 | MIT | https://github.com/z-galaxy/zbus/ |
-| zbus_names | 4.3.1 | MIT | https://github.com/z-galaxy/zbus/ |
-| zbus_xml | 5.1.0 | MIT | https://github.com/z-galaxy/zbus/ |
+| zbus_names | 4.3.5 | MIT | https://github.com/z-galaxy/zbus/ |
+| zbus_xml | 5.2.1 | MIT | https://github.com/z-galaxy/zbus/ |
+| zcheapstr | 1.1.0 | MIT | https://github.com/z-galaxy/zcheapstr/ |
 | zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | https://github.com/google/zerocopy |
 | zerocopy-derive | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | https://github.com/google/zerocopy |
 | zerofrom | 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
@@ -426,9 +426,10 @@ Inkboard embeds a library of about 28,000 icons (`crates/inkboard-app/assets/ico
 | zmij | 1.0.23 | MIT | https://github.com/dtolnay/zmij |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg |
-| zvariant | 5.9.2 | MIT | https://github.com/z-galaxy/zbus/ |
-| zvariant_derive | 5.9.2 | MIT | https://github.com/z-galaxy/zbus/ |
+| zvariant | 5.15.1 | MIT | https://github.com/z-galaxy/zbus/ |
+| zvariant_derive | 5.15.1 | MIT | https://github.com/z-galaxy/zbus/ |
 | zvariant_utils | 3.3.0 | MIT | https://github.com/z-galaxy/zbus/ |
+| zvariant_utils | 4.2.0 | MIT | https://github.com/z-galaxy/zbus/ |
 
 ### No license file in their package (40)
 
@@ -1218,7 +1219,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-### Text 4 — adler2 2.0.1, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.0, async-io 2.6.0, async-lock 3.4.2, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0 … (+49)
+### Text 4 — adler2 2.0.1, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.0, async-io 2.6.0, async-lock 3.4.2, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0 … (+50)
 
 ```text
 Permission is hereby granted, free of charge, to any
@@ -7637,7 +7638,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 121 — quick-xml 0.38.4, quick-xml 0.41.0
+### Text 121 — quick-xml 0.41.0
 
 ```text
 The MIT License (MIT)
@@ -13290,7 +13291,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 184 — zbus 5.13.2, zbus_macros 5.13.2, zbus_names 4.3.1, zbus_xml 5.1.0, zvariant 5.9.2, zvariant_derive 5.9.2
+### Text 184 — zbus 5.13.2, zbus_macros 5.13.2, zbus_names 4.3.5, zbus_xml 5.2.1, zvariant 5.15.1, zvariant_derive 5.15.1
 
 ```text
 Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
@@ -13320,7 +13321,37 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 185 — zerocopy 0.8.63, zerocopy-derive 0.8.63
+### Text 185 — zcheapstr 1.1.0
+
+```text
+Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### Text 186 — zerocopy 0.8.63, zerocopy-derive 0.8.63
 
 ```text
 Apache License
@@ -13526,7 +13557,7 @@ Apache License
    limitations under the License.
 ```
 
-### Text 186 — zerocopy 0.8.63, zerocopy-derive 0.8.63
+### Text 187 — zerocopy 0.8.63, zerocopy-derive 0.8.63
 
 ```text
 Copyright 2019 The Fuchsia Authors.
@@ -13555,7 +13586,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### Text 187 — zerocopy 0.8.63, zerocopy-derive 0.8.63
+### Text 188 — zerocopy 0.8.63, zerocopy-derive 0.8.63
 
 ```text
 Copyright 2023 The Fuchsia Authors
@@ -13585,7 +13616,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 188 — zune-core 0.5.3, zune-jpeg 0.5.15
+### Text 189 — zune-core 0.5.3, zune-jpeg 0.5.15
 
 ```text
 MIT License
@@ -13611,7 +13642,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 189 — zune-core 0.5.3, zune-jpeg 0.5.15
+### Text 190 — zune-core 0.5.3, zune-jpeg 0.5.15
 
 ```text
 zlib License
