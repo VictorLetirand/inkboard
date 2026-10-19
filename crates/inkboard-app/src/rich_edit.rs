@@ -15,6 +15,16 @@ use inkboard_core::text::Format;
 use inkboard_core::*;
 use std::sync::Arc;
 
+/// Where the editor put the lines of text on the last frame (screen coordinates), for tests.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub struct EditorProbe {
+    /// Left and top of every non-empty row.
+    pub rows: Vec<(f32, f32)>,
+    /// Screen position (x, top) of the caret.
+    pub caret: Option<(f32, f32)>,
+}
+
 pub struct Editing {
     pub id: Id,
     /// Raw text of the input field.
@@ -31,6 +41,13 @@ pub struct Editing {
     pub sel: (usize, usize),
     /// Selection to restore after a click on the formatting bar.
     pub restore_sel: Option<(usize, usize)>,
+    /// The object as it was when editing started: the frame follows the text while typing (not recorded in the history), and the
+    /// history gets a single before / after when editing ends.
+    pub orig: Object,
+    /// Plain text when editing started.
+    pub start_text: String,
+    /// Text alignment chosen from the formatting bar during this editing.
+    pub align: Option<Align>,
 }
 
 const HIGHLIGHTS: [Color; 8] = [
@@ -65,6 +82,37 @@ fn texts_mut(o: &mut Object) -> Vec<&mut RichText> {
     }
 }
 
+/// Puts `rich` in the text of an object (a box, a table cell or a connector label), fitting the shape to it; the same code serves the
+/// validation of an editing and the safety copy of the document made while editing.
+fn apply_text(o: &mut Object, cell: Option<(usize, usize)>, rich: &RichText, default_size: f64, align: Option<Align>, m: &dyn Measurer) {
+    match &mut o.kind {
+        Kind::Box(b) => {
+            let new_align = align.unwrap_or(b.label.align);
+            if b.label.text != *rich || b.label.align != new_align || b.geom == BoxGeom::Text {
+                b.label.text = rich.clone();
+                b.label.align = new_align;
+                if let Some(lang) = b.lang {
+                    b.label.text = inkboard_core::highlight::highlight_lang(&rich.to_plain(), lang);
+                }
+                b.fit(m);
+            }
+        }
+        Kind::Table(t) => {
+            if let Some((r, c)) = cell
+                && let Some(cell) = t.cell_mut(r, c)
+            {
+                *cell = rich.clone();
+            }
+        }
+        Kind::Connector(c) => {
+            let mut l = c.label.take().unwrap_or_else(|| Label::new("", default_size.min(16.0), Align::Center));
+            l.text = rich.clone();
+            c.label = (!rich.is_empty()).then_some(l);
+        }
+        _ => {}
+    }
+}
+
 impl App {
     pub fn start_editing(&mut self, id: &Id, cell: Option<(usize, usize)>) {
         if self.edit_formula(id) {
@@ -74,7 +122,72 @@ impl App {
         let cell = matches!(o.kind, Kind::Table(_)).then(|| cell.unwrap_or((0, 0)));
         let Some(rich) = rich_of(o, cell) else { return };
         let buf = rich.to_plain();
-        self.editing = Some(Editing { id: id.clone(), synced: buf.clone(), buf, rich, cell, fresh: false, focused: false, sel: (0, 0), restore_sel: None });
+        let orig = o.clone();
+        self.editing = Some(Editing {
+            id: id.clone(),
+            synced: buf.clone(),
+            start_text: buf.clone(),
+            buf,
+            rich,
+            cell,
+            fresh: false,
+            focused: false,
+            sel: (0, 0),
+            restore_sel: None,
+            orig,
+            align: None,
+        });
+    }
+
+    /// Is some typed text or alignment change not yet part of the document?
+    pub fn editing_pending(&self) -> bool {
+        self.editing.as_ref().is_some_and(|e| e.buf != e.start_text || e.align.is_some())
+    }
+
+    /// The document as it will be once the current editing is validated (without touching the history), to save it safely; `None` when
+    /// nothing is pending.
+    pub fn pending_document(&self) -> Option<Document> {
+        let e = self.editing.as_ref().filter(|_| self.editing_pending())?;
+        let mut rich = e.rich.clone();
+        if e.synced != e.buf {
+            rich.apply_edit(&e.synced, &e.buf);
+        }
+        let mut doc = self.ed.doc.clone();
+        let page = doc.pages.iter_mut().find(|p| p.index_of(&e.id).is_some())?;
+        let i = page.index_of(&e.id)?;
+        page.objects[i] = e.orig.clone();
+        apply_text(&mut page.objects[i], e.cell, &rich, self.label.size, e.align, &self.measurer);
+        Some(doc)
+    }
+
+    /// Keeps the frame of the edited shape in step with the text being typed (a free text grows with its text, a shape grows when the text
+    /// overflows), without recording it: the final result is exactly what the user sees while typing.
+    fn live_fit_edited(&mut self) {
+        let Some(e) = self.editing.as_mut() else { return };
+        if e.synced != e.buf {
+            e.rich.apply_edit(&e.synced, &e.buf);
+            e.synced = e.buf.clone();
+        }
+        let (id, rich, align) = (e.id.clone(), e.rich.clone(), e.align);
+        // always fitted from the object as it was before editing (as the validation does), so that fitting twice cannot make it grow twice
+        let Kind::Box(orig) = &e.orig.kind else { return };
+        let mut fitted = orig.clone();
+        let Some(Kind::Box(b)) = self.ed.page().get(&id).map(|o| &o.kind) else { return };
+        let new_align = align.unwrap_or(fitted.label.align);
+        // nothing changed: nothing to fit (the validation does the same), except a free text whose frame is always its text's
+        if fitted.label.text != rich || fitted.label.align != new_align || fitted.geom == BoxGeom::Text {
+            fitted.label.text = rich;
+            fitted.label.align = new_align;
+            if let Some(lang) = fitted.lang {
+                fitted.label.text = inkboard_core::highlight::highlight_lang(&fitted.label.text.to_plain(), lang);
+            }
+            fitted.fit(&self.measurer);
+        }
+        if fitted.frame != b.frame || fitted.label.align != b.label.align {
+            let mut o = self.ed.page().get(&id).cloned().expect("the object was just read");
+            o.kind = Kind::Box(BoxObj { label: Label { text: b.label.text.clone(), ..fitted.label.clone() }, ..fitted });
+            self.set_live(&[o]);
+        }
     }
 
     pub fn commit_editing(&mut self) {
@@ -84,6 +197,10 @@ impl App {
         }
         let empty = e.buf.trim().is_empty();
         let is_text_box = matches!(self.ed.page().get(&e.id).map(|o| &o.kind), Some(Kind::Box(b)) if b.geom == BoxGeom::Text);
+        // back to the object as it was when editing started: the history then records one before / after
+        if self.ed.page().get(&e.id).is_some() {
+            self.set_live(std::slice::from_ref(&e.orig));
+        }
         if e.fresh && empty && is_text_box {
             self.ed.undo();
             self.sel.clear();
@@ -92,30 +209,7 @@ impl App {
         let m = self.measurer.clone();
         let size = self.label.size;
         let rich = e.rich.clone();
-        self.ed.update(&e.id, |o| match &mut o.kind {
-            Kind::Box(b) => {
-                if b.label.text != rich {
-                    b.label.text = rich.clone();
-                    if let Some(lang) = b.lang {
-                        b.label.text = inkboard_core::highlight::highlight_lang(&rich.to_plain(), lang);
-                    }
-                    b.fit(&m);
-                }
-            }
-            Kind::Table(t) => {
-                if let Some((r, c)) = e.cell
-                    && let Some(cell) = t.cell_mut(r, c)
-                {
-                    *cell = rich.clone();
-                }
-            }
-            Kind::Connector(c) => {
-                let mut l = c.label.take().unwrap_or_else(|| Label::new("", size.min(16.0), Align::Center));
-                l.text = rich.clone();
-                c.label = (!rich.is_empty()).then_some(l);
-            }
-            _ => {}
-        });
+        self.ed.update(&e.id, |o| apply_text(o, e.cell, &rich, size, e.align, &m));
         if is_text_box && empty {
             self.ed.remove(std::slice::from_ref(&e.id));
             self.sel.clear();
@@ -195,7 +289,7 @@ impl App {
 
 /// Spans → egui formatted text.
 #[allow(clippy::too_many_arguments)]
-fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark: bool, wrap: f32, halign: egui::Align) -> LayoutJob {
+fn rich_job(rich: &RichText, family: FontFamily, size: f32, line_height: f32, base: Color32, dark: bool, wrap: f32, halign: egui::Align) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap;
     job.halign = halign;
@@ -209,13 +303,14 @@ fn rich_job(rich: &RichText, family: FontFamily, size: f32, base: Color32, dark:
                 color,
                 background: sp.style.highlight.map_or(Color32::TRANSPARENT, |h| col(h, dark, 0.55)),
                 italics: sp.style.italic,
+                line_height: Some(line_height),
                 underline: if sp.style.underline { Stroke::new(1.0_f32, color) } else { Stroke::NONE },
                 ..Default::default()
             },
         );
     }
     if rich.0.is_empty() {
-        job.append("", 0.0, TextFormat { font_id: font_id(family, size, false), color: base, ..Default::default() });
+        job.append("", 0.0, TextFormat { font_id: font_id(family, size, false), color: base, line_height: Some(line_height), ..Default::default() });
     }
     job
 }
@@ -324,6 +419,7 @@ fn swatch(ui: &mut egui::Ui, c: Color, active: bool, tip: &str) -> egui::Respons
 
 /// Input field overlaid on the edited object, with its formatting bar.
 pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
+    app.live_fit_edited();
     let dark = app.ed.doc.background.preset.is_dark();
     let Some(ed) = app.editing.as_ref() else { return };
     let page = app.ed.page();
@@ -334,10 +430,7 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     let (area, family, size, align, color, no_wrap): (egui::Rect, FontFamily, f32, Align, Color32, bool) = match &o.kind {
         Kind::Box(b) => {
             let color = if b.geom == BoxGeom::Sticky { Color32::from_rgb(0x1e, 0x1e, 0x1e) } else { col(o.style.stroke, dark, 1.0) };
-            let mut area = label_screen_rect(cam, &b.frame, b.label_rect());
-            if b.geom == BoxGeom::Text {
-                area = area.expand2(vec2(40.0, 0.0));
-            }
+            let area = label_screen_rect(cam, &b.frame, b.label_rect());
             (area, b.label.family, b.label.size as f32 * cam.zoom, b.label.align, color, b.geom == BoxGeom::Text)
         }
         Kind::Table(t) => {
@@ -366,6 +459,12 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         }
         _ => return,
     };
+    // the formatting bar is attached to the whole edited object
+    let anchor = match &o.kind {
+        Kind::Box(b) => cam.rect_s(b.frame.aabb()),
+        Kind::Table(t) => cam.rect_s(t.rect()),
+        _ => area,
+    };
     // same layout as the final rendering: wrap width (model units) and text alignment of the box
     let bar_align = matches!(o.kind, Kind::Box(_)).then_some(align);
     let lay_wrap = match &o.kind {
@@ -375,7 +474,6 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     };
     let model_size = f64::from(size / cam.zoom);
     let zoom = cam.zoom;
-    let edit_id = ed.id.clone();
     let measurer = app.measurer.clone();
     let ctx = ui.ctx().clone();
     let field_id = egui::Id::new("wb-text-edit-field");
@@ -398,23 +496,25 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     }
 
     // formatting bar
-    let bar_pos = {
-        let y = if area.top() > 70.0 { area.top() - 44.0 } else { area.bottom() + 8.0 };
-        egui::pos2(area.left().max(60.0), y)
+    // just above the object (below it when there is no room above), its left edge aligned with the object's
+    let above = anchor.top() > 90.0;
+    let (pivot, bar_pos) = if above {
+        (egui::Align2::LEFT_BOTTOM, egui::pos2(anchor.left().max(12.0), anchor.top() - 12.0))
+    } else {
+        (egui::Align2::LEFT_TOP, egui::pos2(anchor.left().max(12.0), anchor.bottom() + 12.0))
     };
     let mut bar_action = None;
-    egui::Area::new(egui::Id::new("wb-rich-bar")).order(egui::Order::Foreground).fade_in(false).fixed_pos(bar_pos).show(&ctx, |ui| {
+    egui::Area::new(egui::Id::new("wb-rich-bar")).order(egui::Order::Foreground).fade_in(false).pivot(pivot).fixed_pos(bar_pos).show(&ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| bar_action = format_bar(ui, app, bar_align));
     });
     match bar_action {
         Some(BarAction::Format(f)) => app.apply_format(f),
         Some(BarAction::Align(a)) => {
             app.label.align = a;
-            app.ed.update(&edit_id, |o| {
-                if let Kind::Box(b) = &mut o.kind {
-                    b.label.align = a;
-                }
-            });
+            if let Some(e) = app.editing.as_mut() {
+                // applied to the object live (see `live_fit_edited`) and recorded with the text when editing ends
+                e.align = Some(a);
+            }
         }
         None => {}
     }
@@ -427,7 +527,9 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         ctx.memory_mut(|m| m.request_focus(field_id));
     }
     let mut done = false;
-    let width = area.width().max(60.0);
+    let mut probe_rows: Vec<(f32, f32)> = Vec::new();
+    let mut probe_caret = None;
+    let width = area.width().max(if no_wrap { 6.0 } else { 60.0 });
     // vertical centering of the text block in its area, like the final rendering
     if ed.synced != ed.buf {
         ed.rich.apply_edit(&ed.synced, &ed.buf);
@@ -435,18 +537,23 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     }
     let lay = inkboard_core::text::layout_rich(&ed.rich, lay_wrap, &measurer, family, model_size);
     let y_off = ((area.height() - lay.height as f32 * zoom) / 2.0).max(0.0);
-    let wrap_px = if no_wrap { f32::INFINITY } else { width };
+    // same line height as the final rendering (egui's own row height is a little larger)
+    let line_px = lay.line_h as f32 * zoom;
+    let job_align = halign;
+    // egui counts the space that follows a word when deciding whether it still fits on the row, the final layout does not: allow for it so
+    // that both break the lines at the same words
+    let space_px = measurer.width(" ", family, model_size, false) as f32 * zoom;
+    let wrap_px = if no_wrap { f32::INFINITY } else { width + space_px };
     // egui's `TextEdit` places a galley by its left edge, but a galley laid out with a center / right alignment is anchored at the
     // middle / right of its text. So for those alignments the field is made twice as wide and shifted so that the anchor lands where
     // the final rendering puts it (using the text width computed with the same measurer).
-    let text_w = (lay.width as f32 * zoom).min(width);
+    // (egui's own width of the widest row: it differs from the measurer's by a pixel or so, which would shift the text)
+    let text_w = ctx.fonts_mut(|f| f.layout_job(rich_job(&ed.rich, family, size, line_px, color, dark, wrap_px, job_align))).rect.width();
     let (field_x, field_w, field_align) = match halign {
-        _ if no_wrap => (area.min.x, width, egui::Align::LEFT),
         egui::Align::LEFT => (area.min.x, width, egui::Align::LEFT),
         egui::Align::Center => (area.min.x + width / 2.0 + text_w / 2.0 - width, 2.0 * width, egui::Align::Center),
         egui::Align::RIGHT => (area.min.x + text_w - width, 2.0 * width, egui::Align::RIGHT),
     };
-    let job_align = if no_wrap { egui::Align::LEFT } else { halign };
     egui::Area::new(egui::Id::new("wb-text-edit"))
         .constrain(false)
         .order(egui::Order::Foreground)
@@ -461,18 +568,28 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
                     rich.apply_edit(synced, t);
                     *synced = t.to_owned();
                 }
-                let job = rich_job(rich, family, size, color, dark, wrap_px, job_align);
+                let job = rich_job(rich, family, size, line_px, color, dark, wrap_px, job_align);
                 ui.ctx().fonts_mut(|f| f.layout_job(job))
             };
+            let caret_stroke = ui.visuals().text_cursor.stroke;
+            ui.visuals_mut().text_cursor.stroke = Stroke::NONE;
             let out = egui::TextEdit::multiline(buf)
                 .id(field_id)
                 .frame(false)
+                // egui keeps a 4 × 2 margin even without a frame: it would shift the text off the box it is typed in
+                .margin(egui::Margin::ZERO)
                 .desired_width(field_w)
                 .desired_rows(1)
                 .horizontal_align(field_align)
                 .lock_focus(true)
                 .layouter(&mut layouter)
                 .show(ui);
+            probe_rows = out
+                .galley
+                .rows
+                .iter()
+                .filter_map(|r| r.row.glyphs.first().map(|g| (out.galley_pos.x + r.pos.x + g.pos.x, out.galley_pos.y + r.pos.y)))
+                .collect();
             // strikethrough drawn by hand (see `strike_segments`)
             let strike: Vec<bool> = rich.0.iter().flat_map(|sp| sp.text.chars().filter(|c| *c != '\n').map(|_| sp.style.strike)).collect();
             if strike.iter().any(|s| *s) {
@@ -483,6 +600,14 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
                 }
             }
             if let Some(r) = out.cursor_range {
+                // egui's own caret ignores the shift of the rows of a centered / right-aligned galley, so it is drawn here
+                let rc = out.galley.pos_from_cursor(r.primary);
+                let row_x = out.galley.rows.iter().find(|row| (row.min_y() - rc.min.y).abs() < 0.5).map_or(0.0, |row| row.pos.x);
+                let c = out.galley_pos + vec2(rc.min.x + row_x, rc.min.y);
+                probe_caret = Some((c.x, c.y));
+                if r.primary == r.secondary && out.response.has_focus() && ((ui.input(|i| i.time) * 2.0) as u64 & 1) == 0 {
+                    ui.painter().line_segment([c, c + vec2(0.0, rc.height())], caret_stroke);
+                }
                 let (p, s) = (r.primary.index, r.secondary.index);
                 ed.sel = (p.min(s), p.max(s));
             }
@@ -498,6 +623,7 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         ed.rich.apply_edit(&ed.synced, &ed.buf);
         ed.synced = ed.buf.clone();
     }
+    app.editor_probe = Some(EditorProbe { rows: probe_rows, caret: probe_caret });
     if done {
         app.commit_editing();
     }

@@ -237,9 +237,9 @@ fn pages_card(app: &mut App, ctx: &Context) {
                 }
                 ui.painter().galley(r.center() - g.size() / 2.0, g, p.tx);
                 if resp.clicked() {
+                    app.commit_editing();
                     app.ed.current = id.clone();
                     app.sel.clear();
-                    app.editing = None;
                 }
                 resp.context_menu(|ui| {
                     theme::menu_style(ui);
@@ -248,6 +248,7 @@ fn pages_card(app: &mut App, ctx: &Context) {
                         ui.close();
                     }
                     if theme::menu_item(ui, Some("trash"), "Delete page", "", false, pages.len() > 1) {
+                        app.commit_editing();
                         app.ed.remove_page(id);
                         app.sel.clear();
                         ui.close();
@@ -255,6 +256,7 @@ fn pages_card(app: &mut App, ctx: &Context) {
                 });
             }
             if theme::icon_button(ui, "plus", false, true).on_hover_text(t("New page")).clicked() {
+                app.commit_editing();
                 let n = app.ed.doc.pages.len() + 1;
                 app.ed.add_page(&format!("Page {n}"));
                 app.sel.clear();
@@ -279,6 +281,8 @@ fn key(app: &App, a: Action) -> String {
 }
 
 fn main_menu(app: &mut App, ui: &mut Ui) {
+    // opening the menu validates the text being typed (saving or exporting from it must include it)
+    app.commit_editing();
     let p = theme::current(ui.ctx());
     let max_h = ui.ctx().content_rect().height() * 0.8;
     ui.set_max_height(max_h);

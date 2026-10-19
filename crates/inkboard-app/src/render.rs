@@ -530,8 +530,8 @@ impl Renderer<'_> {
         if size < 3.0 {
             return;
         }
-        let mut y = if lay.height > area.h { area.y } else { area.y + (area.h - lay.height) / 2.0 };
-        for line in &lay.lines {
+        let origins = line_origins(lay, label.align, area);
+        for (line, &(x, y)) in lay.lines.iter().zip(&origins) {
             let mut job = LayoutJob::default();
             job.wrap.max_width = f32::INFINITY;
             for run in line {
@@ -552,12 +552,6 @@ impl Renderer<'_> {
             if !line.is_empty() {
                 let galley = self.painter.layout_job(job);
                 let strike: Vec<bool> = line.iter().flat_map(|run| run.text.chars().map(|_| run.style.strike)).collect();
-                let lw = f64::from(galley.size().x / self.cam.zoom);
-                let x = match label.align {
-                    Align::Left => area.x,
-                    Align::Center => area.x + area.w / 2.0 - lw / 2.0,
-                    Align::Right => area.right() - lw,
-                };
                 let pos = self.cam.s(to_world(Pt::new(x, y)));
                 if strike.iter().any(|s| *s) {
                     let (sin, cos) = angle.sin_cos();
@@ -574,7 +568,6 @@ impl Renderer<'_> {
                 }
                 self.painter.add(TextShape::new(pos, galley, base).with_angle(angle));
             }
-            y += lay.line_h;
         }
     }
 
@@ -721,6 +714,23 @@ impl Renderer<'_> {
             }
         }
     }
+}
+
+/// Top-left origin (model units) of every line of a laid-out text inside `area`: left / center / right aligned, and centered vertically when it fits.
+/// The final rendering and the text editor both use it, so the text does not move when editing starts or ends.
+pub fn line_origins(lay: &TextLayout, align: Align, area: Rect) -> Vec<(f64, f64)> {
+    let mut y = if lay.height > area.h { area.y } else { area.y + (area.h - lay.height) / 2.0 };
+    let mut out = Vec::with_capacity(lay.widths.len());
+    for w in &lay.widths {
+        let x = match align {
+            Align::Left => area.x,
+            Align::Center => area.x + area.w / 2.0 - w / 2.0,
+            Align::Right => area.right() - w,
+        };
+        out.push((x, y));
+        y += lay.line_h;
+    }
+    out
 }
 
 /// Strikethrough segments `(x0, x1, y)` relative to the galley origin. egui draws its own at the middle of the whole text row, which looks

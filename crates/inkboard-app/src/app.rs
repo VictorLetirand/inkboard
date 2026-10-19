@@ -133,6 +133,8 @@ pub struct App {
     pub snap: bool,
     pub toast: Option<(String, Instant)>,
     pub dialog: Option<Dialog>,
+    /// Placement of the text lines by the text editor on the last frame (tests).
+    pub editor_probe: Option<crate::rich_edit::EditorProbe>,
     /// Icon library palette.
     pub palette: crate::library::Palette,
     pub prop_edit: Option<Vec<Object>>,
@@ -233,6 +235,7 @@ impl App {
             prev_tool: Tool::Select,
             timer: None,
             palette: Default::default(),
+            editor_probe: None,
             timer_done: false,
             last_autosave: Instant::now(),
             last_title: String::new(),
@@ -323,7 +326,7 @@ impl App {
     }
 
     pub fn dirty(&self) -> bool {
-        self.ed.revision() != self.saved_rev
+        self.ed.revision() != self.saved_rev || self.editing_pending()
     }
 
     pub fn title(&self) -> String {
@@ -576,10 +579,10 @@ impl App {
     /// Goes to the next (`+1`) or previous (`-1`) page; no effect at the ends.
     pub fn step_page(&mut self, d: i32) {
         let i = self.ed.doc.pages.iter().position(|p| p.id == self.ed.current).unwrap_or(0) as i32 + d;
-        if let Some(p) = usize::try_from(i).ok().and_then(|i| self.ed.doc.pages.get(i)) {
-            self.ed.current = p.id.clone();
+        if let Some(next) = usize::try_from(i).ok().and_then(|i| self.ed.doc.pages.get(i)).map(|p| p.id.clone()) {
+            self.commit_editing();
+            self.ed.current = next;
             self.sel.clear();
-            self.editing = None;
             self.fit_pending = true;
         }
     }
@@ -590,8 +593,8 @@ impl App {
             return;
         }
         self.presenting = on;
+        self.commit_editing();
         self.sel.clear();
-        self.editing = None;
         self.drag = None;
         self.fit_pending = true;
         if on {
@@ -677,6 +680,10 @@ impl App {
 
     /// Runs a command (keyboard shortcut, menu or button).
     pub fn run_action(&mut self, a: Action) {
+        // what is being typed is validated before any other command (saving, exporting, undoing, deleting…), except text formatting
+        if self.editing.is_some() && !matches!(a, Action::Bold | Action::Italic | Action::Underline | Action::Strike) {
+            self.commit_editing();
+        }
         let sel = self.sel.clone();
         match a {
             Action::New => self.new_document(),
@@ -750,7 +757,11 @@ impl App {
             if let Some(dir) = p.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            let _ = inkboard_core::serial::save(&self.ed.doc, &p);
+            // text being typed is part of the safety copy even though it is not validated yet
+            let _ = match self.pending_document() {
+                Some(doc) => inkboard_core::serial::save(&doc, &p),
+                None => inkboard_core::serial::save(&self.ed.doc, &p),
+            };
             self.last_autosave = Instant::now();
         }
     }
@@ -950,9 +961,12 @@ impl eframe::App for App {
         }
         self.autosave();
         self.screenshot_step(ctx);
-        if ctx.input(|i| i.viewport().close_requested()) && self.dirty() && self.screenshot.is_none() {
-            // autosave keeps the work: we let the window close
-            let _ = inkboard_core::serial::save(&self.ed.doc, &autosave_path());
+        if ctx.input(|i| i.viewport().close_requested()) && self.screenshot.is_none() {
+            // what is being typed is validated first, then the autosave keeps the work: we let the window close
+            self.commit_editing();
+            if self.dirty() {
+                let _ = inkboard_core::serial::save(&self.ed.doc, &autosave_path());
+            }
         }
         ctx.request_repaint_after(Duration::from_millis(500));
         self.bench_step(ctx, started);

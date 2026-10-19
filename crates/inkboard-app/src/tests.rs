@@ -1645,3 +1645,222 @@ fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
     }
     assert_eq!(cache.stats, before);
 }
+
+/* ------------------------------------------------------------ text reliability */
+
+/// Adds a box of the given geometry with a text and returns its id.
+fn add_text_box(t: &mut T, geom: BoxGeom, frame: Frame, text: &str, align: Align) -> Id {
+    let o = Object::new_box(geom, frame, Style::default(), Label::new(text, 20.0, align));
+    t.app().ed.insert(o)
+}
+
+/// Where the final rendering puts the lines of the box's text (screen coordinates: left, top), computed with the shared placement function.
+fn final_rows(t: &mut T, id: &Id) -> Vec<(f32, f32)> {
+    let Kind::Box(b) = t.app().ed.page().get(id).unwrap().kind.clone() else { panic!("not a box") };
+    let lay = b.layout(&t.app().measurer);
+    let origins = crate::render::line_origins(&lay, b.label.align, b.label_rect());
+    lay.lines
+        .iter()
+        .zip(origins)
+        .filter(|(line, _)| !line.is_empty())
+        .map(|(_, (x, y))| {
+            let w = b.frame.to_world(Pt::new(x, y));
+            let p = t.at(w.x, w.y);
+            (p.x, p.y)
+        })
+        .collect()
+}
+
+fn editor_rows(t: &mut T) -> Vec<(f32, f32)> {
+    t.app().editor_probe.clone().map(|p| p.rows).unwrap_or_default()
+}
+
+fn assert_rows_match(editor: &[(f32, f32)], expected: &[(f32, f32)], what: &str) {
+    assert_eq!(editor.len(), expected.len(), "{what}: number of rows {editor:?} vs {expected:?}");
+    for (i, (a, b)) in editor.iter().zip(expected).enumerate() {
+        assert!(
+            (a.0 - b.0).abs() < 2.0 && (a.1 - b.1).abs() < 2.5,
+            "{what}: row {i} is at {a:?} in the editor but {b:?} in the final rendering (all rows: {editor:?} vs {expected:?})"
+        );
+    }
+}
+
+/// Whatever the shape, the alignment and the text, the editor puts every line exactly where the final rendering will, so nothing moves when
+/// editing starts or ends.
+#[test]
+fn the_editor_shows_the_text_where_the_final_rendering_puts_it_for_every_shape_and_alignment() {
+    let texts = ["Hello", "Hello\nall of you,\nI am called Victor Letirand", "a long text that has to wrap inside the shape because it is wider than it"];
+    for geom in [BoxGeom::Rect, BoxGeom::Ellipse, BoxGeom::Diamond, BoxGeom::Triangle, BoxGeom::Sticky, BoxGeom::Text] {
+        for align in [Align::Left, Align::Center, Align::Right] {
+            for text in texts {
+                let mut t = T::new();
+                let id = add_text_box(&mut t, geom, Frame::new(300.0, 200.0, 260.0, 180.0), text, align);
+                t.app().sel = vec![id.clone()];
+                t.h.step();
+                let before = final_rows(&mut t, &id);
+                t.app().start_editing(&id, None);
+                for _ in 0..3 {
+                    t.h.step();
+                }
+                let what = format!("{geom:?} {align:?} {:?}", &text[..text.len().min(12)]);
+                let after_live_fit = final_rows(&mut t, &id);
+                assert_rows_match(&editor_rows(&mut t), &after_live_fit, &what);
+                if geom != BoxGeom::Text {
+                    // shapes keep their frame unless the text overflows: the lines did not move when editing started
+                    let f = t.frame(&id);
+                    if (f.h - 180.0).abs() < 1e-9 {
+                        assert_rows_match(&before, &after_live_fit, &format!("{what} (start of editing)"));
+                    }
+                }
+                // ending the editing changes nothing visible either
+                let editing = editor_rows(&mut t);
+                t.app().commit_editing();
+                t.h.step();
+                assert_rows_match(&editing, &final_rows(&mut t, &id), &format!("{what} (end of editing)"));
+            }
+        }
+    }
+}
+
+/// A new free text starts exactly where the user clicked, grows with what is typed, and its frame always contains the text.
+#[test]
+fn a_new_free_text_is_anchored_at_the_click_and_its_frame_follows_the_typing() {
+    let mut t = T::new();
+    t.tool(Tool::Text);
+    let p = t.at(200.0, 150.0);
+    t.h.event(Event::PointerMoved(p));
+    t.h.step();
+    t.button(p, true, Modifiers::NONE);
+    t.button(p, false, Modifiers::NONE);
+    t.h.step();
+    assert!(t.app().editing.is_some(), "typing can start");
+    let id = t.app().editing.as_ref().unwrap().id.clone();
+    type_text(&mut t, "Hello");
+    let f = t.frame(&id);
+    let rows = editor_rows(&mut t);
+    assert_eq!(rows.len(), 1);
+    let left = t.at(f.x, f.y).x;
+    // the text starts inside its frame (3 units of margin), not left of it
+    assert!((rows[0].0 - (left + 3.0)).abs() < 2.0, "text at {} but frame at {left}", rows[0].0);
+    assert!(f.w > 30.0, "the frame grew with the text: {f:?}");
+    let right = t.at(f.x + f.w, f.y).x;
+    assert!(rows[0].0 + 20.0 < right, "text is inside the frame");
+    // more text: the frame keeps following, still anchored at the same point
+    type_text(&mut t, " world and more");
+    let g = t.frame(&id);
+    assert!(g.w > f.w + 50.0 && (g.x - f.x).abs() < 1e-9 && (g.y - f.y).abs() < 1e-9, "{f:?} -> {g:?}");
+    // validated: no jump
+    t.app().commit_editing();
+    assert!((t.frame(&id).w - g.w).abs() < 1e-9, "no jump on validation");
+}
+
+/// Undoing a text edit gives back the text and the size the shape had before, in one step.
+#[test]
+fn undoing_a_text_edit_restores_the_text_and_the_size_in_one_step() {
+    let mut t = T::new();
+    let id = add_text_box(&mut t, BoxGeom::Rect, Frame::new(300.0, 200.0, 120.0, 50.0), "a", Align::Center);
+    let original = t.frame(&id);
+    t.app().start_editing(&id, None);
+    t.app().editing.as_mut().unwrap().buf = "a text long enough to overflow a small rectangle and make it grow taller".into();
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert!(t.frame(&id).h > original.h, "the shape grows while typing");
+    t.app().commit_editing();
+    assert_eq!(label_of(&mut t, &id).to_plain(), "a text long enough to overflow a small rectangle and make it grow taller");
+    let grown = t.frame(&id);
+    assert!(grown.h > original.h);
+    t.app().ed.undo();
+    assert_eq!(label_of(&mut t, &id).to_plain(), "a");
+    assert_eq!(t.frame(&id), original, "size restored by the same undo");
+    t.app().ed.redo();
+    assert_eq!(t.frame(&id), grown, "and redo gives the grown shape back");
+}
+
+/// The text being typed is never lost: saving, switching page or the safety copy include it.
+#[test]
+fn typed_text_survives_saving_page_changes_and_the_safety_copy() {
+    let mut t = T::new();
+    let id = add_text_box(&mut t, BoxGeom::Rect, Frame::new(300.0, 200.0, 200.0, 80.0), "old", Align::Center);
+    let path = std::env::temp_dir().join(format!("wb-pending-{}.inkboard.json", std::process::id()));
+    t.app().path = Some(path.clone());
+    t.app().start_editing(&id, None);
+    t.app().editing.as_mut().unwrap().buf = "typed but not validated".into();
+    t.h.step();
+    // the document itself is untouched, but the pending copy has the text and the application counts as modified
+    assert_eq!(label_of(&mut t, &id).to_plain(), "old");
+    assert!(t.app().dirty());
+    let pending = t.app().pending_document().expect("something is pending");
+    let Kind::Box(b) = &pending.pages[0].get(&id).unwrap().kind else { panic!() };
+    assert_eq!(b.label.text.to_plain(), "typed but not validated");
+    // saving validates the text first
+    t.app().run_action(crate::keymap::Action::Save);
+    let saved = inkboard_core::serial::load(&path).unwrap();
+    let Kind::Box(b) = &saved.pages[0].get(&id).unwrap().kind else { panic!() };
+    assert_eq!(b.label.text.to_plain(), "typed but not validated");
+    let _ = std::fs::remove_file(&path);
+    assert!(t.app().editing.is_none());
+    // changing page keeps what was typed
+    t.app().ed.add_page("Two");
+    let two = t.app().ed.current.clone();
+    t.app().ed.current = t.app().ed.doc.pages[0].id.clone();
+    assert_ne!(t.app().ed.current, two);
+    t.app().start_editing(&id, None);
+    t.app().editing.as_mut().unwrap().buf = "second edit".into();
+    t.app().step_page(1);
+    assert_eq!(t.app().ed.current, two);
+    let Kind::Box(b) = &t.app().ed.doc.pages[0].get(&id).unwrap().kind else { panic!() };
+    assert_eq!(b.label.text.to_plain(), "second edit");
+}
+
+/// The alignment chosen from the formatting bar is shown at once while editing and is one undo step with the text.
+#[test]
+fn text_alignment_chosen_while_editing_is_live_and_undoable_with_the_text() {
+    let mut t = T::new();
+    let id = add_text_box(&mut t, BoxGeom::Rect, Frame::new(300.0, 200.0, 240.0, 100.0), "Hello world", Align::Left);
+    t.app().start_editing(&id, None);
+    t.h.step();
+    let left = editor_rows(&mut t)[0].0;
+    t.app().editing.as_mut().unwrap().align = Some(Align::Right);
+    for _ in 0..3 {
+        t.h.step();
+    }
+    let right = editor_rows(&mut t)[0].0;
+    assert!(right > left + 40.0, "right-aligned text moved to the right ({left} -> {right})");
+    assert_rows_match(&editor_rows(&mut t), &final_rows(&mut t, &id), "right-aligned while editing");
+    t.app().commit_editing();
+    let Kind::Box(b) = t.app().ed.page().get(&id).unwrap().kind.clone() else { panic!() };
+    assert_eq!(b.label.align, Align::Right);
+    t.app().ed.undo();
+    let Kind::Box(b) = t.app().ed.page().get(&id).unwrap().kind.clone() else { panic!() };
+    assert_eq!(b.label.align, Align::Left, "undone with a single step");
+}
+
+/// The caret is drawn where the typed text ends (not beside it), whatever the alignment, also on a line that ends with a line break.
+#[test]
+fn the_caret_follows_the_text_for_every_alignment() {
+    for align in [Align::Left, Align::Center, Align::Right] {
+        let mut t = T::new();
+        let id = add_text_box(
+            &mut t,
+            BoxGeom::Rect,
+            Frame::new(300.0, 200.0, 260.0, 180.0),
+            "Hello
+all of you",
+            align,
+        );
+        t.app().start_editing(&id, None);
+        t.h.step();
+        // caret after "Hello" (before the line break)
+        t.app().editing.as_mut().unwrap().restore_sel = Some((5, 5));
+        for _ in 0..3 {
+            t.h.step();
+        }
+        let rows = editor_rows(&mut t);
+        let caret = t.app().editor_probe.clone().and_then(|p| p.caret).expect("a caret");
+        let m = t.app().measurer.clone();
+        let w = f32::from_bits((inkboard_core::text::Measurer::width(&m, "Hello", FontFamily::Sans, 20.0, false) as f32).to_bits());
+        let end = rows[0].0 + w;
+        assert!((caret.0 - end).abs() < 3.0, "{align:?}: caret at {} but the text ends at {end}", caret.0);
+    }
+}

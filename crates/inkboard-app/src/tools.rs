@@ -130,7 +130,7 @@ impl App {
     }
 
     /// Applies objects to the page without touching the history (preview during a gesture).
-    fn set_live(&mut self, objs: &[Object]) {
+    pub(crate) fn set_live(&mut self, objs: &[Object]) {
         let page = self.page_mut();
         for o in objs {
             if let Some(i) = page.index_of(&o.id) {
