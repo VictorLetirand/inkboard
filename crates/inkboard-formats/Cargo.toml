@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 base64 = "0.23.1"
+epaint_default_fonts = "0.33.3"
 flate2 = "1.1.10"
 latex-rust = "2.1.1"
 percent-encoding = "2.3.2"

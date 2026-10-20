@@ -1935,6 +1935,7 @@ name = "inkboard-formats"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "epaint_default_fonts",
  "flate2",
  "inkboard-core",
  "inkboard-icons",
