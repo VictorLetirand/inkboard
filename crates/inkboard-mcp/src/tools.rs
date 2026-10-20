@@ -7,6 +7,12 @@ use inkboard_core::*;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+mod batch;
+mod edit;
+mod icons;
+mod render;
+mod richtext;
+
 type Res<T> = Result<T, String>;
 
 /// File extensions the tools accept to write.
@@ -36,7 +42,7 @@ fn pos_props(mut p: Value) -> Value {
 /// Description of the tools (name, description, input schema) for `tools/list`.
 pub fn list() -> Vec<Value> {
     let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
-    vec![
+    let mut tools = vec![
         json!({"name": "create_board", "description": "Creates an empty board (.inkboard file).",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
         json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
@@ -77,7 +83,27 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
         json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard.",
             "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop()}), &["output"])}),
-    ]
+    ];
+    tools.extend(ext_specs());
+    tools
+}
+
+/* ------------------------------------------------- tools of the submodules */
+
+fn ext_specs() -> Vec<Value> {
+    [icons::specs(), render::specs(), edit::specs(), batch::specs()].concat()
+}
+
+fn ext_is_tool(name: &str) -> bool {
+    [icons::NAMES, render::NAMES, edit::NAMES, batch::NAMES].iter().any(|l| l.contains(&name))
+}
+
+fn ext_is_read_only(name: &str) -> bool {
+    [icons::READ_ONLY, render::READ_ONLY, edit::READ_ONLY, batch::READ_ONLY].iter().any(|l| l.contains(&name))
+}
+
+fn ext_apply(ed: &mut Editor, name: &str, a: &Value) -> Option<Res<Value>> {
+    icons::apply(ed, name, a).or_else(|| render::apply(ed, name, a)).or_else(|| edit::apply(ed, name, a)).or_else(|| batch::apply(ed, name, a))
 }
 
 /* ------------------------------------------------------------ arguments */
@@ -191,11 +217,14 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name == "save_board" {
         return Ok(json!({"saved": true}));
     }
-    if !EDITOR_TOOLS.contains(&name) {
+    if !EDITOR_TOOLS.contains(&name) && !ext_is_tool(name) {
         return Err(format!("unknown tool: {name}"));
     }
     if name != "add_page" {
         select_page(ed, a.get("page"))?;
+    }
+    if let Some(r) = ext_apply(ed, name, a) {
+        return r;
     }
     match name {
         "describe_board" => describe(ed, a),
@@ -238,7 +267,7 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
 /// Runs the tool `name`: in the open application if it is reachable and shows this board (live mode), otherwise on the file `path`.
 /// The result is a JSON text intended for the agent.
 pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
-    if name != "create_board" && name != "save_board" && !EDITOR_TOOLS.contains(&name) {
+    if name != "create_board" && name != "save_board" && !EDITOR_TOOLS.contains(&name) && !ext_is_tool(name) {
         return Err(format!("unknown tool: {name}"));
     }
     let mut a = a.clone();
@@ -288,7 +317,7 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
         srv.trackers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(path.clone(), t);
     }
     let r = r?;
-    if !READ_ONLY.contains(&name) && name != "save_board" {
+    if !READ_ONLY.contains(&name) && !ext_is_read_only(name) && name != "save_board" {
         save(&ed.doc, &path)?;
     }
     Ok(r.to_string())
