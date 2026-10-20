@@ -5,7 +5,6 @@
 
 use super::{Res, lower_name, obj, os, page_prop, path_prop};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use inkboard_core::connector::path_midpoint;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
 use inkboard_core::{ApproxMeasurer, Editor, Id, Kind, Rect};
 use serde_json::{Value, json};
@@ -93,23 +92,27 @@ fn badges(page: &inkboard_core::Page, region: &Rect, zoom: f64) -> (String, usiz
     let (mut out, mut shown) = (String::new(), 0);
     for o in page.objects.iter().filter(|o| page.is_visible(o) && !matches!(o.kind, Kind::Pen(_))) {
         let (w, h) = (o.id.0.chars().count() as f64 * font * 0.6 + font * 0.8, font * 1.4);
-        let (x, y) = match &o.kind {
+        // anchor of the object, and where its badge goes: just above it, so the badge never hides the object's own text or arrow label
+        let ((ax, ay), (x, y)) = match &o.kind {
             Kind::Connector(c) => match page.connector_path(c) {
-                Some(path) if !path.is_empty() => {
-                    let m = path_midpoint(&path).0;
-                    (m.x - w / 2.0, m.y - h / 2.0)
+                // a quarter of the way along the first segment: the middle is where the arrow's label sits
+                Some(path) if path.len() >= 2 => {
+                    let (a, b) = (path[0], path[1]);
+                    let (px, py) = (a.x + (b.x - a.x) * 0.25, a.y + (b.y - a.y) * 0.25);
+                    ((px, py), (px - w / 2.0, py - h * 1.2))
                 }
                 _ => continue,
             },
             _ => {
                 let b = page.bounds(o);
-                (b.x, b.y)
+                ((b.x, b.y), (b.x, b.y - h))
             }
         };
-        // the badge belongs to the picture when its anchor does (it may be cut at the edge)
-        if x < region.x || y < region.y || x > region.right() || y > region.bottom() {
+        // the badge belongs to the picture when the object's anchor does (it may be cut at the edge)
+        if ax < region.x || ay < region.y || ax > region.right() || ay > region.bottom() {
             continue;
         }
+        let y = y.max(region.y);
         shown += 1;
         let _ = write!(
             out,

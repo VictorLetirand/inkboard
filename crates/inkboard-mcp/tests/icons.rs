@@ -425,3 +425,20 @@ fn icon_ids_with_a_repeated_name_can_be_placed() {
         assert_eq!(c.tool("add_icon", json!({"path": p, "icon": id})).unwrap()["icon"], id);
     }
 }
+
+#[test]
+fn the_label_can_be_markdown_and_is_literal_by_default() {
+    let (mut c, board) = start("icons-label-md");
+    let p = board.to_str().unwrap();
+    let lambda = first(&mut c, &board, json!({"query": "lambda", "group": "AWS"}));
+    let plain = c.tool("add_icon", json!({"path": p, "icon": lambda["id"], "label": "**Order** handler"})).unwrap();
+    let rich = c.tool("add_icon", json!({"path": p, "icon": lambda["id"], "label": "**Order** {color=#e03131}handler{/}", "markdown": true})).unwrap();
+    let text = |r: &Value| match object(&board, r["label_id"].as_str().unwrap()).kind {
+        Kind::Box(b) => b.label.text,
+        _ => panic!("label is not a text box"),
+    };
+    assert_eq!(text(&plain).to_plain(), "**Order** handler", "literal without markdown");
+    let t = text(&rich);
+    assert_eq!(t.to_plain(), "Order handler");
+    assert!(t.0.iter().any(|s| s.style.bold) && t.0.iter().any(|s| s.style.color.is_some()));
+}

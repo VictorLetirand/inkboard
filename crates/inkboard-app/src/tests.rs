@@ -1952,3 +1952,100 @@ fn opening_a_corrupted_file_shows_an_error_and_keeps_the_current_board() {
     assert_eq!(t.app().ed.doc, doc);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/* ------------------------------------------- live mode: the tools of the MCP v2 plan */
+
+#[test]
+fn live_batch_is_one_undo_step_and_a_failed_atomic_batch_leaves_no_trace() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "batch");
+    let ops = serde_json::json!([
+        {"tool": "add_shape", "args": {"geom": "rect", "text": "A"}},
+        {"tool": "add_shape", "args": {"geom": "ellipse", "text": "B"}},
+        {"tool": "add_connector", "args": {"from": "$0.id", "to": "$1.id", "label": "**go**", "markdown": true}},
+    ]);
+    let (err, r) = mcp_call(&mut t, &live, "batch", serde_json::json!({"operations": ops}));
+    assert!(!err, "{r}");
+    assert_eq!(t.objects().len(), 3);
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert!(t.objects().is_empty(), "the whole batch is one undo step");
+    t.app().ed.redo();
+    assert_eq!(t.objects().len(), 3, "and one redo step");
+
+    // atomic failure: the board, the revision and the history are untouched
+    let (rev, can_redo) = (t.app().ed.revision(), t.app().ed.can_redo());
+    let bad = serde_json::json!([
+        {"tool": "add_shape", "args": {"geom": "rect", "text": "C"}},
+        {"tool": "add_shape", "args": {"geom": "hexagon"}},
+    ]);
+    let (err, r) = mcp_call(&mut t, &live, "batch", serde_json::json!({"operations": bad}));
+    assert!(err, "{r}");
+    assert_eq!(t.objects().len(), 3, "nothing of the failed batch remains");
+    assert_eq!(t.app().ed.revision(), rev, "the board does not look modified");
+    assert_eq!(t.app().ed.can_redo(), can_redo);
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert!(t.objects().is_empty(), "the history still holds the first batch as a single step");
+    let _ = std::fs::remove_file(&live.file);
+}
+
+#[test]
+fn live_read_only_tools_never_modify_the_board() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "readonly");
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Hello **x**", "markdown": true}));
+    assert!(!err, "{r}");
+    let (rev, undo) = (t.app().ed.revision(), t.app().ed.can_undo());
+    for (tool, args) in [
+        ("describe_board", serde_json::json!({"detail": "full"})),
+        ("find_objects", serde_json::json!({"text": "hello"})),
+        ("search_icons", serde_json::json!({"query": "lambda"})),
+        ("list_icon_groups", serde_json::json!({})),
+    ] {
+        let (err, r) = mcp_call(&mut t, &live, tool, args);
+        assert!(!err, "{tool}: {r}");
+    }
+    // `render` answers with an image block first, then the text of the picture
+    let r = mcp_rpc(&mut t, &live, "tools/call", serde_json::json!({"name": "render", "arguments": {"show_ids": true, "max_px": 400}}));
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert_eq!(r["result"]["content"][0]["type"], "image");
+    assert_eq!(r["result"]["content"][0]["mimeType"], "image/png");
+    assert_eq!(r["result"]["content"][1]["type"], "text");
+    assert_eq!((t.app().ed.revision(), t.app().ed.can_undo()), (rev, undo), "reading tools do not touch the board");
+    let _ = std::fs::remove_file(&live.file);
+}
+
+#[test]
+fn live_icon_text_and_edit_tools_are_one_undo_step_each() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "v2");
+    // an icon with its label: two objects, one step
+    let (err, r) = mcp_call(&mut t, &live, "search_icons", serde_json::json!({"query": "lambda", "group": "AWS", "limit": 1}));
+    assert!(!err, "{r}");
+    let icon = r["icons"][0]["id"].as_str().expect("an icon").to_owned();
+    let (err, r) = mcp_call(&mut t, &live, "add_icon", serde_json::json!({"icon": icon, "label": "Function"}));
+    assert!(!err, "{r}");
+    assert_eq!(t.objects().len(), 2);
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert!(t.objects().is_empty(), "icon and label are one undo step");
+    // a shape, formatted words, moved, arranged: one step each
+    let (_, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Important words"}));
+    let a = r["id"].as_str().unwrap().to_owned();
+    let (_, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "Other", "x": 400, "y": 300}));
+    let b = r["id"].as_str().unwrap().to_owned();
+    let (err, r) = mcp_call(&mut t, &live, "format_text", serde_json::json!({"id": a, "match": "Important", "bold": true, "color": "#e03131"}));
+    assert!(!err, "{r}");
+    let (err, r) = mcp_call(&mut t, &live, "move_objects", serde_json::json!({"ids": [a], "dx": 10, "dy": 0}));
+    assert!(!err, "{r}");
+    let (err, r) = mcp_call(&mut t, &live, "arrange_objects", serde_json::json!({"ids": [a, b], "action": "align_top"}));
+    assert!(!err, "{r}");
+    let top = |t: &mut T, id: &str| t.objects().iter().find(|o| o.id.0 == id).and_then(|o| o.frame()).map(|f| f.y).unwrap();
+    let left = |t: &mut T, id: &str| t.objects().iter().find(|o| o.id.0 == id).and_then(|o| o.frame()).map(|f| f.x).unwrap();
+    assert_eq!(top(&mut t, &a), top(&mut t, &b), "aligned");
+    let moved = left(&mut t, &a);
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert_ne!(top(&mut t, &a), top(&mut t, &b), "the alignment alone is undone");
+    assert_eq!(left(&mut t, &a), moved, "the move is still there");
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert!((moved - left(&mut t, &a) - 10.0).abs() < 1e-9, "the move alone is undone");
+    let _ = std::fs::remove_file(&live.file);
+}

@@ -231,7 +231,7 @@ Batch de 12 opérations avec références (forme → flèche → étiquette) ; r
 | Évasion du confinement via `batch` | Interdiction de `path/output/source` dans les opérations, test dédié |
 | Réponse `render` trop lourde pour le client | `max_px` borné, repli automatique sous 4 Mio, `output` pour écrire un fichier |
 | Régression de compatibilité des 16 outils | Sorties existantes inchangées octet pour octet (tests de référence), nouveaux champs seulement ajoutés |
-| Coût de contexte des schémas (nombre d'outils) | Outils consolidés (`arrange_objects`, `manage_pages`), descriptions courtes mais précises ; 16 → 28 outils au total (§7), à mesurer à l'intégration |
+| Coût de contexte des schémas (nombre d'outils) | Outils consolidés (`arrange_objects`, `manage_pages`), descriptions courtes mais précises ; 16 → 27 outils au total (§7), à mesurer à l'intégration |
 | Tests flaky sur CI | Aucune assertion de durée ; données déterministes |
 | Agents qui sortent du périmètre | Fichiers autorisés, relecture de diff, `git diff --stat` systématique |
 
@@ -240,7 +240,7 @@ Batch de 12 opérations avec références (forme → flèche → étiquette) ; r
 ## 6. Intégration finale (agent principal)
 
 1. Fusionner V1 dans `feat/mcp-v2` (ordre : 1, 2, 4 ; résoudre les conflits éventuels sans réécrire), lancer V2 sur ce résultat, fusionner 3 puis 5.
-2. Mettre à jour `tools_all.rs` : `TOOLS` complet (28 outils), égalité exacte restaurée ; test supplémentaire « tout outil de `tools/list` est documenté dans `docs/MCP.md` ».
+2. Mettre à jour `tools_all.rs` : `TOOLS` complet (27 outils), égalité exacte restaurée ; test supplémentaire « tout outil de `tools/list` est documenté dans `docs/MCP.md` ».
 3. Intégrer les `context/mcp-v2/lot-N-doc.md` dans `docs/MCP.md` **et** `docs/fr/MCP.md` (tableau des outils, convention `_image`, syntaxe `markdown`, références `$N.chemin`, limites) ; mettre à jour la phrase « 16 outils » partout (`README*`, `docs/fr/*`).
 4. Ajouter dans `crates/inkboard-app/src/tests.rs` (mode direct) : un test par lot qui prouve « un appel = un pas d'annulation » et que `render`/`find_objects`/`describe_board full` ne modifient pas la révision ; test que `batch` atomique ne laisse **aucune** entrée d'historique après échec.
 5. Portes de sortie complètes ; essai réel (§4.4) ; mise à jour de `context/PLAN_MCP_V2.md` avec un **journal** (ce qui est fait, ce qui n'est pas vérifié).
@@ -252,7 +252,7 @@ Batch de 12 opérations avec références (forme → flèche → étiquette) ; r
 ## 7. Inventaire des outils après le plan
 
 Existants (16) : `create_board, save_board, board_changes, add_image, describe_board, add_shape, add_connector, add_table, add_code_block, add_formula, import_mermaid, update_object, delete_object, auto_layout, add_page, export`.
-Nouveaux (12) : `search_icons, list_icon_groups, add_icon` (1) · `render` (2) · `find_objects, move_objects, arrange_objects, manage_pages, duplicate_objects` (3) · `format_text` (4) · `batch` (5). **Total 28.**
+Nouveaux (12) : `search_icons, list_icon_groups, add_icon` (1) · `render` (2) · `find_objects, move_objects, arrange_objects, manage_pages, duplicate_objects` (3) · `format_text` (4) · `batch` (5). **Total 27** (le plan comptait 28 par erreur : 16 + 11).
 
 ---
 
@@ -273,4 +273,11 @@ Nouveaux (12) : `search_icons, list_icon_groups, add_icon` (1) · `render` (2) �
 
 ## 10. Journal
 
-*(à remplir pendant l'exécution)*
+**2026-10-20 — exécution.** Branche `feat/mcp-v2` (base `c58b8d5`), cinq lots par agents Sonnet 5.5 en worktrees, fusionnés sans conflit (V1 : 1, 2, 4 ; V2 : 5, 3).
+
+- **Fait** : les 11 outils nouveaux (`search_icons`, `list_icon_groups`, `add_icon`, `render`, `find_objects`, `move_objects`, `arrange_objects`, `manage_pages`, `duplicate_objects`, `format_text`, `batch`) ; `describe_board detail=full` ; `update_object` étendu ; `markdown` partout où il y a du texte ; `Editor::try_transact`. **27 outils** au total. Doc EN + FR intégrée, test `every_tool_is_documented`, test de scénario complet (`tests/scenario.rs`), trois tests du mode direct dans `inkboard-app` (un appel = un pas d'annulation, `batch` atomique sans trace, outils en lecture seule sans effet).
+- **Écarts au plan** : le lot 4 a câblé `richtext` dans la couture (4 lignes) ; le lot 3 a ajouté la dépendance `regex` à `inkboard-mcp` (déjà dans `Cargo.lock`) ; le lot 5 refuse `path/output/source` à toute profondeur (plus strict que prévu) ; `render` recadre en réécrivant l'en-tête SVG (pas de changement de `svg.rs`).
+- **Corrigé après l'essai réel avec le vrai binaire** : le `label` d'`add_icon` ne prenait pas `markdown` (ajouté) ; les pastilles d'identifiants de `render` masquaient le texte des objets et les étiquettes de flèches (posées au-dessus de l'objet, au quart du premier segment pour une flèche).
+- **Contrôles** : `cargo fmt`, `clippy -D warnings` (stable et 1.99.1), `cargo test --workspace` (515 tests, 0 échec).
+- **NON vérifié** : taille de `inkboard.exe` release (pas de doublon du pack attendu, non mesuré) ; mode direct de bout en bout avec l'application réelle et un vrai client MCP (seulement `apply` dans `transact` et le serveur d'essai) ; réponse `render` de plusieurs Mio par la socket locale en conditions réelles ; performances du parseur Markdown sur des entrées pathologiques (non bornées) ; l'étiquette de flèche courte (« HTTPS ») est barrée par sa propre flèche dans le rendu : défaut du moteur de rendu, hors lot.
+- **À faire par l'utilisateur** : décider du push de `feat/mcp-v2` (pas de push sans accord) ; remplacer le `inkboard-mcp.exe` installé (18/10) après publication.

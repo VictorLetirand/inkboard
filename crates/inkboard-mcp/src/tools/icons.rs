@@ -46,7 +46,8 @@ pub(super) fn specs() -> Vec<Value> {
                 "icon": {"type": "string", "description": "Icon id from search_icons, e.g. \"drawio-aws4/Lambda\"."},
                 "size": {"type": "number", "minimum": MIN_SIDE, "maximum": MAX_SIDE, "description": "Longest side (default 64). Not combinable with w / h."},
                 "w": {"type": "number", "minimum": MIN_SIDE, "maximum": MAX_SIDE}, "h": {"type": "number", "minimum": MIN_SIDE, "maximum": MAX_SIDE},
-                "stroke": color, "label": {"type": "string", "description": "Text placed under the icon (at most 500 characters)."}})), &["icon"])}),
+                "stroke": color, "label": {"type": "string", "description": "Text placed under the icon (at most 500 characters)."},
+                "markdown": super::richtext::markdown_prop("`label`")})), &["icon"])}),
     ]
 }
 
@@ -218,9 +219,10 @@ fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
     if label.is_some_and(|l| l.chars().count() > MAX_LABEL) {
         return Err(format!("label too long (at most {MAX_LABEL} characters)"));
     }
-    let mut warnings = Vec::new();
+    let markdown = super::richtext::markdown_flag(a)?;
+    let mut warnings: Vec<String> = Vec::new();
     if stroke.is_some() && !set.mono {
-        warnings.push("stroke ignored: this icon is in color and keeps its own colors (only monochrome icons are tinted)");
+        warnings.push("stroke ignored: this icon is in color and keeps its own colors (only monochrome icons are tinted)".to_owned());
     }
 
     // same as the palette of the application: SVG asset (deduplicated), no outline, no fill, tint by the stroke color when monochrome
@@ -237,7 +239,9 @@ fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
         let id = ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: set.mono }), style));
         let label_id = label.map(|text| {
             let text_style = Style { stroke: Color::Ink, fill: None, width: 0.0, roundness: 0.0, ..Style::default() };
-            let mut o = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), text_style, Label::new(text, LABEL_SIZE, Align::Center));
+            let mut label = Label::new(text, LABEL_SIZE, Align::Center);
+            label.text = super::richtext::rich(text, markdown, &mut warnings);
+            let mut o = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), text_style, label);
             if let Kind::Box(b) = &mut o.kind {
                 b.fit(&ApproxMeasurer);
                 b.frame.x = frame.x + (frame.w - b.frame.w) / 2.0;

@@ -108,7 +108,7 @@ With [Claude Code](https://claude.com/claude-code):
 claude mcp add inkboard -- /path/to/inkboard-mcp --root /path/to/your/boards
 ```
 
-**Always pass `--root`**: it confines every file the agent can read or write to that folder. The server exposes 16 tools (`add_shape`, `add_connector`, `import_mermaid`, `add_formula`, `export`, `board_changes`…) and MCP resources with change notifications.
+**Always pass `--root`**: it confines every file the agent can read or write to that folder. The server exposes 27 tools (`add_shape`, `add_connector`, `import_mermaid`, `add_icon` (28,800 icons), `render` (the board as an image), `batch`, `export`, `board_changes`…) and MCP resources with change notifications.
 Full reference, security notes and limits: [docs/MCP.md](docs/MCP.md).
 
 ## Platform status
