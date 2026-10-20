@@ -1968,6 +1968,8 @@ dependencies = [
  "image",
  "inkboard-core",
  "inkboard-formats",
+ "inkboard-icons",
+ "regex",
  "serde_json",
 ]
 

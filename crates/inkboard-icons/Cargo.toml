@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Embeds the pack of the application (≈ 8 MB) and exposes it as `PACK` / `shared()`.
+embedded = []
+
 [dependencies]
 miniz_oxide = "0.8"
 serde = { version = "1.0.229", features = ["derive"] }

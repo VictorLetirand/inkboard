@@ -8,8 +8,8 @@ use inkboard_core::{Document, Kind, Object, connector::End, serial};
 use serde_json::{Value, json};
 use std::path::Path;
 
-/// The 16 tools of `docs/MCP.md`.
-const TOOLS: [&str; 16] = [
+/// The 27 tools of `docs/MCP.md`.
+const TOOLS: [&str; 27] = [
     "create_board",
     "save_board",
     "board_changes",
@@ -26,6 +26,17 @@ const TOOLS: [&str; 16] = [
     "auto_layout",
     "add_page",
     "export",
+    "search_icons",
+    "list_icon_groups",
+    "add_icon",
+    "render",
+    "find_objects",
+    "move_objects",
+    "arrange_objects",
+    "manage_pages",
+    "duplicate_objects",
+    "format_text",
+    "batch",
 ];
 
 /// 1×1 PNG (red).
@@ -64,7 +75,7 @@ fn invalid(c: &mut Client, board: &Path, tool: &str, args: Value) {
 }
 
 #[test]
-fn tools_list_returns_the_16_documented_tools() {
+fn tools_list_returns_the_27_documented_tools() {
     let dir = temp_dir("tl");
     let mut c = Client::start(&dir);
     let list = c.request("tools/list", json!({}));
@@ -74,6 +85,7 @@ fn tools_list_returns_the_16_documented_tools() {
     let mut expected = TOOLS.to_vec();
     expected.sort_unstable();
     assert_eq!(names, expected);
+    assert!(names.windows(2).all(|w| w[0] != w[1]), "duplicate tool names in {names:?}");
     assert!(tools.iter().all(|t| t["description"].as_str().is_some_and(|d| !d.is_empty()) && t["inputSchema"]["type"] == "object"));
 }
 
@@ -212,4 +224,15 @@ fn malformed_json_on_stdin_does_not_stop_the_server() {
     let board = dir.join("after.inkboard");
     c.tool("create_board", json!({"path": board.to_str().unwrap()})).unwrap();
     assert!(board.exists());
+}
+
+/// Every tool of the server has its row in the table of `docs/MCP.md` (and the French page), so a new tool cannot ship undocumented.
+#[test]
+fn every_tool_is_documented() {
+    for page in ["docs/MCP.md", "docs/fr/MCP.md"] {
+        let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(page)).unwrap();
+        for tool in TOOLS {
+            assert!(text.contains(&format!("| `{tool}` |")), "{page}: no table row for `{tool}`");
+        }
+    }
 }

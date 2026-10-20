@@ -34,6 +34,19 @@ fn err(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
+/// MCP content of a tool result: one text block, except when the result is a JSON object with the reserved key `_image`
+/// (`{"mime", "data_base64"}`): the content is then an image block followed by a text block holding the rest of the object.
+fn content_blocks(text: String) -> Value {
+    if text.contains("\"_image\"")
+        && let Ok(Value::Object(mut m)) = serde_json::from_str::<Value>(&text)
+        && let Some(img) = m.remove("_image")
+        && let (Some(mime), Some(data)) = (img["mime"].as_str(), img["data_base64"].as_str())
+    {
+        return json!([{"type": "image", "data": data, "mimeType": mime}, {"type": "text", "text": Value::Object(m).to_string()}]);
+    }
+    json!([{"type": "text", "text": text}])
+}
+
 impl Server {
     /// Handles a JSON-RPC message; returns the response, or `None` for a notification.
     pub fn handle(&self, msg: &Value) -> Option<Value> {
@@ -81,7 +94,7 @@ impl Server {
                 let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
                 let args = msg.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
                 match tools::call(self, name, &args) {
-                    Ok(text) => ok(id, json!({"content": [{"type": "text", "text": text}], "isError": false})),
+                    Ok(text) => ok(id, json!({"content": content_blocks(text), "isError": false})),
                     Err(e) if e.starts_with("unknown tool") => err(id, -32602, &e),
                     Err(e) => ok(id, json!({"content": [{"type": "text", "text": e}], "isError": true})),
                 }

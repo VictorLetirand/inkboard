@@ -200,6 +200,17 @@ impl Library {
     }
 }
 
+/// The pack built by `scripts/build_icon_library.py`, embedded once for every user of this crate.
+#[cfg(feature = "embedded")]
+pub static PACK: &[u8] = include_bytes!("../../inkboard-app/assets/icons.bin");
+
+/// The embedded pack opened once for the whole process; `None` if the pack is unreadable.
+#[cfg(feature = "embedded")]
+pub fn shared() -> Option<&'static Library> {
+    static SHARED: std::sync::OnceLock<Option<Library>> = std::sync::OnceLock::new();
+    SHARED.get_or_init(|| Library::open(PACK).ok()).as_ref()
+}
+
 /// Natural size `(width, height)` of an SVG document, from its `viewBox` or its `width` / `height` attributes.
 pub fn svg_dimensions(svg: &str) -> Option<(f64, f64)> {
     let head = &svg[..svg.find('>').map_or(svg.len().min(600), |i| i + 1)];
@@ -331,6 +342,14 @@ mod tests {
             let r = lib.find_drawio_image(p).unwrap_or_else(|| panic!("{p}"));
             assert!(lib.svg(r).is_some_and(|s| s.starts_with("<svg")), "{p}");
         }
+    }
+
+    #[test]
+    #[cfg(feature = "embedded")]
+    fn the_embedded_pack_opens_once_and_is_shared() {
+        let lib = shared().expect("embedded pack");
+        assert!(lib.icon_count() > 20_000);
+        assert!(std::ptr::eq(lib, shared().unwrap()), "same instance on every call");
     }
 
     #[test]

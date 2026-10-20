@@ -7,6 +7,12 @@ use inkboard_core::*;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+mod batch;
+mod edit;
+mod icons;
+mod render;
+mod richtext;
+
 type Res<T> = Result<T, String>;
 
 /// File extensions the tools accept to write.
@@ -36,13 +42,14 @@ fn pos_props(mut p: Value) -> Value {
 /// Description of the tools (name, description, input schema) for `tools/list`.
 pub fn list() -> Vec<Value> {
     let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
-    vec![
+    let mut tools = vec![
         json!({"name": "create_board", "description": "Creates an empty board (.inkboard file).",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
         json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
             "inputSchema": obj(json!({}), &[])}),
-        json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop()}), &[])}),
+        json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files. `detail: \"full\"` adds each object's style, font, stacking order `z`, group, lock, rotation and (connectors) route and arrow; tables also list their `cells`.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(),
+                "detail": {"type": "string", "enum": ["brief", "full"], "description": "Default brief (id, type, text, position). full: also style {stroke, fill, width, dash, opacity, roundness}, font {family, size, align}, z, group, locked, rotation (degrees), route, arrow."}}), &[])}),
         json!({"name": "board_changes", "description": "Reports what the USER changed on the board since your last look (describe_board or board_changes): objects added, modified, deleted. Your own changes are not reported. The first call records a baseline.",
             "inputSchema": obj(json!({"path": path_prop()}), &[])}),
         json!({"name": "add_image", "description": "Adds an image (PNG, JPEG, GIF, WebP or SVG, 15 MiB at most) from a file (`source`, under the allowed root) or from base64 data (`data_base64`). The natural size is reduced to at most 600; w and/or h override it.",
@@ -50,34 +57,73 @@ pub fn list() -> Vec<Value> {
         json!({"name": "add_shape", "description": "Adds a shape with text (rect, ellipse, diamond, triangle, sticky = sticky note, text = free text). Returns the id.",
             "inputSchema": obj(pos_props(json!({
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
-                "text": {"type": "string"}, "w": {"type": "number"}, "h": {"type": "number"},
+                "text": {"type": "string"}, "markdown": richtext::markdown_prop("`text`"), "w": {"type": "number"}, "h": {"type": "number"},
                 "font_size": {"type": "number"}, "fill": color.clone(), "stroke": color.clone()})), &["geom"])}),
         json!({"name": "add_connector", "description": "Connects two objects with an arrow that follows them when they move (ids returned by add_shape or describe_board).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "from": {"type": "string"}, "to": {"type": "string"},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"]},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Arrowheads (default: end)."},
-                "label": {"type": "string"}, "stroke": color.clone()}), &["from", "to"])}),
+                "label": {"type": "string"}, "markdown": richtext::markdown_prop("`label`"), "stroke": color.clone()}), &["from", "to"])}),
         json!({"name": "add_table", "description": "Adds a table of cells; `rows` is a list of rows (lists of texts). The first row is the header.",
-            "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}})), &["rows"])}),
+            "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+                "markdown": richtext::markdown_prop("every cell")})), &["rows"])}),
         json!({"name": "add_code_block", "description": "Adds a code block (monospace font, dark background, syntax highlighting).",
             "inputSchema": obj(pos_props(json!({"code": {"type": "string"}})), &["code"])}),
         json!({"name": "add_formula", "description": "Adds a LaTeX formula (math mode) typeset the way TeX does. Errors if the LaTeX is not supported.",
             "inputSchema": obj(pos_props(json!({"latex": {"type": "string"}, "color": color.clone()})), &["latex"])}),
         json!({"name": "import_mermaid", "description": "Adds a Mermaid diagram (flowchart/graph, stateDiagram, sequenceDiagram) with automatic layout. Returns the ids created.",
             "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Create a new page for the diagram."}})), &["mermaid"])}),
-        json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string"},
-                "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
-                "fill": color.clone(), "stroke": color.clone()}), &["id"])}),
-        json!({"name": "delete_object", "description": "Deletes an object (connectors that were bound to it remain, detached).",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}}), &["id"])}),
+        json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors, line style, font, lock, rotation; a connector's route, arrowheads and ends; one table cell. \
+            Everything is validated before anything is applied (an error changes nothing); a parameter that does not suit the object's type is ignored and listed in `avertissements`. Locked objects can still be modified here.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string", "description": "New text of a shape or connector label; with `cell`, the new text of that table cell."},
+                "markdown": richtext::markdown_prop("`text`"), "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
+                "fill": color.clone(), "stroke": color.clone(),
+                "stroke_width": {"type": "number", "minimum": 0, "maximum": 100, "description": "Outline width (0: no outline)."},
+                "dash": {"type": "string", "enum": ["solid", "dashed", "dotted"]},
+                "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "roundness": {"type": "number", "minimum": 0, "maximum": 1, "description": "Corner rounding (0 sharp, 1 capsule)."},
+                "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "font_family": {"type": "string", "enum": ["sans", "hand", "serif", "mono"]},
+                "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (shapes and connector labels)."},
+                "locked": {"type": "boolean", "description": "Lock or unlock the object in the application."},
+                "rotation": {"type": "number", "minimum": -360, "maximum": 360, "description": "Absolute angle in degrees (shapes and images; 0 resets)."},
+                "route": {"type": "string", "enum": ["straight", "elbow", "curve"], "description": "Connector only."},
+                "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Connector only: arrowheads."},
+                "from": {"type": "string", "description": "Connector only: id of the object to connect the start to (shape, table or image)."},
+                "to": {"type": "string", "description": "Connector only: id of the object to connect the end to."},
+                "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."}}), &["id"])}),
+        json!({"name": "delete_object", "description": "Deletes an object, or several with `ids` (connectors that were bound to them remain, detached). Give `id` or `ids`.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"},
+                "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Several objects to delete at once (result: `deleted` is then a list)."}}), &[])}),
         json!({"name": "auto_layout", "description": "Rearranges the shapes joined by connectors into a layered graph.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."}}), &[])}),
         json!({"name": "add_page", "description": "Adds a page. Returns its number.",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
         json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard.",
             "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop()}), &["output"])}),
-    ]
+    ];
+    tools.extend(ext_specs());
+    tools
+}
+
+/* ------------------------------------------------- tools of the submodules */
+
+fn ext_specs() -> Vec<Value> {
+    [icons::specs(), render::specs(), edit::specs(), batch::specs(), richtext::specs()].concat()
+}
+
+fn ext_is_tool(name: &str) -> bool {
+    [icons::NAMES, render::NAMES, edit::NAMES, batch::NAMES, richtext::NAMES].iter().any(|l| l.contains(&name))
+}
+
+fn ext_is_read_only(name: &str) -> bool {
+    [icons::READ_ONLY, render::READ_ONLY, edit::READ_ONLY, batch::READ_ONLY, richtext::READ_ONLY].iter().any(|l| l.contains(&name))
+}
+
+fn ext_apply(ed: &mut Editor, name: &str, a: &Value) -> Option<Res<Value>> {
+    icons::apply(ed, name, a)
+        .or_else(|| render::apply(ed, name, a))
+        .or_else(|| edit::apply(ed, name, a))
+        .or_else(|| batch::apply(ed, name, a))
+        .or_else(|| richtext::apply(ed, name, a))
 }
 
 /* ------------------------------------------------------------ arguments */
@@ -191,11 +237,14 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name == "save_board" {
         return Ok(json!({"saved": true}));
     }
-    if !EDITOR_TOOLS.contains(&name) {
+    if !EDITOR_TOOLS.contains(&name) && !ext_is_tool(name) {
         return Err(format!("unknown tool: {name}"));
     }
     if name != "add_page" {
         select_page(ed, a.get("page"))?;
+    }
+    if let Some(r) = ext_apply(ed, name, a) {
+        return r;
     }
     match name {
         "describe_board" => describe(ed, a),
@@ -238,7 +287,7 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
 /// Runs the tool `name`: in the open application if it is reachable and shows this board (live mode), otherwise on the file `path`.
 /// The result is a JSON text intended for the agent.
 pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
-    if name != "create_board" && name != "save_board" && !EDITOR_TOOLS.contains(&name) {
+    if name != "create_board" && name != "save_board" && !EDITOR_TOOLS.contains(&name) && !ext_is_tool(name) {
         return Err(format!("unknown tool: {name}"));
     }
     let mut a = a.clone();
@@ -288,7 +337,7 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
         srv.trackers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(path.clone(), t);
     }
     let r = r?;
-    if !READ_ONLY.contains(&name) && name != "save_board" {
+    if !READ_ONLY.contains(&name) && !ext_is_read_only(name) && name != "save_board" {
         save(&ed.doc, &path)?;
     }
     Ok(r.to_string())
@@ -344,17 +393,27 @@ pub fn summary(o: &Object) -> Value {
     match &o.kind {
         Kind::Box(b) => {
             m.insert("text".into(), json!(b.label.text.to_plain()));
+            if richtext::has_formatting(&b.label.text) {
+                m.insert("markdown".into(), json!(richtext::to_markdown(&b.label.text)));
+            }
         }
         Kind::Connector(c) => {
             m.insert("from".into(), end_json(&c.start));
             m.insert("to".into(), end_json(&c.end));
             if let Some(l) = &c.label {
                 m.insert("label".into(), json!(l.text.to_plain()));
+                if richtext::has_formatting(&l.text) {
+                    m.insert("markdown".into(), json!(richtext::to_markdown(&l.text)));
+                }
             }
         }
         Kind::Table(t) => {
             m.insert("rows".into(), json!(t.rows()));
             m.insert("cols".into(), json!(t.cols()));
+            if t.cells.iter().any(richtext::has_formatting) {
+                let md: Vec<Vec<String>> = t.cells.chunks(t.cols().max(1)).map(|row| row.iter().map(richtext::to_markdown).collect()).collect();
+                m.insert("cells_markdown".into(), json!(md));
+            }
             let r = t.rect();
             m.insert("x".into(), json!(r.x.round()));
             m.insert("y".into(), json!(r.y.round()));
@@ -371,9 +430,13 @@ pub fn summary(o: &Object) -> Value {
     v
 }
 
-fn describe(ed: &mut Editor, _a: &Value) -> Res<Value> {
+fn describe(ed: &mut Editor, a: &Value) -> Res<Value> {
     let page = ed.page();
-    let objects: Vec<Value> = page.objects.iter().map(summary).collect();
+    let objects: Vec<Value> = match os(a, "detail").unwrap_or("brief") {
+        "brief" => page.objects.iter().map(summary).collect(),
+        "full" => page.objects.iter().enumerate().map(|(z, o)| edit::full(z, o)).collect(),
+        d => return Err(format!("unknown detail \"{d}\" (brief, full)")),
+    };
     let pages: Vec<Value> = ed.doc.pages.iter().enumerate().map(|(i, p)| json!({"number": i + 1, "name": p.name, "objects": p.objects.len()})).collect();
     Ok(json!({"name": ed.doc.name, "pages": pages, "page": {"name": page.name, "objects": objects}}))
 }
@@ -545,6 +608,7 @@ fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
     let geom = geom_of(s(a, "geom")?)?;
     let at = origin(ed, a);
     let text = os(a, "text").unwrap_or("");
+    let markdown = richtext::markdown_flag(a)?;
     let (dw, dh) = match geom {
         BoxGeom::Sticky => (200.0, 200.0),
         BoxGeom::Ellipse | BoxGeom::Diamond => (180.0, 110.0),
@@ -562,14 +626,18 @@ fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
         roundness: if geom == BoxGeom::Rect { 0.15 } else { 0.0 },
         ..Style::default()
     };
-    let label = Label::new(text, of(a, "font_size").unwrap_or(20.0), if geom == BoxGeom::Text { Align::Left } else { Align::Center });
+    let mut label = Label::new(text, of(a, "font_size").unwrap_or(20.0), if geom == BoxGeom::Text { Align::Left } else { Align::Center });
+    let mut warnings = Vec::new();
+    label.text = richtext::rich(text, markdown, &mut warnings);
     let mut o = Object::new_box(geom, Frame::new(at.x, at.y, of(a, "w").unwrap_or(dw), of(a, "h").unwrap_or(dh)), style, label);
     if let Kind::Box(b) = &mut o.kind {
         b.fit(&ApproxMeasurer);
     }
     let id = ed.insert(o);
     let f = ed.page().get(&id).and_then(Object::frame).ok_or("object not created")?;
-    Ok(json!({"id": id.0, "x": f.x.round(), "y": f.y.round(), "w": f.w.round(), "h": f.h.round()}))
+    let mut out = json!({"id": id.0, "x": f.x.round(), "y": f.y.round(), "w": f.w.round(), "h": f.h.round()});
+    richtext::add_warnings(&mut out, warnings);
+    Ok(out)
 }
 
 fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -593,12 +661,18 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
         "none" => (Arrowhead::None, Arrowhead::None),
         r => return Err(format!("unknown arrowhead \"{r}\" (end, start, both, none)")),
     };
+    let markdown = richtext::markdown_flag(a)?;
+    let mut warnings = Vec::new();
     if let Some(l) = os(a, "label").filter(|l| !l.is_empty()) {
-        c.label = Some(Label::new(l, 16.0, Align::Center));
+        let mut label = Label::new(l, 16.0, Align::Center);
+        label.text = richtext::rich(l, markdown, &mut warnings);
+        c.label = Some(label);
     }
     let style = Style { stroke: ocolor(a, "stroke")?.unwrap_or(Color::Ink), width: 2.0, ..Style::default() };
     let id = ed.insert(Object::new(Kind::Connector(c), style));
-    Ok(json!({"id": id.0}))
+    let mut out = json!({"id": id.0});
+    richtext::add_warnings(&mut out, warnings);
+    Ok(out)
 }
 
 fn add_table(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -617,23 +691,42 @@ fn add_table(ed: &mut Editor, a: &Value) -> Res<Value> {
     if rows.is_empty() || cols == 0 || rows.len() > 200 || cols > 50 {
         return Err("\"rows\" must contain 1 to 200 rows and 1 to 50 columns".into());
     }
+    let markdown = richtext::markdown_flag(a)?;
+    let mut warnings = Vec::new();
+    let texts: Vec<Vec<RichText>> = rows
+        .iter()
+        .enumerate()
+        .map(|(r, row)| {
+            row.iter()
+                .enumerate()
+                .map(|(c, text)| {
+                    let mut w = Vec::new();
+                    let rt = richtext::rich(text, markdown, &mut w);
+                    warnings.extend(w.into_iter().map(|w| format!("cell [{r}, {c}]: {w}")));
+                    rt
+                })
+                .collect()
+        })
+        .collect();
     let at = origin(ed, a);
     let mut t = Table::new(at, rows.len(), cols);
     t.header = true;
-    for (r, row) in rows.iter().enumerate() {
+    for (r, row) in texts.iter().enumerate() {
         for (c, text) in row.iter().enumerate() {
             if let Some(cell) = t.cell_mut(r, c) {
-                *cell = RichText::plain(text);
+                *cell = text.clone();
             }
         }
     }
     // column width from the longest text (at least the default width)
     for c in 0..cols {
-        let widest = rows.iter().filter_map(|r| r.get(c)).map(|t| ApproxMeasurer.width(t, FontFamily::Sans, 18.0, true)).fold(0.0, f64::max);
+        let widest = texts.iter().filter_map(|r| r.get(c)).map(|t| ApproxMeasurer.width(&t.to_plain(), FontFamily::Sans, 18.0, true)).fold(0.0, f64::max);
         t.col_w[c] = t.col_w[c].max((widest + 28.0).ceil());
     }
     let id = ed.insert(Object::new(Kind::Table(t), Style { width: 2.0, fill: None, ..Style::default() }));
-    Ok(json!({"id": id.0, "rows": rows.len(), "cols": cols}))
+    let mut out = json!({"id": id.0, "rows": rows.len(), "cols": cols});
+    richtext::add_warnings(&mut out, warnings);
+    Ok(out)
 }
 
 fn add_code_block(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -687,7 +780,14 @@ fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
     let id = find(ed, s(a, "id")?)?.id.clone();
     let (fill, stroke) = (ocolor(a, "fill")?, ocolor(a, "stroke")?);
     let (text, x, y, w, h) = (os(a, "text").map(str::to_owned), of(a, "x"), of(a, "y"), of(a, "w"), of(a, "h"));
-    let mut warn: Vec<&str> = Vec::new();
+    let mut warn: Vec<String> = Vec::new();
+    let markdown = richtext::markdown_flag(a)?;
+    // everything is validated here, before the first change
+    let patch = edit::Patch::parse(ed, a, find(ed, &id.0)?)?;
+    let mut md_warnings = Vec::new();
+    // with `cell`, `text` is the text of that cell (parsed by the patch)
+    let rich = text.as_deref().filter(|_| !patch.has_cell()).map(|t| richtext::rich(t, markdown, &mut md_warnings));
+    md_warnings.extend(patch.warnings.iter().cloned());
     ed.update(&id, |o| {
         if let Some(f) = fill {
             o.style.fill = Some(f);
@@ -697,8 +797,8 @@ fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
         }
         match &mut o.kind {
             Kind::Box(b) => {
-                if let Some(t) = &text {
-                    b.label.text = RichText::plain(t);
+                if let Some(t) = &rich {
+                    b.label.text = t.clone();
                 }
                 if let Some(w) = w {
                     b.frame.w = w.max(4.0);
@@ -709,22 +809,25 @@ fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
                 b.fit(&ApproxMeasurer);
             }
             Kind::Connector(c) => {
-                if let Some(t) = &text {
-                    c.label = (!t.is_empty()).then(|| Label::new(t, 16.0, Align::Center));
+                if let Some(t) = &rich {
+                    c.label = (!t.is_empty()).then(|| Label { text: t.clone(), ..Label::new("", 16.0, Align::Center) });
                 }
             }
-            _ if text.is_some() => warn.push("text can only be changed on shapes and connectors"),
+            _ if text.is_some() && !patch.has_cell() => warn.push("text can only be changed on shapes and connectors".to_owned()),
             _ => {}
         }
+        patch.apply(o, &mut warn);
         if x.is_some() || y.is_some() {
             if let Some(f) = o.frame().map(|f| f.aabb()).or_else(|| matches!(o.kind, Kind::Table(_)).then(|| table_rect(o))) {
                 o.translate(Pt::new(x.map_or(0.0, |x| x - f.x), y.map_or(0.0, |y| y - f.y)));
             } else {
-                warn.push("this object cannot be moved with x/y");
+                warn.push("this object cannot be moved with x/y".to_owned());
             }
         }
     });
-    Ok(json!({"id": id.0, "avertissements": warn}))
+    let mut out = json!({"id": id.0, "avertissements": warn});
+    richtext::add_warnings(&mut out, md_warnings);
+    Ok(out)
 }
 
 fn table_rect(o: &Object) -> Rect {
