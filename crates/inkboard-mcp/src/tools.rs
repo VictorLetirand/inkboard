@@ -47,8 +47,9 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
         json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
             "inputSchema": obj(json!({}), &[])}),
-        json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop()}), &[])}),
+        json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files. `detail: \"full\"` adds each object's style, font, stacking order `z`, group, lock, rotation and (connectors) route and arrow; tables also list their `cells`.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(),
+                "detail": {"type": "string", "enum": ["brief", "full"], "description": "Default brief (id, type, text, position). full: also style {stroke, fill, width, dash, opacity, roundness}, font {family, size, align}, z, group, locked, rotation (degrees), route, arrow."}}), &[])}),
         json!({"name": "board_changes", "description": "Reports what the USER changed on the board since your last look (describe_board or board_changes): objects added, modified, deleted. Your own changes are not reported. The first call records a baseline.",
             "inputSchema": obj(json!({"path": path_prop()}), &[])}),
         json!({"name": "add_image", "description": "Adds an image (PNG, JPEG, GIF, WebP or SVG, 15 MiB at most) from a file (`source`, under the allowed root) or from base64 data (`data_base64`). The natural size is reduced to at most 600; w and/or h override it.",
@@ -72,12 +73,26 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(pos_props(json!({"latex": {"type": "string"}, "color": color.clone()})), &["latex"])}),
         json!({"name": "import_mermaid", "description": "Adds a Mermaid diagram (flowchart/graph, stateDiagram, sequenceDiagram) with automatic layout. Returns the ids created.",
             "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Create a new page for the diagram."}})), &["mermaid"])}),
-        json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string"},
+        json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors, line style, font, lock, rotation; a connector's route, arrowheads and ends; one table cell. \
+            Everything is validated before anything is applied (an error changes nothing); a parameter that does not suit the object's type is ignored and listed in `avertissements`. Locked objects can still be modified here.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string", "description": "New text of a shape or connector label; with `cell`, the new text of that table cell."},
                 "markdown": richtext::markdown_prop("`text`"), "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
-                "fill": color.clone(), "stroke": color.clone()}), &["id"])}),
-        json!({"name": "delete_object", "description": "Deletes an object (connectors that were bound to it remain, detached).",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}}), &["id"])}),
+                "fill": color.clone(), "stroke": color.clone(),
+                "stroke_width": {"type": "number", "minimum": 0, "maximum": 100, "description": "Outline width (0: no outline)."},
+                "dash": {"type": "string", "enum": ["solid", "dashed", "dotted"]},
+                "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "roundness": {"type": "number", "minimum": 0, "maximum": 1, "description": "Corner rounding (0 sharp, 1 capsule)."},
+                "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "font_family": {"type": "string", "enum": ["sans", "hand", "serif", "mono"]},
+                "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (shapes and connector labels)."},
+                "locked": {"type": "boolean", "description": "Lock or unlock the object in the application."},
+                "rotation": {"type": "number", "minimum": -360, "maximum": 360, "description": "Absolute angle in degrees (shapes and images; 0 resets)."},
+                "route": {"type": "string", "enum": ["straight", "elbow", "curve"], "description": "Connector only."},
+                "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Connector only: arrowheads."},
+                "from": {"type": "string", "description": "Connector only: id of the object to connect the start to (shape, table or image)."},
+                "to": {"type": "string", "description": "Connector only: id of the object to connect the end to."},
+                "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."}}), &["id"])}),
+        json!({"name": "delete_object", "description": "Deletes an object, or several with `ids` (connectors that were bound to them remain, detached). Give `id` or `ids`.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"},
+                "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Several objects to delete at once (result: `deleted` is then a list)."}}), &[])}),
         json!({"name": "auto_layout", "description": "Rearranges the shapes joined by connectors into a layered graph.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."}}), &[])}),
         json!({"name": "add_page", "description": "Adds a page. Returns its number.",
@@ -415,9 +430,13 @@ pub fn summary(o: &Object) -> Value {
     v
 }
 
-fn describe(ed: &mut Editor, _a: &Value) -> Res<Value> {
+fn describe(ed: &mut Editor, a: &Value) -> Res<Value> {
     let page = ed.page();
-    let objects: Vec<Value> = page.objects.iter().map(summary).collect();
+    let objects: Vec<Value> = match os(a, "detail").unwrap_or("brief") {
+        "brief" => page.objects.iter().map(summary).collect(),
+        "full" => page.objects.iter().enumerate().map(|(z, o)| edit::full(z, o)).collect(),
+        d => return Err(format!("unknown detail \"{d}\" (brief, full)")),
+    };
     let pages: Vec<Value> = ed.doc.pages.iter().enumerate().map(|(i, p)| json!({"number": i + 1, "name": p.name, "objects": p.objects.len()})).collect();
     Ok(json!({"name": ed.doc.name, "pages": pages, "page": {"name": page.name, "objects": objects}}))
 }
@@ -761,10 +780,14 @@ fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
     let id = find(ed, s(a, "id")?)?.id.clone();
     let (fill, stroke) = (ocolor(a, "fill")?, ocolor(a, "stroke")?);
     let (text, x, y, w, h) = (os(a, "text").map(str::to_owned), of(a, "x"), of(a, "y"), of(a, "w"), of(a, "h"));
-    let mut warn: Vec<&str> = Vec::new();
+    let mut warn: Vec<String> = Vec::new();
     let markdown = richtext::markdown_flag(a)?;
+    // everything is validated here, before the first change
+    let patch = edit::Patch::parse(ed, a, find(ed, &id.0)?)?;
     let mut md_warnings = Vec::new();
-    let rich = text.as_deref().map(|t| richtext::rich(t, markdown, &mut md_warnings));
+    // with `cell`, `text` is the text of that cell (parsed by the patch)
+    let rich = text.as_deref().filter(|_| !patch.has_cell()).map(|t| richtext::rich(t, markdown, &mut md_warnings));
+    md_warnings.extend(patch.warnings.iter().cloned());
     ed.update(&id, |o| {
         if let Some(f) = fill {
             o.style.fill = Some(f);
@@ -790,14 +813,15 @@ fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
                     c.label = (!t.is_empty()).then(|| Label { text: t.clone(), ..Label::new("", 16.0, Align::Center) });
                 }
             }
-            _ if text.is_some() => warn.push("text can only be changed on shapes and connectors"),
+            _ if text.is_some() && !patch.has_cell() => warn.push("text can only be changed on shapes and connectors".to_owned()),
             _ => {}
         }
+        patch.apply(o, &mut warn);
         if x.is_some() || y.is_some() {
             if let Some(f) = o.frame().map(|f| f.aabb()).or_else(|| matches!(o.kind, Kind::Table(_)).then(|| table_rect(o))) {
                 o.translate(Pt::new(x.map_or(0.0, |x| x - f.x), y.map_or(0.0, |y| y - f.y)));
             } else {
-                warn.push("this object cannot be moved with x/y");
+                warn.push("this object cannot be moved with x/y".to_owned());
             }
         }
     });
