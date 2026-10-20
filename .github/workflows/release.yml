@@ -189,7 +189,8 @@ jobs:
           # AppImage: no FUSE needed with --appimage-extract-and-run
           img=$(one '*.AppImage')
           chmod +x "$img"
-          launch "$PWD/$img" --appimage-extract-and-run --screenshot installer-check/appimage.png
+          # absolute output path: the AppImage may change directory before running the application
+          launch "$PWD/$img" --appimage-extract-and-run --screenshot "$PWD/installer-check/appimage.png"
           python3 scripts/check_png.py installer-check/appimage.png
 
       - name: Check the .dmg (macOS)
@@ -202,7 +203,8 @@ jobs:
           f=( dist/*.dmg )
           if [ ${#f[@]} -ne 1 ] || [ ! -e "${f[0]}" ]; then echo "expected exactly one *.dmg in dist/:" >&2; ls -l dist >&2; exit 1; fi
           mnt=$(mktemp -d)
-          hdiutil attach "${f[0]}" -mountpoint "$mnt" -nobrowse -readonly
+          # the dmg carries a license agreement (license-file): accept it, otherwise "hdiutil: attach canceled"
+          printf 'Y\n' | hdiutil attach "${f[0]}" -mountpoint "$mnt" -nobrowse -readonly
           trap 'hdiutil detach "$mnt" -force >/dev/null 2>&1 || true' EXIT
           app=$(find "$mnt" -maxdepth 1 -name '*.app' | head -n 1)
           [ -n "$app" ] || { echo "no .app in the dmg:" >&2; ls -l "$mnt" >&2; exit 1; }
