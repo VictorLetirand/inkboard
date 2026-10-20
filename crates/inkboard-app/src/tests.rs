@@ -1750,6 +1750,27 @@ fn the_editor_shows_the_text_where_the_final_rendering_puts_it_for_every_shape_a
     }
 }
 
+/// The last word of a paragraph has no space after it: the editor (egui) and the final rendering must still break the line at the same place when
+/// that word ends within one space width of the wrap width. The width is built from the measurer, so the case does not depend on the fonts.
+#[test]
+fn the_editor_and_the_final_rendering_agree_when_the_last_word_ends_just_past_the_wrap_width() {
+    let mut t = T::new();
+    let m = t.app().measurer.clone();
+    let w = |s: &str| inkboard_core::text::Measurer::width(&m, s, FontFamily::Sans, 20.0, false);
+    // a rectangle's text area is 16 units narrower than the frame: make it a quarter of a space narrower than "Victor Letirand"
+    let frame_w = w("Victor Letirand") + 16.0 - w(" ") / 4.0;
+    let id = add_text_box(&mut t, BoxGeom::Rect, Frame::new(300.0, 200.0, frame_w, 180.0), "Victor Letirand", Align::Left);
+    t.app().sel = vec![id.clone()];
+    t.h.step();
+    t.app().start_editing(&id, None);
+    for _ in 0..3 {
+        t.h.step();
+    }
+    let (editor, fin) = (editor_rows(&mut t), final_rows(&mut t, &id));
+    assert_eq!(fin.len(), 1, "the last word is allowed to end within one space of the wrap width: {fin:?}");
+    assert_rows_match(&editor, &fin, "Rect Left \"Victor Letirand\"");
+}
+
 /// A new free text starts exactly where the user clicked, grows with what is typed, and its frame always contains the text.
 #[test]
 fn a_new_free_text_is_anchored_at_the_click_and_its_frame_follows_the_typing() {

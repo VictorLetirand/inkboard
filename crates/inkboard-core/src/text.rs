@@ -312,10 +312,15 @@ pub fn layout_rich(rt: &RichText, max_w: Option<f64>, m: &dyn Measurer, font: Fo
         if start < para.len() {
             tokens.push(&para[start..]);
         }
-        for tok in tokens {
+        let last_token = tokens.len().saturating_sub(1);
+        for (n, tok) in tokens.into_iter().enumerate() {
             let trimmed_len = tok.iter().rposition(|(c, _)| *c != ' ').map_or(0, |p| p + 1);
             let tok_w = run_width(&tok[..trimmed_len], m, font, size);
             let cur_w = run_width(&cur, m, font, size);
+            // The editor (egui) counts the space that follows a word when deciding whether it fits, and allows for it by widening the line by one
+            // space; the last word of a paragraph has none, so it may end up to one space past the wrap width. The final rendering does the same,
+            // otherwise the editor and the rendering would break the line at different places for such a word.
+            let max = if n == last_token && trimmed_len == tok.len() { max + m.width(" ", font, size, false) } else { max };
             if !cur.is_empty() && cur_w + tok_w > max {
                 // strip trailing spaces before breaking
                 while cur.last().is_some_and(|(c, _)| *c == ' ') {
@@ -377,6 +382,22 @@ mod tests {
         assert!(l.widths.iter().all(|w| *w <= 80.0 + 1.0));
         let joined: String = l.lines.iter().map(|ln| ln.iter().map(|r| r.text.as_str()).collect::<String>()).collect::<Vec<_>>().join(" ");
         assert_eq!(joined, "un deux trois quatre cinq six sept");
+    }
+
+    #[test]
+    fn the_last_word_of_a_paragraph_may_end_one_space_past_the_wrap_width() {
+        let m = ApproxMeasurer;
+        let w = |s: &str| m.width(s, FontFamily::Sans, 16.0, false);
+        let max = w("alpha beta") - w(" ") / 2.0;
+        // "beta" ends just past `max` but has no space after it: same rule as the editor, it stays on the line
+        let l = layout_rich(&RichText::plain("alpha beta"), Some(max), &m, FontFamily::Sans, 16.0);
+        assert_eq!(l.lines.len(), 1);
+        // followed by a space (or anything else) the word needs to end within `max`
+        let l = layout_rich(&RichText::plain("alpha beta gamma"), Some(max), &m, FontFamily::Sans, 16.0);
+        assert_eq!(l.lines.len(), 3);
+        // two spaces beyond the allowance: it wraps
+        let l = layout_rich(&RichText::plain("alpha beta"), Some(max - w(" ")), &m, FontFamily::Sans, 16.0);
+        assert_eq!(l.lines.len(), 2);
     }
 
     #[test]

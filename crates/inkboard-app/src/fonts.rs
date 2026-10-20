@@ -12,6 +12,10 @@ const SERIF: &str = "wb-serif";
 const MONO: &str = "wb-mono";
 
 fn read_system_font(file: &str) -> Option<Vec<u8>> {
+    // tests only: `INKBOARD_NO_SYSTEM_FONTS=1` forces egui's built-in fonts, as on a machine without the Windows fonts (CI Linux / macOS)
+    if cfg!(test) && std::env::var_os("INKBOARD_NO_SYSTEM_FONTS").is_some() {
+        return None;
+    }
     let dirs: [&str; 3] = ["C:\\Windows\\Fonts", "/usr/share/fonts/truetype/dejavu", "/System/Library/Fonts/Supplemental"];
     dirs.iter().find_map(|d| std::fs::read(std::path::Path::new(d).join(file)).ok())
 }
