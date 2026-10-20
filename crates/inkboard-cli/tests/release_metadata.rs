@@ -75,6 +75,7 @@ fn installer_templates_handle_the_file_association_fields_correctly() {
 const RELEASE_TARGETS: [&str; 4] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"];
 
 /// `(name, version)` of the third-party crates compiled into the binaries for one target (normal and build dependencies, no dev dependencies).
+/// Prerequisite: `cargo fetch --locked` (offline, `cargo tree` needs the sources of the crates of the other platforms too; the CI runs it before the tests).
 fn embedded_crates(target: &str) -> std::collections::BTreeSet<(String, String)> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let out = std::process::Command::new(cargo)
@@ -82,7 +83,12 @@ fn embedded_crates(target: &str) -> std::collections::BTreeSet<(String, String)>
         .current_dir(root())
         .output()
         .expect("cargo tree can be started");
-    assert!(out.status.success(), "cargo tree --target {target} failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "cargo tree --target {target} failed: {}
+If a crate could not be downloaded (--offline), run `cargo fetch --locked` first: the test needs the sources of the crates of every release target.",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|l| {

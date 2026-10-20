@@ -12,6 +12,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@v2
+      # the licence test runs `cargo tree --offline` for every release target: all crates of Cargo.lock must be downloaded, not only the ones of this OS
+      - run: cargo fetch --locked
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

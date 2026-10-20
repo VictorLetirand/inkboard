@@ -4,6 +4,7 @@
 Le projet est libre, sous la double licence **MIT OU Apache-2.0** ([LICENSE-MIT](../../LICENSE-MIT), [LICENSE-APACHE](../../LICENSE-APACHE)). Les licences des composants tiers embarqués
 (toutes permissives, dont la police STIX Two Math sous SIL OFL) sont dans [THIRD_PARTY_LICENSES.md](../../THIRD_PARTY_LICENSES.md), généré par `python scripts/gen_third_party.py`
 (à relancer quand les dépendances changent ; il échoue si une licence non permissive apparaît).
+Le test `third_party_licenses_list_every_crate_embedded_in_the_binaries` la vérifie hors ligne : lancer d'abord `cargo fetch --locked` pour télécharger les crates de toutes les plateformes livrées (la CI le fait).
 
 ## Installeurs
 
