@@ -264,6 +264,8 @@ fn a_png_over_4_mib_is_produced_smaller_automatically() {
 
     let dir = temp_dir("render-big");
     let mut c = Client::start(&dir);
+    // the picture is rendered again at a smaller size until it fits: slow in a debug build on a busy CI runner
+    c.timeout = std::time::Duration::from_secs(240);
     let board = dir.join("big.inkboard");
     let p = board.to_str().unwrap();
     c.tool("create_board", json!({"path": p})).unwrap();

@@ -15,6 +15,8 @@ pub struct Client {
     /// Messages received while waiting for a response (server notifications).
     pending: Vec<Value>,
     next: u64,
+    /// How long `request` waits for a response (a slow CI runner may need more for a heavy call).
+    pub timeout: Duration,
 }
 
 impl Client {
@@ -40,7 +42,7 @@ impl Client {
                 }
             }
         });
-        Self { child, stdin, lines, pending: Vec::new(), next: 1 }
+        Self { child, stdin, lines, pending: Vec::new(), next: 1, timeout: Duration::from_secs(20) }
     }
 
     pub fn send(&mut self, v: &Value) {
@@ -59,7 +61,7 @@ impl Client {
         self.next += 1;
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
         loop {
-            let v = self.lines.recv_timeout(Duration::from_secs(20)).expect("response expected");
+            let v = self.lines.recv_timeout(self.timeout).expect("response expected");
             if v["id"] == json!(id) {
                 return v;
             }
