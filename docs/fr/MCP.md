@@ -24,6 +24,36 @@ Pour un autre client, la configuration est la même : commande `inkboard-mcp.exe
 Avec `--root`, tout chemin (relatif ou absolu) doit se trouver sous ce dossier ; `..` et les liens (y compris un lien servant de fichier) qui mènent hors de ce dossier sont refusés. Seuls les fichiers de tableau
 sont modifiés (`.inkboard` ; les anciens noms `.inkboard.json` et `.tableau.json` sont toujours lus et écrits sous leur propre nom, et `create_board` crée des fichiers `.inkboard`) ; `export` n'écrit que `.inkboard`, `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
 
+### Installé avec l'application
+
+Les installeurs placent `inkboard-mcp` à côté de l'application (Windows, installation par utilisateur : `%LOCALAPPDATA%\Inkboard\inkboard-mcp.exe`) : rien à compiler, il suffit d'enregistrer ce fichier dans votre client, comme ci-dessous.
+
+### GitHub Copilot (VS Code)
+
+*Pas encore testé avec Inkboard : rédigé d'après la documentation de VS Code.* VS Code lance les serveurs stdio locaux depuis `.vscode/mcp.json` (projet) ou la configuration utilisateur. La clé racine est `servers` (pas `mcpServers`) :
+
+```json
+{
+  "servers": {
+    "inkboard": {
+      "type": "stdio",
+      "command": "C:\\Users\\VOUS\\AppData\\Local\\Inkboard\\inkboard-mcp.exe",
+      "args": ["--root", "D:\\tableaux"]
+    }
+  }
+}
+```
+
+- Donnez un chemin absolu pour `command`.
+- Passez le chat Copilot en mode **Agent** : les outils MCP ne servent pas en mode *Ask*, et chaque outil demande une approbation.
+- VS Code n'utilise que les **outils** du serveur : les ressources et les notifications de changement sont ignorées, l'agent doit donc appeler `board_changes` pour voir ce que vous avez modifié.
+- Si le client n'affiche pas le bloc image de `render`, donnez `output` (un `.png` sous le dossier racine) : l'image y est aussi écrite.
+- Microsoft 365 Copilot (Teams, Word…) ne peut pas utiliser ce serveur : il n'atteint que des serveurs MCP **distants** en HTTP, et Inkboard ne parle que stdio.
+
+### Claude Desktop et autres clients
+
+*Non testé.* Même commande et mêmes arguments dans la configuration MCP du client (pour Claude Desktop, `mcpServers` dans `claude_desktop_config.json`) : `{"mcpServers": {"inkboard": {"command": "<chemin>\\inkboard-mcp.exe", "args": ["--root", "<dossier>"]}}}`.
+
 ## Comment le mode direct fonctionne
 
 L'application ouvre un serveur local sur `127.0.0.1` (port éphémère, jamais exposé au réseau) et publie son port et un **jeton secret** aléatoire dans

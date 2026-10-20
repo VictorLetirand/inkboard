@@ -25,6 +25,36 @@ For another client the configuration is the same: command `inkboard-mcp`, argume
 With `--root`, every path (relative or absolute) must be under that folder; `..` and links (including a link as the file itself) that lead outside it are refused. Only board files
 are modified (`.inkboard`; the older `.inkboard.json` and `.tableau.json` names are still read and written under their own name, and `create_board` makes `.inkboard` files); `export` writes only `.inkboard`, `.inkboard.json`, `.drawio`, `.excalidraw`, `.canvas`, `.svg`, `.png`, `.pdf`, `.json`.
 
+### Installed with the application
+
+The installers put `inkboard-mcp` next to the application (Windows, per-user install: `%LOCALAPPDATA%\Inkboard\inkboard-mcp.exe`), so there is nothing to build: register that file in your client, as below.
+
+### GitHub Copilot (VS Code)
+
+*Not tested with Inkboard yet: written from the VS Code documentation.* VS Code starts local stdio servers from `.vscode/mcp.json` (workspace) or the user configuration. The root key is `servers` (not `mcpServers`):
+
+```json
+{
+  "servers": {
+    "inkboard": {
+      "type": "stdio",
+      "command": "C:\\Users\\YOU\\AppData\\Local\\Inkboard\\inkboard-mcp.exe",
+      "args": ["--root", "D:\\boards"]
+    }
+  }
+}
+```
+
+- Use an absolute path for `command`.
+- Switch the Copilot Chat mode to **Agent**: MCP tools are not used in *Ask* mode, and each tool asks for approval.
+- VS Code only uses a server's **tools**: resources and change notifications are ignored, so the agent must call `board_changes` to see what you changed.
+- If the client does not display the image block of `render`, give `output` (a `.png` under the root): the picture is also written there.
+- Microsoft 365 Copilot (Teams, Word…) cannot use this server: it only reaches **remote** MCP servers over HTTP, and Inkboard speaks stdio only.
+
+### Claude Desktop and other clients
+
+*Not tested.* The same command and arguments in the client's MCP configuration (for Claude Desktop, `mcpServers` in `claude_desktop_config.json`): `{"mcpServers": {"inkboard": {"command": "<path>\\inkboard-mcp.exe", "args": ["--root", "<folder>"]}}}`.
+
 ## How live mode works
 
 The application opens a local server on `127.0.0.1` (ephemeral port, never exposed to the network) and publishes its port and a random **secret token** in
