@@ -9,14 +9,9 @@ use inkboard_icons::{IconRef, Library};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The pack built by `scripts/build_icon_library.py`.
-pub static PACK: &[u8] = include_bytes!("../assets/icons.bin");
-
-/// The pack opened once for the whole process (resolves the built-in icons of an imported draw.io file); `None` if the pack is unreadable.
-pub fn shared() -> Option<&'static Library> {
-    static SHARED: std::sync::OnceLock<Option<Library>> = std::sync::OnceLock::new();
-    SHARED.get_or_init(|| Library::open(PACK).ok()).as_ref()
-}
+/// The pack and its once-opened `Library` (resolves the built-in icons of an imported draw.io file) are shared with the MCP server: the
+/// pack is embedded once, by `inkboard-icons` (feature `embedded`).
+pub use inkboard_icons::{PACK, shared};
 
 /// `inkboard_formats::import_any`, with the icon library to resolve the built-in icons of draw.io files.
 pub fn import(name: &str, content: &str, m: &dyn inkboard_core::text::Measurer) -> Result<inkboard_formats::Imported, inkboard_formats::FormatError> {
