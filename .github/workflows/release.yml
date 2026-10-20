@@ -55,6 +55,8 @@ jobs:
 
       - name: Checks
         run: |
+          # every crate of Cargo.lock must be in the cache: the licence test runs `cargo tree --offline` for all release targets
+          cargo fetch --locked
           cargo fmt --all --check
           cargo test --workspace
 
