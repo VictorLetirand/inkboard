@@ -75,6 +75,25 @@ impl Editor {
         r
     }
 
+    /// Like `transact`, but if `f` returns `Err`, the operations made by `f` are undone: the document, the current page and the
+    /// revision return to their state at entry, and nothing is pushed to the undo or redo stacks. Inside an already open
+    /// transaction, only the operations of this call are undone.
+    pub fn try_transact<R, E>(&mut self, f: impl FnOnce(&mut Self) -> Result<R, E>) -> Result<R, E> {
+        let (start, rev, current) = (self.open.as_ref().map_or(0, Vec::len), self.rev, self.current.clone());
+        self.transact(|e| {
+            let r = f(e);
+            if r.is_err() {
+                for op in e.open.as_mut().map(|v| v.split_off(start)).unwrap_or_default().iter().rev() {
+                    e.doc.apply(&op.inverse());
+                }
+                e.rev = rev;
+                e.current = current;
+                e.fix_current();
+            }
+            r
+        })
+    }
+
     fn apply(&mut self, op: Op) {
         self.doc.apply(&op);
         self.rev += 1;
@@ -414,6 +433,103 @@ mod tests {
     }
 
     #[test]
+    fn try_transact_success_is_one_undo_step() {
+        let mut e = Editor::new(Document::default());
+        let r: Result<usize, String> = e.try_transact(|e| {
+            e.insert(shape(0.0, 0.0));
+            e.insert(shape(200.0, 0.0));
+            Ok(e.page().objects.len())
+        });
+        assert_eq!(r, Ok(2));
+        assert!(e.revision() > 0);
+        e.undo();
+        assert!(e.page().objects.is_empty());
+        assert!(!e.can_undo());
+    }
+
+    #[test]
+    fn try_transact_failure_restores_everything_and_keeps_redo() {
+        let mut e = Editor::new(Document::default());
+        e.insert(shape(0.0, 0.0));
+        let kept = e.insert(shape(10.0, 0.0));
+        e.undo();
+        assert!(e.can_redo());
+        let (doc, rev) = (e.doc.clone(), e.revision());
+        let r: Result<(), &str> = e.try_transact(|e| {
+            let a = e.insert(shape(5.0, 5.0));
+            e.update(&a, |o| o.translate(Pt::new(1.0, 1.0)));
+            e.remove(std::slice::from_ref(&kept));
+            Err("boom")
+        });
+        assert_eq!(r, Err("boom"));
+        assert_eq!(e.doc, doc);
+        assert_eq!(e.revision(), rev, "an undone transaction must not look like a modification");
+        assert!(e.can_redo(), "the redo stack must survive a failed transaction");
+        assert!(e.redo());
+        assert!(e.page().get(&kept).is_some());
+        // the history holds exactly the two original steps
+        assert!(e.undo() && e.undo() && !e.undo());
+    }
+
+    #[test]
+    fn try_transact_inside_a_transaction_undoes_only_its_own_operations() {
+        let mut e = Editor::new(Document::default());
+        e.transact(|e| {
+            let before = e.insert(shape(0.0, 0.0));
+            let r: Result<(), ()> = e.try_transact(|e| {
+                e.insert(shape(50.0, 0.0));
+                e.update(&before, |o| o.translate(Pt::new(7.0, 0.0)));
+                Err(())
+            });
+            assert!(r.is_err());
+            assert_eq!(e.page().objects.len(), 1);
+            assert_eq!(e.page().get(&before).unwrap().frame().unwrap().x, 0.0);
+            let ok: Result<Id, ()> = e.try_transact(|e| Ok(e.insert(shape(90.0, 0.0))));
+            assert!(ok.is_ok());
+            e.insert(shape(120.0, 0.0));
+        });
+        assert_eq!(e.page().objects.len(), 3);
+        // the whole outer transaction is still a single undo step
+        e.undo();
+        assert!(e.page().objects.is_empty());
+        assert!(!e.can_undo());
+    }
+
+    #[test]
+    fn try_transact_failure_after_page_operations_undoes_them() {
+        let mut e = Editor::new(Document::default());
+        let first = e.current.clone();
+        let second = e.add_page("Two");
+        e.current = first.clone();
+        e.insert(shape(0.0, 0.0));
+        let (doc, rev) = (e.doc.clone(), e.revision());
+        let r: Result<(), ()> = e.try_transact(|e| {
+            let p3 = e.add_page("Three");
+            e.insert(shape(1.0, 1.0));
+            e.rename_page(&second, "Renamed");
+            e.remove_page(&second);
+            e.rename_page(&p3, "Last");
+            Err(())
+        });
+        assert!(r.is_err());
+        assert_eq!(e.doc, doc);
+        assert_eq!(e.doc.pages.len(), 2);
+        assert_eq!(e.current, first, "the current page comes back too");
+        assert_eq!(e.revision(), rev);
+        // removing a page that holds objects, then failing, brings the page and its objects back
+        e.current = second.clone();
+        e.insert(shape(3.0, 3.0));
+        let doc = e.doc.clone();
+        let r: Result<(), ()> = e.try_transact(|e| {
+            e.remove_page(&second);
+            Err(())
+        });
+        assert!(r.is_err());
+        assert_eq!(e.doc, doc);
+        assert_eq!(e.current, second);
+    }
+
+    #[test]
     fn new_edit_clears_redo() {
         let mut e = Editor::new(Document::default());
         e.insert(shape(0.0, 0.0));
@@ -524,5 +640,90 @@ mod tests {
         let id = e.current.clone();
         e.remove_page(&id);
         assert_eq!(e.doc.pages.len(), 1);
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Applies one pseudo-random editor operation chosen by `code`, `pick` selecting its target.
+        fn step(e: &mut Editor, (code, pick): (u8, u8)) {
+            let ids: Vec<Id> = e.page().objects.iter().map(|o| o.id.clone()).collect();
+            let target = (!ids.is_empty()).then(|| ids[pick as usize % ids.len()].clone());
+            let other = (!ids.is_empty()).then(|| ids[(pick as usize / 3 + 1) % ids.len()].clone());
+            match (code % 11, target, other) {
+                (0, ..) | (_, None, _) => {
+                    e.insert(shape(f64::from(pick), f64::from(code)));
+                }
+                (1, Some(t), _) => e.update(&t, |o| o.translate(Pt::new(3.0, -2.0))),
+                (2, Some(t), _) => e.remove(&[t]),
+                (3, Some(t), _) => e.reorder(&[t], Order::Front),
+                (4, Some(t), Some(o)) => {
+                    e.connect(&t, &o);
+                }
+                (5, Some(t), Some(o)) => e.group(&[t, o]),
+                (6, ..) => {
+                    e.add_page("Extra");
+                }
+                (7, ..) => {
+                    let page = e.doc.pages[pick as usize % e.doc.pages.len()].id.clone();
+                    e.remove_page(&page);
+                    e.current = e.doc.pages[0].id.clone();
+                }
+                (8, ..) => {
+                    let page = e.doc.pages[pick as usize % e.doc.pages.len()].id.clone();
+                    e.rename_page(&page, &format!("P{pick}"));
+                }
+                (9, ..) => e.current = e.doc.pages[pick as usize % e.doc.pages.len()].id.clone(),
+                (_, Some(t), _) => {
+                    e.duplicate(&[t], Pt::new(20.0, 20.0));
+                }
+            }
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 128, failure_persistence: None, ..ProptestConfig::default() })]
+
+            #[test]
+            fn failed_try_transact_leaves_the_editor_as_it_was(
+                before in proptest::collection::vec(any::<(u8, u8)>(), 0..12),
+                inside in proptest::collection::vec(any::<(u8, u8)>(), 0..25),
+                nested in any::<bool>(),
+            ) {
+                let mut e = Editor::new(Document::default());
+                for s in before {
+                    step(&mut e, s);
+                }
+                let (doc, current, rev) = (e.doc.clone(), e.current.clone(), e.revision());
+                let (can_undo, can_redo) = (e.can_undo(), e.can_redo());
+                let run = |e: &mut Editor| {
+                    e.try_transact(|e| {
+                        for s in inside {
+                            step(e, s);
+                        }
+                        Err::<(), ()>(())
+                    })
+                };
+                if nested {
+                    // an open transaction holding one operation of its own: that operation stays
+                    e.transact(|e| -> Result<(), TestCaseError> {
+                        e.insert(shape(1.0, 1.0));
+                        let (doc_in, rev_in) = (e.doc.clone(), e.revision());
+                        prop_assert!(run(e).is_err());
+                        prop_assert_eq!(&e.doc, &doc_in);
+                        prop_assert_eq!(e.revision(), rev_in);
+                        Ok(())
+                    })?;
+                    e.undo();
+                    prop_assert_eq!(e.can_undo(), can_undo);
+                } else {
+                    prop_assert!(run(&mut e).is_err());
+                    prop_assert_eq!((e.can_undo(), e.can_redo()), (can_undo, can_redo));
+                    prop_assert_eq!(e.revision(), rev);
+                }
+                prop_assert_eq!(&e.doc, &doc);
+                prop_assert_eq!(&e.current, &current);
+            }
+        }
     }
 }
