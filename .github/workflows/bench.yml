@@ -1,10 +1,9 @@
 name: Bench
 
 # Performance guard: `ink bench 20000` (generate 20 000 objects + save) is run 5 times; the median wall time must stay under THRESHOLD_MS.
-# Reference measurement (local, Windows 11, release build, 2026-10-19): 92 ms median of 7 runs (89 to 98 ms; the very first, cold run took 481 ms).
-# Threshold = 3 (regression margin) x 92 ms x 2 (a shared CI runner is slower than that machine) = 552 ms.
-# The threshold was NOT measured on a GitHub runner yet: if the first scheduled run fails or is far below the threshold, re-measure
-# there and update THRESHOLD_MS (and this comment).
+# Measured on a GitHub runner (ubuntu-latest, 2026-10-20, workflow_dispatch): runs 57, 56, 59, 57, 60 ms, median 57 ms.
+# (Local reference, Windows 11, release build, 2026-10-19: 92 ms median of 7 runs.)
+# Threshold = 3 (regression margin) x 57 ms = 171 ms, rounded to 170 ms. Re-measure and update this comment if the runner image changes a lot.
 on:
   workflow_dispatch:
   schedule:
@@ -18,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      THRESHOLD_MS: 552
+      THRESHOLD_MS: 170
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
