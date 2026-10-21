@@ -57,7 +57,7 @@ Composants et crates :
 ## 3. Protocole et cohérence
 
 ### 3.1 Messages (tous chiffrés ; version de protocole dans le premier message)
-- `Hello { proto, name, join_proof, role_requested }` → `Welcome { participant, color, role, doc_meta, host_proto }` ou `Refused { reason }` (version, jeton, hôte plein, refus de l'hôte).
+- `Hello { proto, name, join_proof, role_requested }` (**`name` = nom affiché de l'invité**) ; `Welcome` porte aussi le **nom de l'hôte** et la liste des participants avec leurs noms → `Welcome { participant, color, role, doc_meta, host_proto }` ou `Refused { reason }` (version, jeton, hôte plein, refus de l'hôte).
 - `Snapshot { pages, objects, asset_manifest }` : le document **sans les octets des images** ; les images sont listées par empreinte (hash) et taille.
 - `AssetRequest { hash }` / `AssetChunk { hash, offset, data, last }` : transfert à la demande, par morceaux (reprise possible), mise en cache chez l'invité ; une image déjà connue (même hash) n'est jamais renvoyée.
 - Modifications : `Submit { client_seq, base_seq, ops }` (invité → hôte), `Applied { seq, author, client_seq?, ops }` (hôte → tous), `Rejected { client_seq, reason }`.
@@ -128,6 +128,7 @@ Déplacer, redimensionner ou tracer ne passe pas par l'historique pendant le ges
 ## 7. Interface
 
 - **Barre / menu : « Partager »** → fenêtre : état de la session, **lien d'édition** et **lien de lecture** (boutons Copier), régénérer le lien, plafond, « accepter automatiquement en lecture », **Arrêter le partage**. Indicateur permanent dans la barre (pastille + nombre de participants) tant qu'une session est ouverte.
+- **Noms affichés (décision du 2026-10-21)** : l'hôte **et** chaque invité ont un nom. L'invité le saisit en rejoignant (pré-rempli avec le dernier nom utilisé) ; l'hôte a le sien dans les paramètres de partage (par défaut « Hôte » : **jamais** le nom de session Windows). Le nom est purement cosmétique (pas une identité) : nettoyé (espaces, caractères de contrôle supprimés), 1 à 40 caractères, **rendu unique** par l'hôte (« Anna », « Anna (2) »), mémorisé localement (fichier `display_name` du dossier de données, comme `language`). Il s'affiche sur les curseurs, dans la liste des participants, dans « X veut rejoindre » et dans « Session de X ». L'hôte peut renommer ou exclure un invité.
 - **Liste des participants** : nom, couleur, droit, indicateur « édite … », actions Exclure / changer le droit / **Suivre** (la vue suit ce participant, comme « suis-moi »).
 - **Curseurs distants** : flèche colorée + étiquette de nom, taille constante à l'écran, interpolation fluide, disparition après inactivité (≈ 5 s), contour de sélection de la couleur du participant, badge « édite le texte de … » sur l'objet en cours d'édition (verrou *doux* : informatif, pas bloquant).
 - **Invité** : écran de rejoint (nom, état « en attente d'acceptation par l'hôte »), bandeau « connecté à … », bouton Quitter, message clair en cas d'échec (§5), copie téléchargeable.
@@ -153,12 +154,24 @@ L'agent agit déjà dans l'application de l'hôte (mode direct). On y branche la
 | **A — Présence et curseur de l'agent (palier 1)** | `presence.rs` (modèle `Participant`, `PresenceState`, rendu des curseurs/halos/traces/étiquettes, interpolation), branchement dans `live.rs` pour émettre `Agent` à chaque appel d'outil, réglage « animer l'agent » | PR dans `inkboard-app` ; captures d'écran (`--screenshot`) du curseur de l'agent, du halo et d'un `batch` | tests d'interface (kittest) : l'événement est émis pour chaque outil (lecture seule comprise), l'historique et la révision ne changent pas, sans animation en mode capture ; aucune régression du mode direct |
 | **B — `inkboard-session` (protocole, chiffrement, transport simulé)** | Nouveau crate pur Rust (natif + `wasm32`) : messages versionnés, `WireOp` et conversion depuis/vers `Op` (ordre par identifiants), codec, AEAD + format du ticket/lien, trait `Transport`, transport mémoire avec latence/perte/réordonnancement, **client optimiste** (file en attente, réconciliation), validation d'entrées | crate + tests | propriétés : (1) pour des séquences aléatoires d'opérations de N invités, tous convergent vers l'état de l'hôte ; (2) tout octet aléatoire décodé ne panique jamais ; (3) ticket altéré refusé ; (4) compile pour `wasm32-unknown-unknown` ; (5) messages trop gros / bornes dépassées refusés |
 
+### Vague 1 (décidée le 2026-10-21 : N, C, D en parallèle ; B, A, S1, S2 déjà fusionnés)
+
+**Règle supplémentaire pour tous les agents de cette vague** : la chaîne d'outils locale par défaut est Rust 1.90 ; `iroh` exige 1.91+ ⇒ **toutes les commandes `cargo` s'écrivent avec `+1.99.1`** (`cargo +1.99.1 test …`, `cargo +1.99.1 clippy …`, `cargo +1.99.1 fmt`). Portes de sortie : fmt, clippy `+1.99.1`, tests `+1.99.1` (la porte « clippy stable 1.90 » est suspendue tant que l'ordinateur n'a pas été mis à jour).
+
+| Lot | Contenu | Fichiers principaux |
+|---|---|---|
+| **N — Réseau `iroh`** | Nouveau crate `inkboard-net` : implémentation du trait `Transport`/`Connection` de `inkboard-session` au-dessus d'`iroh` 1.4 (natif ; navigateur plus tard au lot F) : point de terminaison hôte (acceptation), connexion invité, relais configurables (publics n0 par défaut), **délai d'inactivité de 120 s**, conversion `Ticket` ↔ adresse `iroh`, cadrage des trames chiffrées ; fonction de **diagnostic de relais** (`diagnose_relay(url)` : statut HTTP, en-tête `Server`, détection d'une passerelle de sécurité type Zscaler → structure `Diagnosis`) ; **relèvement de la version minimale de Rust** à 1.91 (`Cargo.toml`, `README.md`, docs) ; `deny.toml` (2 licences) ; `THIRD_PARTY_LICENSES.md` régénéré | `crates/inkboard-net/**`, `Cargo.toml` racine, `deny.toml`, `README.md`, `THIRD_PARTY_LICENSES.md` |
+| (C, D ci-dessous) | | |
+
 ### Vague 1 (après S1, S2 et B)
 
 | Lot | Contenu | Dépend de | Critères |
 |---|---|---|---|
 | **C — Hôte (palier 2, côté hôte)** | `Editor::apply_external` + historique par auteur (§3.4) dans `inkboard-core` ; module `session_host` (participants, approbation, droits, plafonds, quotas, relais des éphémères, service d'images par hash et par morceaux, `Snapshot`) ; interface « Partager » (§7) ; transport retenu par S1 côté hôte ; événements `Agent` retransmis (lot A) | A, B, S1 | tests avec transport simulé : N invités simulés (jusqu'à 50), l'annulation d'un invité n'affecte pas la pile de l'hôte ni l'objet modifié depuis par un autre, droits de lecture refusés côté hôte, quotas appliqués, hôte plein refusé, aucun outil MCP de gestion du partage ; `Ctrl+Z` de l'hôte inchangé |
 | **D — Invité natif (palier 2, côté invité)** | Jonction par lien/ticket (`inkboard://`, enregistrement du schéma dans les installeurs NSIS/MSI/deb/dmg), écran de rejoint, état optimiste, curseurs distants (réutilise A), reconnexion (bandeau « reconnexion… », délai d'inactivité 120 s), copie locale à la sortie de l'hôte, **et le message d'erreur dédié aux réseaux d'entreprise/pare-feu (voir §5, décision du 2026-10-21), avec le bouton « Copier le diagnostic »** | B, C | test de bout en bout avec les vrais binaires (hôte + invité) en boucle locale : édition croisée, reconnexion, départ de l'hôte, version incompatible |
+
+### Vague 1 bis — **I : intégration réelle** (après N, C, D)
+Brancher `inkboard-net` dans l'hôte (C) et l'invité (D) : l'application écoute (hôte) et se connecte (invité) par `iroh` ; liaison du diagnostic de relais au message d'erreur d'entreprise ; essais de bout en bout avec **deux processus réels** (hôte + invité) en boucle locale puis via relais public (test ignoré par défaut) ; reconnexion après coupure ; refus de version incompatible ; noms. Fichiers : modules de C et D, `inkboard-net`, tests d'intégration.
 
 ### Vague 2 (palier 3 et 4)
 
@@ -196,7 +209,11 @@ L'agent agit déjà dans l'application de l'hôte (mode direct). On y branche la
 | Lien divulgué | Secret dans le fragment, accord de l'hôte pour chaque arrivant, liens édition/lecture séparés, régénération |
 | Dérive entre versions d'Inkboard | Version de protocole dans le premier message, refus explicite |
 
-## 12. Décisions à prendre par l'utilisateur
+## 12. Décisions (état au 2026-10-21)
+
+**Prises** : D1 relais publics de n0 pour le développement et la bêta (+ message d'erreur dédié aux réseaux d'entreprise, §5) ; D2 20 participants de conception, plafond par défaut 10, charge de contrôle 50 ; D4 nom de l'agent « Claude » (nom du client MCP si connu) ; D5 accord de l'hôte pour chaque arrivant, acceptation automatique en lecture désactivée par défaut ; **D6 `iroh` autorisé** (deux licences à ajouter à `deny.toml` : `CDLA-Permissive-2.0`, `Unlicense`) **et version minimale de Rust relevée à 1.91** ; noms affichés pour l'hôte et les invités (§7). **Restent** : D3 (où publier la page web).
+
+**Historique (avant décision)** :
 
 - **D1 — Relais** : (a) relais publics de n0 pour commencer, relais auto-hébergé ensuite si l'usage devient réel (**recommandé**, coût nul au départ) ; (b) relais auto-hébergé dès le départ (petit VPS, quelques euros par mois, à qui l'on confie la maintenance) ; (c) offre gérée d'`iroh`. À trancher **après le spike S1**.
 - **D2 — Taille des sessions** : confirmer **20 participants de conception**, plafond par défaut **10**, charge de contrôle **50** (le nombre de ton message était manquant).
