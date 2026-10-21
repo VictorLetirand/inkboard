@@ -328,3 +328,40 @@ proptest! {
         }
     }
 }
+
+/// Load check beyond the design target (20): 50 and 100 guests, 300 edits, strong faults. Everything converges to the host state.
+/// (No assertion on durations: they are printed by `--nocapture` only.)
+#[test]
+fn fifty_and_a_hundred_guests_converge_under_heavy_faults() {
+    for (n, seed) in [(50usize, 21u64), (100, 11)] {
+        let started = std::time::Instant::now();
+        let cfg = NetConfig { latency_ms: (0, 300), loss_ppm: 200_000, dup_ppm: 100_000, reorder_ppm: 300_000, reorder_extra_ms: 300 };
+        let mut w = World::new(seed, n, cfg, 1000);
+        w.connect_all();
+        w.rounds(2, 20);
+        let mut rng = seed;
+        for _ in 0..300u32 {
+            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            let idx = (rng >> 33) as usize % (n + 1);
+            let (code, a, b) = (((rng >> 20) % 20) as u8, (rng >> 8) as u16, (rng >> 40) as u16);
+            if idx == n {
+                let doc = w.host.seqr.doc().clone();
+                let ops = w.random_edit(&doc, code, a, b);
+                w.host.apply_local(ops);
+            } else {
+                let doc = w.guests[idx].client.doc().clone();
+                let ops = w.random_edit(&doc, code, a, b);
+                let now = w.net.now();
+                w.guests[idx].client.edit(ops, now);
+            }
+            w.rounds(usize::from((rng >> 50) as u8 % 3), 25);
+        }
+        w.net.set_config(NetConfig::ideal());
+        assert!(w.settle(6000), "{n} guests did not settle: {}", w.describe());
+        for (i, g) in w.guests.iter().enumerate() {
+            assert_eq!(g.client.doc(), w.host.seqr.doc(), "{n} guests: guest {i} differs");
+        }
+        let total: usize = w.host.seqr.doc().pages.iter().map(|p| p.objects.len()).sum();
+        println!("{n} guests converged ({total} objects on {} pages) in {:?}", w.host.seqr.doc().pages.len(), started.elapsed());
+    }
+}
