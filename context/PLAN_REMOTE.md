@@ -211,4 +211,11 @@ Texte co-édité caractère par caractère (CRDT de texte) ; enregistrement et r
 
 ## 14. Journal
 
-*(à remplir pendant l'exécution)*
+**2026-10-21 — vague 0 (A, B, S1, S2) et tests autonomes.** Branche `feat/remote` (curseur de l'agent, crate `inkboard-session`, spikes S1 et S2 + leurs rapports dans `context/mcp-remote/`).
+- **Portes de sortie** sur `feat/remote` : `cargo fmt`, `clippy -D warnings` (stable et 1.99.1), `cargo test --workspace` : 586 tests, 0 échec.
+- **S1 rejoué ici** : direct 0,07 ms ; relais public n0 49 ms médiane, 5–16 Mbit/s (message de limitation de débit observé) ; **invité navigateur** (Chromium intégré de Claude, pas Chrome 155) via relais public : 49,6 ms médiane, 17/15 Mbit/s ; **page servie en http sur une adresse locale (contexte non sécurisé) : l'invité rejoint** (pas besoin de HTTPS pour la page).
+- **S2 vérifié dans le navigateur intégré** : l'application web s'affiche (français, formes, outils), une forme se dessine à la souris, l'éditeur de texte s'ouvre et accepte la saisie. **Défauts constatés** : le texte saisi dans un rectangle déborde à droite de la forme au lieu de rester dans le cadre ; `Échap` n'a pas validé la saisie dans cet essai. À investiguer au lot F (build provisoire, polices ou événements clavier web).
+- **Curseur de l'agent en vraie fenêtre** : batch MCP envoyé à l'application native ouverte, captures prises pendant l'animation : curseur « Claude », halos sur les objets créés, bandeau « Agent : batch » visibles. Limite : le tableau chargé était un ancien tableau de test à 11 % de zoom (formes minuscules).
+- **Charge du protocole** : 50 et 100 invités simulés (300 modifications, 20 % de perte, 10 % de duplication, 30 % de réordonnancement) convergent vers l'état de l'hôte (tests dans `inkboard-session/tests/session.rs`).
+- **Paquet de test manuel** (hors dépôt, `out/remote-test.zip`, scripts + `LISEZMOI.md`) pour essayer depuis le PC d'entreprise et un téléphone.
+- **Reste non vérifié** : tout réseau autre que ce poste (NAT, entreprise, mobile), Firefox/Safari/Edge, relais auto-hébergé avec TLS, intégration de l'hôte dans l'application (lots C, D), annulation par auteur (conception seulement).
