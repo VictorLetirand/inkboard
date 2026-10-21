@@ -42,10 +42,10 @@ dans l'espace de travail). Nouvelles transitives : `aead`, `cipher`, `digest`, `
 
 ## Tests
 `cargo test -p inkboard-session` : `session` (convergence `proptest` N=2..20 avec perte/dup/réordonnancement, reconnexion, snapshot,
-rôles, versions), `wire` (aller-retour `Op`/`WireOp`), `crypto`, `robustness` (octets aléatoires), `validation`, `protocol`.
+rôles, versions), `wire` (aller-retour `Op`/`WireOp`), `crypto`, `robustness` (octets aléatoires), `validation`, `protocol`, `sim` (transport simulé).
 Build wasm : `cargo build -p inkboard-session --target wasm32-unknown-unknown`.
 
 ## Limites connues
-- Transport simulé : tests dédiés (`tests/sim.rs`) non écrits (écriture refusée pendant la session) ; la simulation n'est exercée que
-  via `session.rs`. Aucun transport réel, aucune vérification dans un vrai navigateur (le build wasm est vérifié, pas l'exécution).
+- Aucun transport réel, aucune vérification dans un vrai navigateur (le build wasm est vérifié, pas l'exécution).
+- Fermeture d'une connexion simulée : les trames déjà en vol sont perdues, celles déjà livrées dans la boîte de réception restent lisibles.
 - Codec JSON d'essai (gros pour les tracés) ; pas de compression des `Snapshot`.
