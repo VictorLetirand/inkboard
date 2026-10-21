@@ -157,6 +157,9 @@ pub struct App {
     pub last_autosave: Instant,
     pub last_title: String,
     pub paste_count: u32,
+    /// When the last paste event arrived and when Ctrl / Cmd was last down (see `image_paste_released`).
+    pub last_paste_at: Option<Instant>,
+    pub command_down_at: Option<Instant>,
     pub canvas_size: (f32, f32),
     pub fit_selection_next: bool,
     pub pending_open: Option<PathBuf>,
@@ -244,6 +247,8 @@ impl App {
             last_autosave: Instant::now(),
             last_title: String::new(),
             paste_count: 0,
+            last_paste_at: None,
+            command_down_at: None,
             canvas_size: (1000.0, 700.0),
             fit_selection_next: false,
             pending_open: None,
@@ -643,7 +648,33 @@ impl App {
         }
     }
 
+    /// Ctrl+V with only an image on the clipboard sends no paste event at all: the window layer drops the key press when the clipboard has no
+    /// text. The release of V is still delivered, so it counts as a paste unless a paste event has just happened (text on the clipboard).
+    fn image_paste_released(&self, key: Key, m: Modifiers) -> bool {
+        let recent = |t: Option<Instant>, ms: u64| t.is_some_and(|t| t.elapsed() < Duration::from_millis(ms));
+        let chord = (key == Key::V && (m.command || recent(self.command_down_at, 250))) || (key == Key::Insert && m.shift);
+        chord && !recent(self.last_paste_at, 1000)
+    }
+
+    /// Image files dropped on the window from the file manager: inserted at the center of the view (other files are refused with a message).
+    fn dropped_files(&mut self, ctx: &egui::Context) {
+        let files: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+        if files.is_empty() || self.presenting || self.dialog.is_some() {
+            return;
+        }
+        self.commit_editing();
+        let (images, others): (Vec<PathBuf>, Vec<PathBuf>) = files.into_iter().partition(|f| crate::tools::is_image_file(f));
+        if !others.is_empty() {
+            self.toast(&t("Only images can be dropped here"));
+        }
+        let at = self.view_center();
+        self.insert_image_files(&images, at);
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.modifiers.command) {
+            self.command_down_at = Some(Instant::now());
+        }
         if self.presenting {
             return self.present_keys(ctx);
         }
@@ -658,7 +689,11 @@ impl App {
                     self.copy_to_system(ctx);
                     self.delete_selection();
                 }
-                egui::Event::Paste(text) => self.paste_event(&text),
+                egui::Event::Paste(text) => {
+                    self.last_paste_at = Some(Instant::now());
+                    self.paste_event(&text);
+                }
+                egui::Event::Key { key, pressed: false, modifiers, .. } if self.image_paste_released(key, modifiers) => self.paste_event(""),
                 egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } => self.on_key(key, modifiers),
                 _ => {}
             }
@@ -958,6 +993,7 @@ impl eframe::App for App {
         self.watch_file();
         self.poll_live();
         self.shortcuts(ctx);
+        self.dropped_files(ctx);
         if self.presenting {
             ui::present_overlay(self, ctx);
         } else {

@@ -665,7 +665,7 @@ impl App {
 
     /// Inserts images chosen in a dialog, at the center of the view.
     pub fn insert_images_dialog(&mut self) {
-        let files = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]).pick_files().unwrap_or_default();
+        let files = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg"]).pick_files().unwrap_or_default();
         let c = self.view_center();
         self.insert_image_files(&files, c);
     }
@@ -674,18 +674,30 @@ impl App {
         let mut ids = Vec::new();
         for (i, f) in files.iter().enumerate() {
             let Ok(bytes) = std::fs::read(f) else { continue };
-            let Ok(img) = image::load_from_memory(&bytes) else {
-                self.toast(&t("Unreadable image"));
-                continue;
+            let ext = f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+            // a vector image stays sharp at any size: it may be shown larger than its natural size (an icon-sized SVG is enlarged)
+            let (w, h, mime, max_k) = if ext.as_deref() == Some("svg") {
+                match std::str::from_utf8(&bytes).ok().and_then(inkboard_icons::svg_dimensions).filter(|(w, h)| *w > 0.0 && *h > 0.0) {
+                    Some((w, h)) => (w, h, "image/svg+xml", 50.0),
+                    None => {
+                        self.toast(&t("Unreadable image"));
+                        continue;
+                    }
+                }
+            } else {
+                let Ok(img) = image::load_from_memory(&bytes) else {
+                    self.toast(&t("Unreadable image"));
+                    continue;
+                };
+                let mime = match ext.as_deref() {
+                    Some("jpg" | "jpeg") => "image/jpeg",
+                    Some("gif") => "image/gif",
+                    Some("webp") => "image/webp",
+                    _ => "image/png",
+                };
+                (f64::from(img.width()), f64::from(img.height()), mime, 1.0)
             };
-            let (w, h) = (f64::from(img.width()), f64::from(img.height()));
-            let k = (480.0 / w).min(360.0 / h).min(1.0);
-            let mime = match f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
-                Some("jpg" | "jpeg") => "image/jpeg",
-                Some("gif") => "image/gif",
-                Some("webp") => "image/webp",
-                _ => "image/png",
-            };
+            let k = (480.0 / w).min(360.0 / h).min(max_k);
             let aid = self.ed.doc.add_asset(mime, bytes);
             let off = 24.0 * i as f64;
             let frame = Frame::new(at.x - w * k / 2.0 + off, at.y - h * k / 2.0 + off, w * k, h * k);
@@ -699,6 +711,11 @@ impl App {
             self.tool = Tool::Select;
         }
     }
+}
+
+/// Is this file an image the board can show (by its extension)?
+pub fn is_image_file(f: &std::path::Path) -> bool {
+    f.extension().and_then(|e| e.to_str()).is_some_and(|e| ["png", "jpg", "jpeg", "gif", "webp", "svg"].contains(&e.to_ascii_lowercase().as_str()))
 }
 
 /// Draws the canvas and handles the user's input.
