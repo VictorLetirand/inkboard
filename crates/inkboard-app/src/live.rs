@@ -128,6 +128,35 @@ impl App {
         }
     }
 
+    /// Tells the presence layer that the agent has just run `tool` (purely cosmetic: the board and the answer are untouched).
+    fn record_agent(&mut self, tool: &str, args: &Value, result: &Value) {
+        let now = std::time::Instant::now();
+        let view = self.ed.page().view;
+        let z = view.zoom.max(1e-6);
+        let anchor = inkboard_core::geom::Pt::new((f64::from(self.canvas_size.0) / 2.0 - view.x) / z, (f64::from(self.canvas_size.1) / 2.0 - view.y) / z);
+        let ev = crate::presence::agent_event(&self.agent.state.participant.name, tool, args, result, self.ed.page(), now);
+        self.agent.record(ev, anchor, now);
+    }
+
+    /// Screenshot demo (`--ui-demo agent`): the agent runs a batch, shown at the end of its last move with the cursor, trail and halos.
+    pub fn agent_demo(&mut self) {
+        self.agent.headless = false;
+        self.agent.animate = true;
+        let ops = json!({"operations": [
+            {"tool": "add_shape", "args": {"geom": "rect", "text": "Idea", "x": -330, "y": -120}},
+            {"tool": "add_shape", "args": {"geom": "ellipse", "text": "Draft", "x": -60, "y": -150}},
+            {"tool": "add_shape", "args": {"geom": "sticky", "text": "Review", "x": 210, "y": -110}},
+            {"tool": "add_connector", "args": {"from": "$0.id", "to": "$1.id"}},
+            {"tool": "add_connector", "args": {"from": "$1.id", "to": "$2.id"}},
+        ]});
+        let _ = self.run_live("batch", &ops);
+        if let Some(end) = self.agent.state.settled_at() {
+            self.agent.state.freeze(end + Duration::from_millis(150));
+        }
+        let page = self.ed.page();
+        self.agent.state.selection = page.objects.get(1).map(|o| page.bounds(o)).into_iter().collect();
+    }
+
     fn run_live(&mut self, tool: &str, args: &Value) -> Reply {
         if tool == "__status" {
             // polled by inkboard-mcp for resource notifications: changes when the board or the selection changes
@@ -170,6 +199,7 @@ impl App {
                 if was_empty && !self.ed.page().objects.is_empty() {
                     self.fit_pending = true;
                 }
+                self.record_agent(tool, args, &v);
                 if tool == "describe_board" || tool == "board_changes" {
                     v["live"] = json!(true);
                     v["selection"] = json!(self.sel.iter().map(|i| i.0.clone()).collect::<Vec<_>>());

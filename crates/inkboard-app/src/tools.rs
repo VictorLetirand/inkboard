@@ -889,6 +889,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     }
     draw_overlay(app, &painter, &cam, dark);
     laser_trail(app, &painter, &ctx, if resp.contains_pointer() { ptr } else { None });
+    app.agent.paint(&painter, &cam, &ctx);
     crate::rich_edit::draw_text_editor(app, ui, &cam);
     let _ = rect;
 

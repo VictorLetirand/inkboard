@@ -19,6 +19,7 @@ pub const FR: &[(&str, &str)] = &[
     ("All boards", "Tous les tableaux"),
     ("All groups", "Tous les groupes"),
     ("All sets", "Tous les jeux"),
+    ("Animate the agent", "Animer l'agent"),
     ("Apply", "Appliquer"),
     ("Arrow — snaps to shapes", "Flèche — s'accroche aux formes"),
     ("Arrowhead at the end", "Pointe à la fin"),
