@@ -1,0 +1,10 @@
+{
+  "name": "s1-iroh-web-driver",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Drives the S1 browser guest page in headless Chrome (throwaway spike tooling).",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

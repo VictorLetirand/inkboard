@@ -1,0 +1,5 @@
+# Local relay for the spike, used with `iroh-relay --dev -c relay-dev.toml`.
+# Plain HTTP on IPv4 loopback only (the --dev default `[::]:3340` was not reachable
+# through 127.0.0.1 on this Windows machine), no TLS, no QUIC address discovery.
+http_bind_addr = "127.0.0.1:3340"
+enable_quic_addr_discovery = false

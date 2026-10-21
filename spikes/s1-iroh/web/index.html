@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Inkboard S1 - iroh browser guest</title>
+  <style>
+    body { font: 14px/1.4 system-ui, sans-serif; margin: 2rem; max-width: 60rem; }
+    pre { background: #f4f4f4; padding: 1rem; overflow: auto; white-space: pre-wrap; }
+    #status { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Inkboard S1 - iroh browser guest</h1>
+  <p>The join ticket is read from the URL fragment (<code>#inkb...</code>): it is never sent to the web server.</p>
+  <p>Optional query: <code>?pings=1000&amp;bytes=5242880</code></p>
+  <p id="status">idle</p>
+  <pre id="result"></pre>
+  <script type="module">
+    import init, { run_guest_wasm } from "./pkg/s1_iroh.js";
+
+    const status = document.getElementById("status");
+    const result = document.getElementById("result");
+    const ticket = location.hash.slice(1);
+    const params = new URLSearchParams(location.search);
+    const pings = Number(params.get("pings") ?? 1000);
+    const bytes = Number(params.get("bytes") ?? 5 * 1024 * 1024);
+
+    function finish(state, text) {
+      status.textContent = state;
+      result.textContent = text;
+      document.body.dataset.state = state;
+    }
+
+    if (!ticket) {
+      finish("error", "No ticket in the URL fragment.");
+    } else {
+      status.textContent = "running";
+      const t0 = performance.now();
+      try {
+        await init();
+        const wasmReadyMs = performance.now() - t0;
+        const json = await run_guest_wasm(ticket, pings, bytes);
+        const report = JSON.parse(json);
+        report.wasm_init_ms = wasmReadyMs;
+        report.page_total_ms = performance.now() - t0;
+        finish("done", JSON.stringify(report, null, 2));
+      } catch (e) {
+        finish("error", String(e && e.message ? e.message : e));
+      }
+    }
+  </script>
+</body>
+</html>
