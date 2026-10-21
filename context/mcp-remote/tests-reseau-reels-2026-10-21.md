@@ -35,6 +35,12 @@ Une page servie en **http** sur une adresse non sécurisée (`isSecureContext = 
 
 Lecture : le défaut de 30 s (vérifié dans le code d'`iroh` 1.4.0 : `max_idle_timeout`, 30 s par défaut) fait perdre toute coupure de plus de ~15–20 s. Réglé à 120 s des deux côtés (`QuicTransportConfig::builder().max_idle_timeout(…)`), une coupure de 60 s est absorbée. **La reprise après le retour du réseau est lente et croît avec la durée de la coupure** : environ 5 s, 14 s puis 30 s de blocage supplémentaire pour des coupures de 5, 20 et 60 s (probable temporisation exponentielle des relances). Le produit devra : afficher « reconnexion… » après 2–3 s, mettre les modifications en attente, et tenter de se reconnecter vite (événement `online` du navigateur, nouveau sondage du chemin) au lieu d'attendre.
 
+## Réseau d'entreprise (PC portable d'entreprise, navigateur Edge, pas de proxy déclaré)
+- Le port 443 du relais est joignable (TCP), mais la requête HTTPS reçoit un **403** : la passerelle est un proxy cloud **Zscaler avec inspection TLS** (certificat émis par « Zscaler Intermediate Root CA » pour les sites inspectés ; GitHub est exempté de l'inspection, `example.com` est inspecté mais autorisé).
+- La page invité (servie en local sur 127.0.0.1) échoue : `connect to host: timed out`. **Le relais public de n0 est donc bloqué par la politique de l'entreprise.** Aucun invité n'est arrivé chez l'hôte.
+- Conséquences : en entreprise, un relais sur un **domaine autorisé/catégorisé** (ou la liste blanche du domaine du relais par l'IT) devient nécessaire ; le mode **réseau local / VPN** (connexion directe, sans relais) est à tester entre deux postes de l'entreprise ; message d'erreur explicite à prévoir. L'inspection TLS ne voit que du contenu chiffré de bout en bout (chiffrement applicatif du plan §4), mais l'envoi de données d'entreprise vers un relais tiers peut contrevenir à la politique de l'entreprise (blocage voulu).
+- Non vérifié : catégorie exacte du blocage, comportement derrière le partage de connexion d'un téléphone (un agent Zscaler local peut tout faire passer par le cloud même hors du réseau de l'entreprise), connexion directe entre deux postes de l'entreprise.
+
 ## Décisions et recommandations issues de ces essais
 - Régler le **délai d'inactivité à 120 s** (hôte et invité) ; garder une reconnexion applicative avec le même identifiant de participant pour les coupures plus longues.
 - Prévoir l'accélération de la reprise (le temps de reprise observé est le principal défaut d'usage).
