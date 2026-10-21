@@ -468,7 +468,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
 pub fn canvas_menu(app: &mut App, ui: &mut Ui) {
     theme::menu_style(ui);
     if mi(ui, "paste", "Paste", "Ctrl+V") {
-        app.paste();
+        app.paste_from_menu();
     }
     if mi(ui, "all", "Select all", &key(app, Action::SelectAll)) {
         app.select_all();
@@ -493,7 +493,7 @@ pub fn selection_menu(app: &mut App, ui: &mut Ui) {
         app.copy_as_image();
     }
     if mi(ui, "paste", "Paste", "Ctrl+V") {
-        app.paste();
+        app.paste_from_menu();
     }
     if mi(ui, "copy", "Duplicate", &key(app, Action::Duplicate)) {
         app.sel = app.ed.duplicate(&sel, Pt::new(24.0, 24.0));

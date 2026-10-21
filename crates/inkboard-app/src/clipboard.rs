@@ -32,6 +32,12 @@ impl App {
         self.paste();
     }
 
+    /// The "Paste" of the menus: like Ctrl+V (objects of the board, a system image, then the text of the clipboard).
+    pub fn paste_from_menu(&mut self) {
+        let text = system_text().unwrap_or_default();
+        self.paste_event(&text);
+    }
+
     pub fn paste_text(&mut self, text: &str) {
         let text: String = text.chars().take(5000).collect();
         let at = self.view_center();
@@ -90,6 +96,11 @@ impl App {
             Err(e) => self.toast(&tr!("Clipboard unavailable: {}", e)),
         }
     }
+}
+
+/// Text from the system clipboard, if any.
+pub fn system_text() -> Option<String> {
+    arboard::Clipboard::new().ok()?.get_text().ok()
 }
 
 /// Image from the system clipboard, if any (width, height, RGBA).

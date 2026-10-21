@@ -2049,3 +2049,92 @@ fn live_icon_text_and_edit_tools_are_one_undo_step_each() {
     assert!((moved - left(&mut t, &a) - 10.0).abs() < 1e-9, "the move alone is undone");
     let _ = std::fs::remove_file(&live.file);
 }
+
+/* ------------------------------------------------------------ images: paste and drop */
+
+fn image_objects(t: &mut T) -> Vec<Object> {
+    t.objects().into_iter().filter(|o| matches!(o.kind, Kind::Image(_))).collect()
+}
+
+/// The release of V (the key press itself never reaches the application when the clipboard holds no text).
+fn release_v(t: &mut T, m: Modifiers) {
+    t.h.event(Event::Key { key: Key::V, physical_key: None, pressed: false, repeat: false, modifiers: m });
+    t.h.step();
+}
+
+fn temp_file(tag: &str, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("wb-img-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join(name);
+    std::fs::write(&p, bytes).unwrap();
+    p
+}
+
+#[test]
+fn ctrl_v_with_only_an_image_on_the_clipboard_pastes_it() {
+    let mut t = T::new();
+    t.app().system_image = || Some((2, 2, vec![255; 16]));
+    release_v(&mut t, Modifiers::COMMAND);
+    assert_eq!(image_objects(&mut t).len(), 1, "the clipboard image is on the board");
+    assert!(t.app().ed.can_undo());
+    // the release of a plain V (the letter, no Ctrl) pastes nothing
+    release_v(&mut t, Modifiers::NONE);
+    assert_eq!(image_objects(&mut t).len(), 1);
+}
+
+#[test]
+fn no_second_paste_when_the_clipboard_has_text_and_the_paste_event_arrived() {
+    let mut t = T::new();
+    t.app().system_image = || Some((2, 2, vec![255; 16]));
+    let id = t.add_rect(0.0, 0.0, 80.0, 40.0);
+    t.app().sel = vec![id];
+    t.app().copy_selection();
+    t.h.event(Event::Paste(crate::clipboard::MARKER.to_owned()));
+    t.h.step();
+    assert_eq!(t.objects().len(), 2, "the copied shape was pasted");
+    release_v(&mut t, Modifiers::COMMAND);
+    assert_eq!(t.objects().len(), 2, "the key release does not paste again, nor adds the clipboard image");
+}
+
+#[test]
+fn dropped_image_files_are_inserted_and_other_files_are_refused() {
+    let mut t = T::new();
+    let mut png = Vec::new();
+    image::RgbaImage::new(200, 100).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    let png = temp_file("drop", "photo.png", &png);
+    let svg = temp_file("drop", "icon.SVG", br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>"#);
+    let txt = temp_file("drop", "notes.txt", b"hello");
+    let file = |p: &std::path::PathBuf| egui::DroppedFile { path: Some(p.clone()), ..Default::default() };
+    t.h.input_mut().dropped_files = vec![file(&png), file(&svg), file(&txt)];
+    t.h.step();
+    t.h.input_mut().dropped_files.clear();
+    t.h.step();
+    let images = image_objects(&mut t);
+    assert_eq!(images.len(), 2, "the PNG and the SVG, not the text file");
+    let mimes: Vec<String> = images
+        .iter()
+        .filter_map(|o| match &o.kind {
+            Kind::Image(i) => t.app().ed.doc.assets.get(&i.asset).map(|a| a.mime.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(mimes.contains(&"image/png".to_owned()) && mimes.contains(&"image/svg+xml".to_owned()), "{mimes:?}");
+    let widths: Vec<f64> = images.iter().filter_map(|o| o.frame().map(|f| f.w)).collect();
+    assert!(widths.iter().any(|w| (*w - 200.0).abs() < 1e-6), "the PNG keeps its size: {widths:?}");
+    assert!(widths.iter().any(|w| *w > 100.0), "an icon-sized SVG is enlarged: {widths:?}");
+    let toast = t.app().toast.as_ref().map(|(m, _)| m.clone());
+    assert_eq!(toast.as_deref(), Some(crate::i18n::t("Only images can be dropped here").as_str()));
+    for p in [png, svg, txt] {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+#[test]
+fn an_unreadable_svg_is_refused_without_changing_the_board() {
+    let mut t = T::new();
+    let bad = temp_file("badsvg", "bad.svg", b"<svg><path/></svg>");
+    let at = t.app().view_center();
+    t.app().insert_image_files(std::slice::from_ref(&bad), at);
+    assert!(t.objects().is_empty());
+    let _ = std::fs::remove_file(bad);
+}
