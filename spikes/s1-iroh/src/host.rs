@@ -44,7 +44,7 @@ struct Host {
 
 pub async fn spawn_host(net: HostNet) -> Result<HostHandle> {
     let t0 = n0_future::time::Instant::now();
-    let builder = Endpoint::builder(presets::Minimal).alpns(vec![ALPN.to_vec()]);
+    let builder = Endpoint::builder(presets::Minimal).alpns(vec![ALPN.to_vec()]).transport_config(crate::quic_config());
     let builder = match &net {
         HostNet::Direct | HostNet::Lan => builder.relay_mode(RelayMode::Disabled),
         HostNet::RelayN0 => builder.relay_mode(RelayMode::Default).clear_ip_transports(),

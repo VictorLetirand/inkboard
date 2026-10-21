@@ -97,6 +97,16 @@ pub async fn drain_raw(recv: &mut RecvStream, mut remaining: usize) -> Result<()
     Ok(())
 }
 
+/// Idle timeout of the QUIC connection (iroh default: 30 s). A longer one lets a session survive a longer network outage
+/// (tested on a phone: a 60 s outage survived with 120 s; lost with the default 30 s from 20 s).
+pub const IDLE_SECS: u64 = 120;
+
+pub fn quic_config() -> iroh::endpoint::QuicTransportConfig {
+    iroh::endpoint::QuicTransportConfig::builder()
+        .max_idle_timeout(Some(std::time::Duration::from_secs(IDLE_SECS).try_into().expect("idle timeout fits")))
+        .build()
+}
+
 /// How a guest reaches the host, derived only from the ticket contents.
 pub fn guest_builder(ticket: &Ticket) -> Builder {
     let relays: Vec<RelayUrl> = ticket
@@ -109,7 +119,7 @@ pub fn guest_builder(ticket: &Ticket) -> Builder {
         })
         .collect();
     let mode = if relays.is_empty() { RelayMode::Disabled } else { RelayMode::custom(relays) };
-    let builder = Endpoint::builder(presets::Minimal).relay_mode(mode);
+    let builder = Endpoint::builder(presets::Minimal).relay_mode(mode).transport_config(quic_config());
     // No direct address in the ticket: also remove IP sockets so only the relay is possible.
     #[cfg(not(target_arch = "wasm32"))]
     let builder = if ticket.addr.addrs.iter().any(|a| a.is_ip()) { builder } else { builder.clear_ip_transports() };
