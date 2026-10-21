@@ -1,0 +1,300 @@
+//! Messages of the session protocol (version 1). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
+
+use crate::error::{Error, Result};
+use crate::wire::WireOp;
+use inkboard_core::geom::{Pt, Rect};
+use inkboard_core::model::{Background, Document, Id, Object, Page};
+use serde::{Deserialize, Serialize};
+
+/// Version of the protocol, carried by the first message (`Hello`) and by `Welcome`.
+pub const PROTO_VERSION: u32 = 1;
+
+/// Fails with a clear message when the peer speaks another version of the protocol.
+pub fn check_proto(theirs: u32) -> Result<()> {
+    if theirs == PROTO_VERSION { Ok(()) } else { Err(Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs }) }
+}
+
+/// Sequence number of an accepted modification, assigned by the host (the first one is 1; 0 is the initial state).
+pub type Seq = u64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ParticipantId(pub u32);
+
+impl ParticipantId {
+    /// The host itself (author of its own modifications).
+    pub const HOST: ParticipantId = ParticipantId(0);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    Edit,
+    View,
+}
+
+/// Bytes serialized as base64 text (JSON has no byte type).
+pub mod b64 {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&STANDARD.encode(v))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(d)?;
+        STANDARD.decode(s.as_bytes()).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Reconnection: the guest gives back its identity and the last `seq` it applied.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resume {
+    pub participant: ParticipantId,
+    pub last_seq: Seq,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hello {
+    pub proto: u32,
+    pub name: String,
+    /// Proof that the guest knows the session key (see `crypto::join_proof`).
+    #[serde(with = "b64")]
+    pub join_proof: Vec<u8>,
+    pub role_requested: Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<Resume>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocMeta {
+    pub name: String,
+    pub seq: Seq,
+    pub pages: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Welcome {
+    pub participant: ParticipantId,
+    pub color: (u8, u8, u8),
+    pub role: Role,
+    pub doc_meta: DocMeta,
+    pub host_proto: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum RefuseReason {
+    Version { host_proto: u32 },
+    BadProof,
+    Full,
+    Declined,
+    Banned,
+}
+
+impl RefuseReason {
+    /// Text to show to the user.
+    pub fn message(&self) -> String {
+        match self {
+            RefuseReason::Version { host_proto } => {
+                format!("the host speaks protocol v{host_proto}, this build speaks v{PROTO_VERSION}: update Inkboard (or reload the page)")
+            }
+            RefuseReason::BadProof => "the invitation link is not valid (any more)".into(),
+            RefuseReason::Full => "the session is full".into(),
+            RefuseReason::Declined => "the host declined the request".into(),
+            RefuseReason::Banned => "you were removed from this session".into(),
+        }
+    }
+}
+
+/// Image listed in a snapshot: transferred on demand, identified by the SHA-256 of its bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetInfo {
+    pub id: Id,
+    pub hash: String,
+    pub size: u64,
+    pub mime: String,
+}
+
+/// The document without the bytes of its images.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub seq: Seq,
+    pub name: String,
+    pub background: Background,
+    pub pages: Vec<Page>,
+    pub assets: Vec<AssetInfo>,
+}
+
+impl Snapshot {
+    /// Snapshot of `doc` at `seq`; `assets` is the manifest to give (see `assets::manifest`).
+    pub fn new(doc: &Document, seq: Seq, assets: Vec<AssetInfo>) -> Self {
+        Self { seq, name: doc.name.clone(), background: doc.background, pages: doc.pages.clone(), assets }
+    }
+    /// Document with no asset bytes (they are requested by hash).
+    pub fn into_document(self) -> Document {
+        let mut doc = Document { name: self.name, background: self.background, pages: self.pages, assets: Default::default() };
+        if doc.pages.is_empty() {
+            doc.pages.push(Page::new("Page 1"));
+        }
+        doc
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetChunk {
+    pub hash: String,
+    pub offset: u64,
+    #[serde(with = "b64")]
+    pub data: Vec<u8>,
+    pub last: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Submit {
+    /// Numbered by the guest, from 1; also used by the host to ignore duplicates.
+    pub client_seq: u64,
+    /// Last `seq` the guest had applied when it made the modification.
+    pub base_seq: Seq,
+    pub ops: Vec<WireOp>,
+}
+
+/// A modification accepted by the host, broadcast to everybody (including its author) in `seq` order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Applied {
+    pub seq: Seq,
+    pub author: ParticipantId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_seq: Option<u64>,
+    pub ops: Vec<WireOp>,
+    /// Objects of the author that had been changed by somebody else since its `base_seq` (last writer wins; informative).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub superseded: Vec<Id>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum RejectReason {
+    ReadOnly,
+    Invalid {
+        detail: String,
+    },
+    /// Already applied by the host, which was at `host_seq` when it answered: everything up to there is on its way.
+    Duplicate {
+        host_seq: Seq,
+    },
+    RateLimited,
+    Quota,
+}
+
+impl RejectReason {
+    pub fn message(&self) -> String {
+        match self {
+            RejectReason::ReadOnly => "you have read-only access".into(),
+            RejectReason::Invalid { detail } => format!("the host refused the modification: {detail}"),
+            RejectReason::Duplicate { .. } => "already applied".into(),
+            RejectReason::RateLimited => "you are sending too fast".into(),
+            RejectReason::Quota => "upload quota exceeded".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Presence {
+    /// Filled in by the host when relaying (never trusted from a guest).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub participant: Option<ParticipantId>,
+    pub page: Id,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Pt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selection: Vec<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<Rect>,
+}
+
+/// What the host's MCP agent does (shown to everybody as a cursor).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentEvent {
+    pub name: String,
+    pub action: String,
+    #[serde(default)]
+    pub targets: Vec<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Pt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum ByeReason {
+    Left,
+    Kicked,
+    HostLeft,
+    ProtocolError { detail: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum Message {
+    // handshake
+    Hello(Hello),
+    Welcome(Welcome),
+    Refused {
+        reason: RefuseReason,
+    },
+    Snapshot(Snapshot),
+    // images
+    AssetRequest {
+        hash: String,
+    },
+    AssetChunk(AssetChunk),
+    // modifications
+    Submit(Submit),
+    Applied(Applied),
+    Rejected {
+        client_seq: u64,
+        reason: RejectReason,
+    },
+    /// "Tell me what I missed": sent on a gap in `seq` and periodically; the host answers with `Applied`s or a `Snapshot`.
+    Resync {
+        last_seq: Seq,
+    },
+    // ephemeral (not part of the history; `author` is filled in by the host)
+    Transient {
+        object: Id,
+        state: Box<Object>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        author: Option<ParticipantId>,
+    },
+    StrokePoints {
+        stroke: Id,
+        points: Vec<Pt>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        author: Option<ParticipantId>,
+    },
+    Presence(Presence),
+    Agent(AgentEvent),
+    // control
+    Follow {
+        participant: Option<ParticipantId>,
+    },
+    Kick {
+        participant: ParticipantId,
+    },
+    RoleChange {
+        participant: ParticipantId,
+        role: Role,
+    },
+    Bye {
+        reason: ByeReason,
+    },
+    Ping {
+        nonce: u64,
+    },
+    Pong {
+        nonce: u64,
+    },
+}

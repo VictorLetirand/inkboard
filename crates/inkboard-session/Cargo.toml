@@ -1,0 +1,29 @@
+[package]
+name = "inkboard-session"
+description = "Shared-session protocol: messages, index-free operations, link encryption, simulated transport, optimistic client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64 = "0.23.1"
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
+hkdf = "0.13.0"
+inkboard-core = { path = "../inkboard-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+sha2 = "0.11.1"
+thiserror = "2.0.21"
+
+# OS entropy. On wasm32 the `wasm_js` backend (browser `crypto.getRandomValues`) is needed.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = "0.4.3"
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true
