@@ -1,0 +1,10 @@
+[build]
+target = "index.html"
+dist = "dist"
+# no content hash in file names: the measurement scripts look for inkboard-*.wasm
+filehash = false
+public_url = "./"
+
+[serve]
+address = "127.0.0.1"
+port = 8080

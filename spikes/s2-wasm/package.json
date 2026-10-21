@@ -1,0 +1,9 @@
+{
+  "name": "inkboard-s2-wasm-spike",
+  "private": true,
+  "type": "module",
+  "description": "Browser driver (puppeteer-core + installed Chrome/Edge) for the S2 spike measurements",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
