@@ -95,6 +95,8 @@ pub struct App {
     pub live: Option<crate::live::LiveServer>,
     /// Change reference for the `board_changes` tool (what the user changed since the agent last looked).
     pub tracker: Option<inkboard_mcp::tools::Snapshot>,
+    /// Cursor, halos and setting of the MCP agent's presence (cosmetic only).
+    pub agent: crate::presence::AgentPresence,
     /// Modification time of the open file at the last read or write (see `watch.rs`).
     pub disk_mtime: Option<std::time::SystemTime>,
     pub last_watch: Instant,
@@ -201,6 +203,7 @@ impl App {
             pen_test: None,
             live: None,
             tracker: None,
+            agent: crate::presence::AgentPresence::new(!restore || crate::presence::load_animate(), screenshot.is_some()),
             disk_mtime: None,
             last_watch: Instant::now(),
             ctx_pos: Pt::ZERO,
@@ -892,6 +895,9 @@ impl App {
                 let n: usize = spec.parse().unwrap_or(500);
                 self.ed = Editor::new(crate::bench_icons::document(&lib, n, n.min(1500)));
                 self.fit_pending = true;
+            }
+            if demo.contains("agent") {
+                self.agent_demo();
             }
             if demo.contains("code") {
                 self.insert_code_block();

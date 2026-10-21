@@ -17,6 +17,7 @@ mod library;
 mod live;
 mod panel;
 mod pen_test;
+mod presence;
 mod render;
 mod rich_edit;
 mod theme;

@@ -421,6 +421,13 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         if theme::menu_item(ui, Some("grid"), "Snap to grid", "", app.snap, true) {
             app.snap = !app.snap;
         }
+        if theme::menu_item(ui, Some("select"), "Animate the agent", "", app.agent.animate, true) {
+            app.agent.animate = !app.agent.animate;
+            crate::presence::save_animate(app.agent.animate);
+            if !app.agent.animate {
+                app.agent.state.clear();
+            }
+        }
         theme::menu_sep(ui);
         theme::menu_label(ui, "View");
         if mi(ui, "play", "Present full screen", &key(app, Action::Present)) {

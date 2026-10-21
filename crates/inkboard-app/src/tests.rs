@@ -1245,6 +1245,95 @@ fn an_agent_edits_the_open_board_live_and_each_call_is_one_undo_step() {
 }
 
 #[test]
+fn every_agent_tool_call_emits_a_presence_event_reads_included_without_touching_the_history() {
+    use crate::presence::Action;
+    let mut t = T::new();
+    let live = start_live(&mut t, "presence");
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "text": "A", "x": 100, "y": 100}));
+    assert!(!err, "{r}");
+    let id = r["id"].as_str().unwrap().to_owned();
+    {
+        let ev = t.app().agent.outbox.back().expect("event");
+        assert_eq!((ev.action, ev.tool.as_str(), ev.name.as_str()), (Action::Act, "add_shape", "Claude"));
+        assert_eq!(ev.targets().map(|x| x.id.0.clone()).collect::<Vec<_>>(), vec![id.clone()]);
+    }
+    assert!(t.app().agent.state.cursor.is_some(), "the cursor is on its way to the object");
+    // reading tools: a look, no target, and neither the revision nor the undo history change
+    let (rev, undo) = (t.app().ed.revision(), t.app().ed.can_undo());
+    for tool in ["describe_board", "find_objects", "board_changes"] {
+        let args = if tool == "find_objects" { serde_json::json!({"text": "A"}) } else { serde_json::json!({}) };
+        let (err, r) = mcp_call(&mut t, &live, tool, args);
+        assert!(!err, "{tool}: {r}");
+        let ev = t.app().agent.outbox.back().unwrap();
+        assert_eq!((ev.action, ev.tool.as_str(), ev.targets().count()), (Action::Look, tool, 0));
+        assert_eq!((t.app().ed.revision(), t.app().ed.can_undo()), (rev, undo), "{tool}");
+    }
+    assert_eq!(t.app().agent.outbox.len(), 4);
+    // the animation is not an undo step: one Ctrl+Z removes the shape
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert!(t.objects().is_empty());
+    let _ = std::fs::remove_file(&live.file);
+}
+
+#[test]
+fn an_agent_batch_gives_one_stop_per_operation_and_vanished_objects_are_ignored() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "presence-batch");
+    let ops = serde_json::json!({"operations": [
+        {"tool": "add_shape", "args": {"geom": "rect", "text": "A", "x": 0, "y": 0}},
+        {"tool": "add_shape", "args": {"geom": "rect", "text": "B", "x": 300, "y": 0}},
+        {"tool": "add_connector", "args": {"from": "$0.id", "to": "$1.id"}},
+    ]});
+    let (err, r) = mcp_call(&mut t, &live, "batch", ops);
+    assert!(!err, "{r}");
+    let ev = t.app().agent.outbox.back().unwrap().clone();
+    assert_eq!(ev.steps.len(), 3);
+    assert!(ev.steps[0].iter().all(|x| t.app().ed.page().get(&x.id).is_some()));
+    assert_eq!(t.app().agent.state.halo_count(), 3, "A, B, then the connector");
+    // a batch that creates then deletes: the targets are gone after the call, nothing breaks
+    let ops = serde_json::json!({"operations": [
+        {"tool": "add_shape", "args": {"geom": "rect", "x": 0, "y": 300}},
+        {"tool": "delete_object", "args": {"id": "$0.id"}},
+    ]});
+    let (err, r) = mcp_call(&mut t, &live, "batch", ops);
+    assert!(!err, "{r}");
+    assert_eq!(t.app().agent.outbox.back().unwrap().steps.len(), 0);
+    // deleting an existing object directly
+    let id = r["results"][0]["id"].as_str().unwrap_or("none").to_owned();
+    let (err, _) = mcp_call(&mut t, &live, "delete_object", serde_json::json!({"id": id}));
+    assert!(err, "already deleted");
+    let first = t.objects()[0].id.0.clone();
+    let (err, r) = mcp_call(&mut t, &live, "delete_object", serde_json::json!({"id": first}));
+    assert!(!err, "{r}");
+    assert_eq!(t.app().agent.outbox.back().unwrap().targets().count(), 0);
+    let _ = std::fs::remove_file(&live.file);
+}
+
+#[test]
+fn the_agent_animation_can_be_turned_off_and_is_skipped_when_capturing() {
+    let mut t = T::new();
+    let live = start_live(&mut t, "presence-off");
+    t.app().agent.animate = false;
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect"}));
+    assert!(!err, "{r}");
+    assert!(t.app().agent.state.cursor.is_none() && t.app().agent.state.last_activity.is_none(), "nothing is animated");
+    assert_eq!(t.app().agent.outbox.len(), 1, "the event is still emitted (guests of a session will need it)");
+    // capture mode (no visible window): same
+    t.app().agent.animate = true;
+    t.app().agent.headless = true;
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "x": 400}));
+    assert!(!err, "{r}");
+    assert!(t.app().agent.state.cursor.is_none());
+    assert_eq!(t.app().agent.outbox.len(), 2);
+    // and back to normal
+    t.app().agent.headless = false;
+    let (err, r) = mcp_call(&mut t, &live, "add_shape", serde_json::json!({"geom": "rect", "x": 800}));
+    assert!(!err, "{r}");
+    assert!(t.app().agent.state.cursor.is_some());
+    let _ = std::fs::remove_file(&live.file);
+}
+
+#[test]
 fn live_calls_target_the_open_file_only() {
     let mut t = T::new();
     let live = start_live(&mut t, "path");
