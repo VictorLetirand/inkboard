@@ -22,7 +22,7 @@ use inkboard_session::crypto::{Entropy, FrameCipher, HostKeys, Link, OsEntropy, 
 use inkboard_session::limits::{Limits, Quota, RateLimiter, Violation, check_message, check_message_size, check_page_count};
 use inkboard_session::proto::{
     AgentEvent as WireAgent, AssetChunk, AssetInfo, ByeReason, DocMeta, Message, PROTO_VERSION, ParticipantId, ParticipantInfo, Presence, RefuseReason,
-    RejectReason, Role, Seq, Submit, Welcome,
+    RejectReason, Role, Seq, Submit, UploadStatus, Welcome,
 };
 use inkboard_session::sequencer::{CatchUp, Sequencer, Submitted};
 use inkboard_session::transport::{Connection, Transport};
@@ -207,7 +207,7 @@ fn color_for(pid: ParticipantId, used: &[(u8, u8, u8)]) -> (u8, u8, u8) {
 }
 
 /// Media type of an image from its first bytes (only images are accepted from guests).
-fn sniff_mime(data: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff_mime(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
     } else if data.starts_with(&[0xff, 0xd8, 0xff]) {
@@ -222,11 +222,30 @@ fn sniff_mime(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn is_hash(s: &str) -> bool {
+pub(crate) fn is_hash(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn image_assets(ops: &[WireOp]) -> Vec<AssetId> {
+/// Longest side and number of pixels a bitmap received from somebody else may declare (read from the header, before any decoding).
+const MAX_IMAGE_SIDE: u32 = 16_384;
+const MAX_IMAGE_PIXELS: u64 = 80_000_000;
+
+/// Checks the dimensions a bitmap declares, without decoding it (a tiny file can claim gigabytes of pixels). Vector images are only
+/// required to be text; a bitmap whose header cannot be read passes (it cannot be decoded either). `Err` is a short English reason.
+pub(crate) fn check_image_bounds(data: &[u8], mime: &str) -> Result<(), &'static str> {
+    if mime == "image/svg+xml" {
+        return std::str::from_utf8(data).map(|_| ()).map_err(|_| "the vector image is not valid text");
+    }
+    // a header that cannot be read declares nothing: the decoder fails on it the same way and the image is drawn as unreadable
+    let Ok(reader) = image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format() else { return Ok(()) };
+    let Ok((w, h)) = reader.into_dimensions() else { return Ok(()) };
+    if w == 0 || h == 0 || w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE || u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS {
+        return Err("image dimensions out of bounds");
+    }
+    Ok(())
+}
+
+pub(crate) fn image_assets(ops: &[WireOp]) -> Vec<AssetId> {
     let mut out: Vec<AssetId> = Vec::new();
     let mut add = |o: &Object| {
         if let Kind::Image(i) = &o.kind
@@ -1020,7 +1039,11 @@ impl SessionHost {
         let role = m.role;
         if let Err(v) = check_message(&self.cfg.limits, &msg) {
             let seq = if let Message::Submit(s) = &msg { s.client_seq } else { 0 };
-            return self.violation(pid, &v, seq);
+            self.violation(pid, &v, seq);
+            if let Message::AssetChunk(c) = &msg {
+                self.ack_upload(pid, &c.hash, 0, UploadStatus::Refused { reason: describe(&v) });
+            }
+            return;
         }
         match msg {
             Message::Submit(s) => {
@@ -1210,46 +1233,65 @@ impl SessionHost {
     /// An image uploaded by a guest, chunk by chunk, before the modification that uses it.
     fn on_chunk(&mut self, pid: ParticipantId, c: AssetChunk) {
         let limits = self.cfg.limits.clone();
-        let Some(m) = self.members.get_mut(&pid) else { return };
+        if !self.members.contains_key(&pid) {
+            return;
+        }
         if !is_hash(&c.hash) {
             return self.violation(pid, &Violation::Malformed("image identifier is not a SHA-256 hash"), 0);
         }
+        // already on the board or uploaded by somebody: nothing to transfer, nothing to charge
+        if self.assets.by_hash.contains_key(&c.hash) || self.uploaded.iter().any(|u| u.hash == c.hash) {
+            return self.ack_upload(pid, &c.hash, 0, UploadStatus::Stored);
+        }
+        let Some(m) = self.members.get_mut(&pid) else { return };
         if !m.uploads.contains_key(&c.hash) && m.uploads.len() >= MAX_UPLOADS_PER_GUEST {
             return; // too many uploads at once: the guest starts this one again later
         }
         let buf = m.uploads.entry(c.hash.clone()).or_default();
         let have = buf.len() as u64;
-        if c.offset < have {
-            return; // a chunk that arrived twice
-        }
-        if c.offset > have {
-            m.uploads.remove(&c.hash); // a gap: the guest must start again
-            return;
+        if c.offset != have {
+            // a chunk that arrived twice or after a gap: the guest goes on from what is held
+            return self.ack_upload(pid, &c.hash, have, UploadStatus::Receiving);
         }
         buf.extend_from_slice(&c.data);
-        if buf.len() as u64 > limits.max_image_bytes {
+        let held = buf.len() as u64;
+        if held > limits.max_image_bytes {
             m.uploads.remove(&c.hash);
-            return self.violation(pid, &Violation::ImageTooLarge { size: have + c.data.len() as u64, max: limits.max_image_bytes }, 0);
+            let v = Violation::ImageTooLarge { size: held, max: limits.max_image_bytes };
+            return self.refuse_upload(pid, &c.hash, &v);
         }
         if !c.last {
-            return;
+            return self.ack_upload(pid, &c.hash, held, UploadStatus::Receiving);
         }
         let data = m.uploads.remove(&c.hash).unwrap_or_default();
         if hash_hex(&data) != c.hash {
-            return self.violation(pid, &Violation::Malformed("image does not match its hash"), 0);
+            return self.refuse_upload(pid, &c.hash, &Violation::Malformed("image does not match its hash"));
         }
         let Some(mime) = sniff_mime(&data) else {
-            return self.violation(pid, &Violation::Malformed("not an image (png, jpeg, gif, webp or svg)"), 0);
+            return self.refuse_upload(pid, &c.hash, &Violation::Malformed("not an image (png, jpeg, gif, webp or svg)"));
         };
+        if let Err(why) = check_image_bounds(&data, mime) {
+            return self.refuse_upload(pid, &c.hash, &Violation::Malformed(why));
+        }
         if let Err(v) = m.quota.charge(&limits, data.len() as u64) {
-            return self.violation(pid, &v, 0);
+            return self.refuse_upload(pid, &c.hash, &v);
         }
-        if self.uploaded.iter().all(|u| u.hash != c.hash) {
-            self.uploaded.push_back(Uploaded { hash: c.hash, mime, data: Arc::new(data) });
-            while self.uploaded.len() > UPLOAD_POOL {
-                self.uploaded.pop_front();
-            }
+        self.uploaded.push_back(Uploaded { hash: c.hash.clone(), mime, data: Arc::new(data) });
+        while self.uploaded.len() > UPLOAD_POOL {
+            self.uploaded.pop_front();
         }
+        self.ack_upload(pid, &c.hash, held, UploadStatus::Stored);
+    }
+
+    fn ack_upload(&mut self, pid: ParticipantId, hash: &str, have: u64, status: UploadStatus) {
+        self.send_to(pid, &Message::AssetAck { hash: hash.to_owned(), have, status });
+    }
+
+    /// The upload ends here: the guest is told why (it cancels its modification), then the violation counts like any other.
+    fn refuse_upload(&mut self, pid: ParticipantId, hash: &str, v: &Violation) {
+        // the warning first: the guest shows the last thing it was told, which is the precise one
+        self.violation(pid, v, 0);
+        self.ack_upload(pid, hash, 0, UploadStatus::Refused { reason: describe(v) });
     }
 
     /* ------------------------------------------------------------------------------------------------------ upkeep */

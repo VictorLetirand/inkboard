@@ -164,6 +164,18 @@ pub struct AssetChunk {
     pub last: bool,
 }
 
+/// How the host stands with an image a guest is uploading.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum UploadStatus {
+    /// `have` bytes are held, in order; the guest goes on from there.
+    Receiving,
+    /// The host holds the whole image (or already had it): a modification may use it now.
+    Stored,
+    /// The upload is over and will not be accepted (too large, over the quota, not an image...).
+    Refused { reason: RejectReason },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Submit {
     /// Numbered by the guest, from 1; also used by the host to ignore duplicates.
@@ -266,6 +278,12 @@ pub enum Message {
         hash: String,
     },
     AssetChunk(AssetChunk),
+    /// Host -> guest: answer to every chunk the guest uploads (`have` = bytes held in order), so that it can pace, resume and stop.
+    AssetAck {
+        hash: String,
+        have: u64,
+        status: UploadStatus,
+    },
     // modifications
     Submit(Submit),
     Applied(Applied),

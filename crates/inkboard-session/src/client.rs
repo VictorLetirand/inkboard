@@ -326,7 +326,8 @@ impl Client {
             | Message::Follow { .. }
             | Message::Kick { .. }
             | Message::RoleChange { .. }
-            | Message::AssetChunk(_)) => {
+            | Message::AssetChunk(_)
+            | Message::AssetAck { .. }) => {
                 self.events.push(ClientEvent::Relay(Box::new(m)));
                 Ok(())
             }

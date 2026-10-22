@@ -106,7 +106,7 @@ fn save_state(app: &App) -> String {
 /* -------------------------------------------------------------- outils */
 
 fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
-    let (view_only, guest) = (app.view_only(), app.guest_active());
+    let view_only = app.view_only();
     let (anchor, offset) = if narrow { (Align2::LEFT_TOP, vec2(12.0, 62.0)) } else { (Align2::CENTER_TOP, vec2(0.0, 12.0)) };
     theme::floating(ctx, "tools", anchor, offset, 4, |ui| {
         ui.horizontal(|ui| {
@@ -138,10 +138,10 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
                     }
                 }
             }
-            if theme::icon_button(ui, "image", false, !guest).on_hover_text(t("Insert image")).clicked() {
+            if theme::icon_button(ui, "image", false, !view_only).on_hover_text(t("Insert image")).clicked() {
                 app.insert_images_dialog();
             }
-            if theme::icon_button(ui, "library", app.palette.open, !guest).on_hover_text(t("Icon library")).clicked() {
+            if theme::icon_button(ui, "library", app.palette.open, !view_only).on_hover_text(t("Icon library")).clicked() {
                 app.palette.toggle();
             }
             let key = Action::for_tool(Tool::Laser).map(|a| app.keymap.label(a)).unwrap_or_default();
@@ -319,7 +319,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
     egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
         theme::menu_style(ui);
         ui.set_min_width(238.0);
-        // in a shared session the board is the host's: no new board, no opening another one, no upload of images
+        // in a shared session the board is the host's: no new board, no opening another one
         let (guest, view_only) = (app.guest_active(), app.view_only());
         if mi_if(ui, "filenew", "New board", &key(app, Action::New), !guest) {
             app.request_new_document();
@@ -374,16 +374,16 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         }
         theme::menu_sep(ui);
         theme::menu_label(ui, "Insert");
-        if mi_if(ui, "image", "Image…", "", !guest) {
+        if mi_if(ui, "image", "Image…", "", !view_only) {
             app.insert_images_dialog();
         }
-        if mi_if(ui, "library", "Icon library…", "", !guest) {
+        if mi_if(ui, "library", "Icon library…", "", !view_only) {
             app.palette.toggle();
         }
         if mi_if(ui, "code", "Code block", "", !view_only) {
             app.insert_code_block();
         }
-        if mi_if(ui, "formula", "Formula (LaTeX)…", "", !guest) {
+        if mi_if(ui, "formula", "Formula (LaTeX)…", "", !view_only) {
             app.dialog =
                 Some(Dialog::Formula { src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into(), editing: None, preview: Default::default() });
         }
