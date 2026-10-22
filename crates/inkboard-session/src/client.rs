@@ -314,9 +314,11 @@ impl Client {
                 if a.seq > self.last_seq {
                     let l = &self.limits;
                     let checked = check_ops(l, &a.ops).and_then(|()| {
-                        (a.superseded.len() <= l.max_ids_per_message)
-                            .then_some(())
-                            .ok_or(Violation::TooMany { what: "identifiers", count: a.superseded.len(), max: l.max_ids_per_message })?;
+                        (a.superseded.len() <= l.max_ids_per_message).then_some(()).ok_or(Violation::TooMany {
+                            what: "identifiers",
+                            count: a.superseded.len(),
+                            max: l.max_ids_per_message,
+                        })?;
                         a.superseded.iter().try_for_each(|id| check_id(l, id))
                     });
                     self.accept_from_host(checked)?;

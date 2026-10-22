@@ -220,7 +220,15 @@ fn what_the_host_relays_for_display_is_checked_too() {
     let t = Message::Transient { object: Id("o1".into()), state: Box::new(boxed("o2", 5.0)), author: Some(ParticipantId(2)) };
     c.handle(t, 0).unwrap();
     // an `editing` identifier of 900 KB
-    let p = Presence { participant: Some(ParticipantId(2)), page: Id("p".into()), cursor: None, selection: vec![], tool: None, editing: Some(Id("x".repeat(900_000))), viewport: None };
+    let p = Presence {
+        participant: Some(ParticipantId(2)),
+        page: Id("p".into()),
+        cursor: None,
+        selection: vec![],
+        tool: None,
+        editing: Some(Id("x".repeat(900_000))),
+        viewport: None,
+    };
     c.handle(Message::Presence(p), 0).unwrap();
     assert!(c.take_events().iter().all(|e| !matches!(e, ClientEvent::Relay(_))), "dropped, never shown");
     // a consistent one passes

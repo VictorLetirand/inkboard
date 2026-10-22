@@ -148,6 +148,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Grid", "Quadrillage"),
     ("Group", "Grouper"),
     ("Guest", "Invité"),
+    ("Agent", "Agent"),
     ("Hand", "Main"),
     ("Handwriting", "Manuscrit"),
     ("Highlight", "Surlignage"),

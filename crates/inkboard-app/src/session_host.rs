@@ -94,6 +94,8 @@ const HANDSHAKE_MS: u64 = 10_000;
 /// Connections that have not sent anything yet are counted apart: only this many are kept (the oldest go first), so that connections
 /// opened by somebody who only knows the host's identity cannot take the places of real guests.
 const MAX_UNAUTHENTICATED: usize = 16;
+/// A connection younger than this is never cut for being over `MAX_UNAUTHENTICATED` (its first message may still be on its way).
+const SILENT_GRACE_MS: u64 = 2_000;
 const MAX_FRAMES_PER_POLL: usize = 1024;
 /// Bytes of frames read per `poll`, all connections together (what is left waits for the next `poll`): the work of one frame is
 /// proportional to its size, so this bounds how long one `poll` can take.
@@ -279,31 +281,36 @@ pub(crate) fn image_assets(ops: &[WireOp]) -> Vec<AssetId> {
 fn lock_conflict(doc: &Document, ops: &[WireOp]) -> Option<&'static str> {
     const TOUCH: &str = "the object or its layer is locked";
     const CHANGE: &str = "only the host can lock or unlock";
+    // the locked objects of each page the operations name, found once (a board has thousands of objects, a submit up to 200 operations)
+    let mut locked: HashMap<&Id, HashSet<&Id>> = HashMap::new();
+    for op in ops {
+        if let WireOp::Put { page, .. } | WireOp::Delete { page, .. } | WireOp::Order { page, .. } = op
+            && let Some(p) = doc.page(page)
+        {
+            locked.entry(&p.id).or_insert_with(|| p.objects.iter().filter(|o| p.is_locked(o)).map(|o| &o.id).collect());
+        }
+    }
     for op in ops {
         match op {
             WireOp::Put { page, object } => {
                 let Some(p) = doc.page(page) else { continue };
                 if object.locked {
-                    return Some(CHANGE); // a guest never makes an object locked (an object already locked is refused just below)
+                    return Some(CHANGE); // a guest never makes an object locked (one already locked is refused just below)
                 }
-                if p.layer(&object.layer).is_some_and(|l| l.locked) {
-                    return Some(TOUCH);
-                }
-                if p.objects.iter().any(|o| o.id == object.id && p.is_locked(o)) {
+                if p.layer(&object.layer).is_some_and(|l| l.locked) || locked[&p.id].contains(&object.id) {
                     return Some(TOUCH);
                 }
             }
             WireOp::Delete { page, ids } => {
                 let Some(p) = doc.page(page) else { continue };
-                let doomed: HashSet<&Id> = ids.iter().collect();
-                if p.objects.iter().any(|o| doomed.contains(&o.id) && p.is_locked(o)) {
+                if ids.iter().any(|i| locked[&p.id].contains(i)) {
                     return Some(TOUCH);
                 }
             }
             WireOp::Order { page, ids } => {
                 let Some(p) = doc.page(page) else { continue };
-                let locked: HashSet<&Id> = p.objects.iter().filter(|o| p.is_locked(o)).map(|o| &o.id).collect();
-                if !locked.is_empty() && !p.objects.iter().map(|o| &o.id).filter(|i| locked.contains(i)).eq(ids.iter().filter(|i| locked.contains(i))) {
+                let set = &locked[&p.id];
+                if !set.is_empty() && !p.objects.iter().map(|o| &o.id).filter(|i| set.contains(i)).eq(ids.iter().filter(|i| set.contains(i))) {
                     return Some(TOUCH); // the locked objects keep their order (and none may be left out)
                 }
             }
@@ -667,6 +674,11 @@ impl SessionHost {
     pub fn dropped_frames(&self) -> u64 {
         self.dropped_frames
     }
+    /// Connections that exist, admitted or not.
+    #[cfg(test)]
+    pub fn connection_count(&self) -> usize {
+        self.conns.len()
+    }
 
     pub fn take_events(&mut self) -> Vec<HostEvent> {
         std::mem::take(&mut self.events)
@@ -819,6 +831,7 @@ impl SessionHost {
                 inbound.push((c.id, if within { Inbound::Frame(f) } else { Inbound::Flood }));
             }
         }
+        inbound.sort_by_key(|(cid, _)| *cid); // stable: the order of arrival on each connection is kept; the rotation only decides who is read first
         for (cid, item) in inbound {
             match item {
                 Inbound::Frame(frame) => self.on_frame(cid, &frame, ed),
@@ -1447,7 +1460,8 @@ impl SessionHost {
         let Some(id) = self.assets.by_hash.get(hash).cloned() else { return };
         let Some(data) = self.seqr.doc().assets.get(&id).map(|a| Arc::clone(&a.data)) else { return };
         let Some(i) = self.members.get(&pid).and_then(|m| m.conn).and_then(|c| self.conn_index(c)) else { return };
-        if self.conns[i].out.len() + data.len() / self.cfg.limits.max_asset_chunk_bytes.max(1) > MAX_QUEUED_CHUNKS {
+        let queued: usize = self.conns[i].out.iter().map(|m| if let Message::AssetChunk(c) = m { c.data.len() } else { 0 }).sum();
+        if queued + data.len() > MAX_QUEUED_ASSET_BYTES {
             return; // the guest asked for more than it can take: it asks again later
         }
         let chunk = self.cfg.limits.max_asset_chunk_bytes;
@@ -1497,12 +1511,21 @@ impl SessionHost {
         if let Err(why) = check_image_bounds(&data, mime) {
             return self.refuse_upload(pid, &c.hash, &Violation::Malformed(why));
         }
-        if let Err(v) = m.quota.charge(&limits, data.len() as u64) {
+        // the quota follows the transport identity (a guest that leaves and comes back keeps what it used), and the host has a total
+        let size = data.len() as u64;
+        if self.uploaded_total.saturating_add(size) > self.cfg.total_asset_quota_bytes {
+            let v = Violation::QuotaExceeded { used: self.uploaded_total, size, max: self.cfg.total_asset_quota_bytes };
             return self.refuse_upload(pid, &c.hash, &v);
         }
+        if let Err(v) = self.quotas.entry(m.peer.clone()).or_default().charge(&limits, size) {
+            return self.refuse_upload(pid, &c.hash, &v);
+        }
+        self.uploaded_total += size;
         self.uploaded.push_back(Uploaded { hash: c.hash.clone(), mime, data: Arc::new(data) });
-        while self.uploaded.len() > UPLOAD_POOL {
-            self.uploaded.pop_front();
+        let mut pool_bytes: usize = self.uploaded.iter().map(|u| u.data.len()).sum();
+        while self.uploaded.len() > UPLOAD_POOL || pool_bytes > UPLOAD_POOL_BYTES {
+            let Some(old) = self.uploaded.pop_front() else { break };
+            pool_bytes -= old.data.len();
         }
         self.ack_upload(pid, &c.hash, held, UploadStatus::Stored);
     }
@@ -1523,11 +1546,25 @@ impl SessionHost {
     fn housekeeping(&mut self) {
         let now = self.now;
         let (idle, hold) = (self.cfg.idle_ms, self.cfg.place_hold_ms);
+        // a request nobody answered expires, even if the guest keeps sending `Ping`s
+        let stale: Vec<(u64, u64)> = self.requests.iter().filter(|r| now.saturating_sub(r.at) >= self.cfg.pending_ms).map(|r| (r.id, r.conn)).collect();
+        for (rid, cid) in stale {
+            self.requests.retain(|r| r.id != rid);
+            if let Some(i) = self.conn_index(cid) {
+                self.refuse(i, RefuseReason::Declined);
+            }
+        }
+        // connections that have said nothing are limited apart: the oldest beyond the ceiling go
+        // (a connection gets a moment to send its first message: a burst of real guests is not cut short)
+        let mut silent: Vec<(u64, u64)> = self.conns.iter().filter(|c| matches!(c.state, ConnState::New)).map(|c| (c.opened, c.id)).collect();
+        silent.sort_unstable();
+        let excess = silent.len().saturating_sub(MAX_UNAUTHENTICATED);
+        let evict: HashSet<u64> = silent.iter().take(excess).filter(|e| now.saturating_sub(e.0) >= SILENT_GRACE_MS).map(|e| e.1).collect();
         let mut gone: Vec<usize> = Vec::new();
         for (i, c) in self.conns.iter().enumerate() {
             let dead = match c.state {
                 ConnState::Closing { until } => now >= until,
-                ConnState::New => !c.conn.is_open() || now.saturating_sub(c.opened) > HANDSHAKE_MS,
+                ConnState::New => !c.conn.is_open() || now.saturating_sub(c.opened) > HANDSHAKE_MS || evict.contains(&c.id),
                 ConnState::Pending(_) | ConnState::Member(_) => !c.conn.is_open() || now.saturating_sub(c.last_rx) > idle,
             };
             if dead {
