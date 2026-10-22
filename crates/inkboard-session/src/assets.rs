@@ -34,6 +34,8 @@ pub fn chunks(data: &[u8], hash: &str, chunk_size: usize) -> Vec<AssetChunk> {
 pub struct AssetAssembler {
     hash: String,
     size: u64,
+    /// `false` when the size is unknown (an image learnt from a modification, not from a manifest): `size` is then only a ceiling.
+    exact: bool,
     buf: Vec<u8>,
 }
 
@@ -43,7 +45,12 @@ impl AssetAssembler {
         if size > max_size {
             return Err(Violation::ImageTooLarge { size, max: max_size }.into());
         }
-        Ok(Self { hash: hash.to_owned(), size, buf: Vec::new() })
+        Ok(Self { hash: hash.to_owned(), size, exact: true, buf: Vec::new() })
+    }
+
+    /// For an image whose size is not known in advance: at most `max_size` bytes are taken, the hash alone vouches for the content.
+    pub fn with_unknown_size(hash: &str, max_size: u64) -> Self {
+        Self { hash: hash.to_owned(), size: max_size, exact: false, buf: Vec::new() }
     }
 
     /// Adds a chunk. Returns the complete image after the last chunk. A repeated chunk is ignored; a gap is an error (ask again).
@@ -65,7 +72,7 @@ impl AssetAssembler {
         if !c.last {
             return Ok(None);
         }
-        if self.buf.len() as u64 != self.size || hash_hex(&self.buf) != self.hash {
+        if (self.exact && self.buf.len() as u64 != self.size) || hash_hex(&self.buf) != self.hash {
             return Err(Error::BadFrame("image does not match its hash"));
         }
         Ok(Some(std::mem::take(&mut self.buf)))

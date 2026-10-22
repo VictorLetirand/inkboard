@@ -679,8 +679,8 @@ impl App {
         if files.is_empty() || self.presenting || self.dialog.is_some() {
             return;
         }
-        if self.guest_active() {
-            return self.toast(&t("Not available in a shared session yet"));
+        if self.view_only() {
+            return self.toast(&t("You have read-only access: this change was refused."));
         }
         self.commit_editing();
         let (images, others): (Vec<PathBuf>, Vec<PathBuf>) = files.into_iter().partition(|f| crate::tools::is_image_file(f));

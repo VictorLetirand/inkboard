@@ -271,12 +271,16 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
     let host = app.guest.as_ref().map(|g| g.host_name().to_owned()).unwrap_or_default();
     let view = app.view_only();
     let pending = app.guest.as_ref().map_or(0, |g| g.pending_len());
+    let sending = app.guest.as_ref().and_then(|g| g.upload_progress());
     let title = if host.is_empty() { t("Shared session") } else { tr!("Session of {}", host) };
     let (mut leave, mut save) = (false, false);
     bar(ctx, "guest-bar", Align2::RIGHT_TOP, vec2(-12.0, 12.0), Color32::from_rgb(0x2b, 0x4c, 0xb8), |ui| {
         ui.label(white(title).strong());
         if view {
             ui.label(white(format!("· {}", t("Read-only"))));
+        }
+        if let Some(p) = sending {
+            ui.label(white(format!("· {}", tr!("Sending images… {}%", p.percent))));
         }
         if !matches!(state, GuestState::Ended(_)) {
             leave = bar_button(ui, t("Leave the session"));

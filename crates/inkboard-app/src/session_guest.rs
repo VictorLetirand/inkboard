@@ -14,18 +14,20 @@
 use crate::app::App;
 use crate::i18n::{t, tr};
 use crate::presence::{self, RemotePerson};
+use crate::session_host::{check_image_bounds, image_assets, is_hash, sniff_mime};
 use crate::tools::{Drag, Tool};
 use eframe::egui::{self, Color32};
 use inkboard_core::geom::Pt;
 use inkboard_core::history::Op;
-use inkboard_core::model::{Asset, Document, Id, Object};
-use inkboard_session::assets::AssetAssembler;
+use inkboard_core::model::{Asset, AssetId, Document, Id, ImageObj, Kind, Object};
+use inkboard_session::assets::{AssetAssembler, hash_hex};
 use inkboard_session::crypto::{Entropy, FrameCipher, OsEntropy, SecureChannel, Side, Ticket, join_proof};
-use inkboard_session::proto::{AssetInfo, ByeReason, ParticipantInfo, Presence, RefuseReason, RejectReason};
+use inkboard_session::limits::{Limits, RateLimiter};
+use inkboard_session::proto::{AssetChunk, AssetInfo, ByeReason, ParticipantInfo, Presence, RefuseReason, RejectReason, Submit, UploadStatus};
 use inkboard_session::transport::{Connection, Transport};
-use inkboard_session::wire::ops_to_wire;
+use inkboard_session::wire::{WireOp, ops_to_wire};
 use inkboard_session::{Client, ClientConfig, ClientEvent, Error, JsonCodec, Message, ParticipantId, Role};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -39,9 +41,60 @@ pub const NAME_MAX: usize = 40;
 const MAX_LINK_CHARS: usize = 4096;
 /// Largest frame a guest accepts from the host, and largest image it assembles.
 const MAX_FRAME: usize = 16 << 20;
-const MAX_IMAGE: u64 = 15 << 20;
+pub(crate) const MAX_IMAGE: u64 = 15 << 20;
 /// Images asked for at the same time.
 const MAX_IMAGES_IN_FLIGHT: usize = 4;
+/// Size of the pieces of an image sent to the host (the host accepts up to 256 KiB).
+const UPLOAD_CHUNK: usize = 128 << 10;
+/// Bytes sent but not yet acknowledged by the host at most (the transfer is paced by the acknowledgements).
+const UPLOAD_WINDOW: u64 = 4 * UPLOAD_CHUNK as u64;
+/// Without any acknowledgement for this long, the transfer goes on again from what the host holds.
+const UPLOAD_RESEND_MS: u64 = 2_000;
+/// Pieces sent per second at most (the host's rate limit also serves the modifications).
+const UPLOAD_CHUNKS_PER_SEC: u32 = 30;
+/// An image whose content does not match its hash is given up after this many tries.
+const IMAGE_FAILURES_MAX: u32 = 3;
+/// Shown in place of an image that cannot be received or read: a crossed frame.
+const UNREADABLE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48"><rect x="2" y="2" width="60" height="44" rx="4" fill="#e9ecef" stroke="#868e96" stroke-width="2"/><path d="M2 2L62 46M62 2L2 46" stroke="#868e96" stroke-width="2"/></svg>"##;
+
+/// The marker that stands for an image that cannot be read.
+pub(crate) fn unreadable_asset() -> Asset {
+    Asset { mime: "image/svg+xml".to_owned(), data: Arc::new(UNREADABLE_SVG.as_bytes().to_vec()) }
+}
+
+/// Runs `f` on every image object of `ops`.
+fn for_each_image(ops: &mut [WireOp], f: &mut impl FnMut(&mut ImageObj)) {
+    let mut visit = |o: &mut Object| {
+        if let Kind::Image(i) = &mut o.kind {
+            f(i);
+        }
+    };
+    for op in ops {
+        match op {
+            WireOp::Put { object, .. } => visit(object),
+            WireOp::AddPage { page, .. } => page.objects.iter_mut().for_each(&mut visit),
+            _ => {}
+        }
+    }
+}
+
+/// An image being sent to the host.
+struct Upload {
+    hash: String,
+    data: Arc<Vec<u8>>,
+    /// Offset of the next piece to send.
+    sent: u64,
+    /// Bytes the host says it holds, in order.
+    acked: u64,
+    last_progress: u64,
+}
+
+/// Progress of the images being sent, for a discreet indicator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UploadProgress {
+    pub percent: u32,
+    pub images: usize,
+}
 /// A transient state of somebody else's gesture is dropped (the board shows the host's state again) after this long without news.
 const OVERLAY_IDLE: Duration = Duration::from_secs(3);
 /// Objects of a gesture sent per tick of 50 ms (at most 20 a second, the others take turns): with the cursor that is 40 ephemeral messages a second, under the host limit of 60.
@@ -409,6 +462,15 @@ pub enum Notice {
     /// Modifications made while disconnected could not be kept (the host had forgotten this guest).
     PendingDiscarded(usize),
     RoleChanged(Role),
+    /// An image is over the size limit: the modification was cancelled.
+    ImageTooLarge {
+        size: u64,
+        max: u64,
+    },
+    /// An image cannot be read (or sent): the modification was cancelled, or a received image is replaced by a marker.
+    ImageUnreadable,
+    /// The host refused an image being uploaded (quota, size, content): the modification was cancelled.
+    ImageRefused(RejectReason),
 }
 
 /// What happened since the last call of [`GuestSession::take_changes`].
@@ -466,6 +528,22 @@ pub struct GuestSession {
     images: HashMap<String, Asset>,
     assemblers: HashMap<String, AssetAssembler>,
     in_flight: HashSet<String>,
+    /// Images the host holds that the snapshot's manifest does not list: ours (uploaded) and those learnt from modifications.
+    extra: Vec<AssetInfo>,
+    uploads: VecDeque<Upload>,
+    /// Hashes the host confirmed it holds.
+    stored: HashSet<String>,
+    /// Modifications that use an image still being sent wait here (in order) until the host has it.
+    held: Vec<Submit>,
+    /// `client_seq` of the modifications that use an image not yet stored, with the hashes they wait for.
+    image_submits: Vec<(u64, Vec<String>)>,
+    uploaded_bytes: u64,
+    batch_total: u64,
+    batch_done: u64,
+    upload_rl: RateLimiter,
+    failures: HashMap<String, u32>,
+    /// Pieces of images sent so far, repeats included.
+    pub chunks_sent: u64,
     edits: u32,
     undone: u32,
     last_presence: Option<(Presence, u64)>,
@@ -527,6 +605,17 @@ impl GuestSession {
             images: HashMap::new(),
             assemblers: HashMap::new(),
             in_flight: HashSet::new(),
+            extra: Vec::new(),
+            uploads: VecDeque::new(),
+            stored: HashSet::new(),
+            held: Vec::new(),
+            image_submits: Vec::new(),
+            uploaded_bytes: 0,
+            batch_total: 0,
+            batch_done: 0,
+            upload_rl: RateLimiter::new(UPLOAD_CHUNKS_PER_SEC, 8),
+            failures: HashMap::new(),
+            chunks_sent: 0,
             edits: 0,
             undone: 0,
             last_presence: None,
@@ -612,21 +701,208 @@ impl GuestSession {
 
     /// Sends the modifications the editor has just made. `false` when they cannot be sent (read-only, no board yet, session over):
     /// the caller then refreshes its mirror, which drops them.
-    pub fn submit_local(&mut self, ops: &[Op]) -> bool {
+    ///
+    /// `assets` are the image bytes of the user's editor: an image the host does not have yet is sent to it first, piece by piece,
+    /// and the modification that uses it follows once the host holds it. An image that cannot be sent (too large, unreadable, over
+    /// the quota) cancels the modification: `false` and a notice.
+    pub fn submit_local(&mut self, ops: &[Op], assets: &BTreeMap<AssetId, Asset>) -> bool {
         if ops.is_empty() {
             return true;
         }
-        let wire = ops_to_wire(ops, self.client.doc());
+        let mut wire = ops_to_wire(ops, self.client.doc());
         if wire.is_empty() {
             return true;
         }
+        let fresh = match self.plan_images(&mut wire, assets) {
+            Ok(f) => f,
+            Err(notice) => {
+                self.changes.notices.push(notice);
+                return false;
+            }
+        };
         let now = self.clock.now_ms();
-        let ok = self.client.edit(wire, now).is_some();
-        if ok {
-            self.edits += 1;
-            self.undone = 0;
+        let waiting: Vec<String> = image_assets(&wire).into_iter().map(|a| a.0).filter(|a| is_hash(a)).collect();
+        let Some(client_seq) = self.client.edit(wire, now) else { return false };
+        self.edits += 1;
+        self.undone = 0;
+        for (hash, asset) in fresh {
+            self.queue_upload(hash, asset, now);
         }
-        ok
+        let waiting: Vec<String> = waiting.into_iter().filter(|h| self.uploads.iter().any(|u| u.hash == *h)).collect();
+        if !waiting.is_empty() {
+            self.image_submits.push((client_seq, waiting));
+        }
+        true
+    }
+
+    /// Does the host hold the image `id` (listed in its manifest, or learnt since)?
+    fn host_knows(&self, id: &AssetId) -> bool {
+        self.manifest.iter().chain(&self.extra).any(|a| a.id == *id)
+    }
+
+    /// Points the images of `wire` that the host does not have at their hash (the identifier the host accepts for an uploaded image),
+    /// or at the identifier it already uses for the same bytes. Returns the images to send; nothing is changed in the session yet.
+    fn plan_images(&self, wire: &mut [WireOp], local: &BTreeMap<AssetId, Asset>) -> Result<Vec<(String, Asset)>, Notice> {
+        let limits = Limits::default();
+        let mut fresh: Vec<(String, Asset)> = Vec::new();
+        let mut rename: HashMap<AssetId, AssetId> = HashMap::new();
+        for id in image_assets(wire) {
+            if self.host_knows(&id) {
+                continue;
+            }
+            let Some(asset) = local.get(&id) else { continue };
+            let hash = hash_hex(&asset.data);
+            if let Some(known) = self.manifest.iter().chain(&self.extra).find(|a| a.hash == hash) {
+                rename.insert(id, known.id.clone());
+                continue;
+            }
+            if fresh.iter().any(|(h, _)| *h == hash) {
+                rename.insert(id, Id::from(hash.as_str()));
+                continue;
+            }
+            let size = asset.data.len() as u64;
+            if size > MAX_IMAGE {
+                return Err(Notice::ImageTooLarge { size, max: MAX_IMAGE });
+            }
+            let Some(mime) = sniff_mime(&asset.data) else { return Err(Notice::ImageUnreadable) };
+            if check_image_bounds(&asset.data, mime).is_err() {
+                return Err(Notice::ImageUnreadable);
+            }
+            let planned: u64 = fresh.iter().map(|(_, a)| a.data.len() as u64).sum();
+            if self.uploaded_bytes + planned + size > limits.guest_asset_quota_bytes {
+                return Err(Notice::Rejected(RejectReason::Quota));
+            }
+            rename.insert(id, Id::from(hash.as_str()));
+            fresh.push((hash, Asset { mime: mime.to_owned(), data: Arc::clone(&asset.data) }));
+        }
+        for_each_image(wire, &mut |i| {
+            if let Some(n) = rename.get(&i.asset) {
+                i.asset = n.clone();
+            }
+        });
+        Ok(fresh)
+    }
+
+    fn queue_upload(&mut self, hash: String, asset: Asset, now: u64) {
+        let size = asset.data.len() as u64;
+        self.uploaded_bytes += size;
+        self.batch_total += size;
+        self.extra.push(AssetInfo { id: Id::from(hash.as_str()), hash: hash.clone(), size, mime: asset.mime.clone() });
+        self.images.insert(hash.clone(), asset.clone());
+        self.uploads.push_back(Upload { hash, data: asset.data, sent: 0, acked: 0, last_progress: now });
+    }
+
+    /// Is an image being sent to the host?
+    pub fn is_uploading(&self) -> bool {
+        !self.uploads.is_empty()
+    }
+
+    /// Progress of the images being sent (`None` when nothing is).
+    pub fn upload_progress(&self) -> Option<UploadProgress> {
+        let front = self.uploads.front()?;
+        let done = (self.batch_done + front.acked).min(self.batch_total);
+        let percent = (done * 100).checked_div(self.batch_total).unwrap_or(0) as u32;
+        Some(UploadProgress { percent, images: self.uploads.len() })
+    }
+
+    /// Sends the next pieces of the image at the head of the queue (a window at a time, a few per second), or again from what the
+    /// host holds when it has not answered for a while.
+    fn pump_uploads(&mut self, now: u64) {
+        if self.conn.is_none() || !self.client.is_live() {
+            return;
+        }
+        let Some(u) = self.uploads.front_mut() else { return };
+        let total = u.data.len() as u64;
+        if u.sent > u.acked && now.saturating_sub(u.last_progress) >= UPLOAD_RESEND_MS {
+            u.sent = u.acked;
+            u.last_progress = now;
+        }
+        if u.sent == u.acked {
+            u.last_progress = now;
+        }
+        let mut out = Vec::new();
+        while u.sent < total && u.sent - u.acked < UPLOAD_WINDOW && self.upload_rl.allow(now) {
+            let end = (u.sent + UPLOAD_CHUNK as u64).min(total);
+            out.push(AssetChunk { hash: u.hash.clone(), offset: u.sent, data: u.data[u.sent as usize..end as usize].to_vec(), last: end == total });
+            u.sent = end;
+        }
+        self.chunks_sent += out.len() as u64;
+        for c in out {
+            self.client.send_ephemeral(Message::AssetChunk(c));
+        }
+    }
+
+    /// The host's answer to a piece: progress, completion (the waiting modifications go out) or refusal (they are cancelled).
+    fn on_ack(&mut self, hash: &str, have: u64, status: UploadStatus, now: u64) {
+        match status {
+            UploadStatus::Receiving => {
+                if let Some(u) = self.uploads.iter_mut().find(|u| u.hash == hash) {
+                    if have < u.acked {
+                        u.sent = have; // the host lost what it held: start again from what it has
+                    } else if have > u.acked {
+                        u.last_progress = now;
+                    }
+                    u.acked = have.min(u.data.len() as u64);
+                    u.sent = u.sent.max(u.acked);
+                }
+            }
+            UploadStatus::Stored => {
+                self.stored.insert(hash.to_owned());
+                if let Some(i) = self.uploads.iter().position(|u| u.hash == hash)
+                    && let Some(u) = self.uploads.remove(i)
+                {
+                    self.batch_done += u.data.len() as u64;
+                }
+                for (_, hashes) in &mut self.image_submits {
+                    hashes.retain(|h| h != hash);
+                }
+                self.image_submits.retain(|(_, h)| !h.is_empty());
+                self.upload_finished();
+            }
+            UploadStatus::Refused { reason } => self.fail_upload(hash, reason, now),
+        }
+    }
+
+    /// When nothing is left to send, the modifications that waited are sent, in order.
+    fn upload_finished(&mut self) {
+        if !self.uploads.is_empty() {
+            return;
+        }
+        self.batch_total = 0;
+        self.batch_done = 0;
+        let held = std::mem::take(&mut self.held);
+        // not connected: the client sends its pending modifications again by itself once it is
+        if self.conn.is_some() && self.client.is_live() {
+            for s in held {
+                self.send_now(&Message::Submit(s));
+            }
+        }
+    }
+
+    /// The host will not take this image: the modifications that need it are rolled back and the user is told.
+    fn fail_upload(&mut self, hash: &str, reason: RejectReason, now: u64) {
+        if let Some(u) = self.uploads.iter().find(|u| u.hash == hash) {
+            self.batch_total = self.batch_total.saturating_sub(u.data.len() as u64);
+        }
+        self.uploads.retain(|u| u.hash != hash);
+        self.extra.retain(|i| i.hash != hash);
+        self.images.remove(hash);
+        self.stored.remove(hash);
+        let seqs: Vec<u64> = self.image_submits.iter().filter(|(_, h)| h.iter().any(|x| x == hash)).map(|(s, _)| *s).collect();
+        self.image_submits.retain(|(s, _)| !seqs.contains(s));
+        self.held.retain(|s| !seqs.contains(&s.client_seq));
+        for client_seq in seqs {
+            let _ = self.client.handle(Message::Rejected { client_seq, reason: reason.clone() }, now);
+        }
+        // the notice below says why; the client's own "rejected" event would only repeat it less clearly
+        for ev in self.client.take_events() {
+            if !matches!(ev, ClientEvent::Rejected { .. }) {
+                self.on_event(ev);
+            }
+        }
+        self.changes.doc = true;
+        self.changes.notices.push(Notice::ImageRefused(reason));
+        self.upload_finished();
     }
 
     /// Own presence (cursor, selection, tool), at most 20 times a second and only when it changed (or every 2 s to stay visible).
@@ -694,7 +970,7 @@ impl GuestSession {
 
     /// Image bytes received so far are put back into `doc` (the mirror is rebuilt from the client's board, which has none).
     pub fn attach_images(&self, doc: &mut Document) {
-        for info in &self.manifest {
+        for info in self.manifest.iter().chain(&self.extra) {
             if let Some(a) = self.images.get(&info.hash) {
                 doc.assets.insert(info.id.clone(), a.clone());
             }
@@ -719,6 +995,7 @@ impl GuestSession {
             return;
         }
         self.client.tick(now);
+        self.pump_uploads(now);
         self.flush();
     }
 
@@ -849,6 +1126,7 @@ impl GuestSession {
         self.conn = None;
         self.silent = false;
         self.client.connection_lost();
+        self.held.clear(); // sent again with the pending modifications once back
         if self.welcomed {
             self.stage = Stage::Reconnecting;
             self.lost_since.get_or_insert(now);
@@ -863,13 +1141,29 @@ impl GuestSession {
         let msgs = self.client.take_outbox();
         let mut broke = false;
         for m in msgs {
-            if let (Some(c), Ok(f)) = (self.conn.as_mut(), self.chan.seal(&m)) {
-                broke |= c.send(&f).is_err();
+            // a modification that uses an image waits (behind the earlier ones) until the host holds the image
+            if let Message::Submit(s) = &m
+                && !self.uploads.is_empty()
+            {
+                match self.held.iter_mut().find(|h| h.client_seq == s.client_seq) {
+                    Some(h) => *h = s.clone(),
+                    None => self.held.push(s.clone()),
+                }
+                continue;
             }
+            broke |= !self.send_now(&m);
         }
         if broke {
             let now = self.clock.now_ms();
             self.connection_lost(now, ConnectErrorKind::Other, "sending failed");
+        }
+    }
+
+    /// Sends at once; `false` when the connection broke.
+    fn send_now(&mut self, m: &Message) -> bool {
+        match (self.conn.as_mut(), self.chan.seal(m)) {
+            (Some(c), Ok(f)) => c.send(&f).is_ok(),
+            _ => true,
         }
     }
 
@@ -890,6 +1184,7 @@ impl GuestSession {
             Message::Applied(a) => {
                 self.changes.doc = true;
                 self.changes.authors.push(a.author);
+                self.learn_images(&a.ops);
             }
             Message::Rejected { .. } => self.changes.doc = true,
             Message::Participants { list } => self.roster = list.clone(),
@@ -913,6 +1208,11 @@ impl GuestSession {
             ClientEvent::Joined { .. } => {
                 self.lost_since = None;
                 self.attempts = 0;
+                // an image being sent goes on from what the host holds (it keeps it for a guest that comes back)
+                for u in &mut self.uploads {
+                    u.sent = u.acked;
+                    u.last_progress = self.clock.now_ms();
+                }
                 if matches!(self.stage, Stage::Reconnecting) {
                     self.stage = Stage::Live;
                 }
@@ -933,10 +1233,26 @@ impl GuestSession {
             }),
             ClientEvent::Rejected { reason, .. } => self.changes.notices.push(Notice::Rejected(reason)),
             ClientEvent::Superseded(ids) => self.changes.notices.push(Notice::Superseded(ids.len())),
-            ClientEvent::PendingDiscarded(n) => self.changes.notices.push(Notice::PendingDiscarded(n)),
+            ClientEvent::PendingDiscarded(n) => {
+                // the host forgot this guest: what it held of the images is gone with the modifications that needed them
+                let gone: Vec<String> = self.uploads.drain(..).map(|u| u.hash).collect();
+                self.extra.retain(|i| !gone.contains(&i.hash));
+                gone.iter().for_each(|h| {
+                    self.images.remove(h);
+                });
+                self.held.clear();
+                self.image_submits.clear();
+                self.batch_total = 0;
+                self.batch_done = 0;
+                self.changes.notices.push(Notice::PendingDiscarded(n));
+            }
             ClientEvent::RoleChanged(r) => self.changes.notices.push(Notice::RoleChanged(r)),
             ClientEvent::Relay(m) => match *m {
                 Message::AssetChunk(c) => self.on_chunk(&c),
+                Message::AssetAck { hash, have, status } => {
+                    let now = self.clock.now_ms();
+                    self.on_ack(&hash, have, status, now);
+                }
                 m @ (Message::Presence(_) | Message::Transient { .. } | Message::StrokePoints { .. } | Message::Agent(_)) => self.changes.ephemeral.push(m),
                 _ => {}
             },
@@ -961,6 +1277,7 @@ impl GuestSession {
         let missing: Vec<AssetInfo> = self
             .manifest
             .iter()
+            .chain(&self.extra)
             .filter(|a| !self.images.contains_key(&a.hash) && !self.in_flight.contains(&a.hash))
             .take(MAX_IMAGES_IN_FLIGHT)
             .cloned()
@@ -969,29 +1286,78 @@ impl GuestSession {
             if self.in_flight.len() >= MAX_IMAGES_IN_FLIGHT {
                 break;
             }
-            let Ok(asm) = AssetAssembler::new(&info.hash, info.size, MAX_IMAGE) else { continue };
+            if self.in_flight.contains(&info.hash) {
+                continue;
+            }
+            // a size of 0 is "not known": the image was learnt from a modification, the hash alone vouches for it
+            let asm = if info.size == 0 {
+                AssetAssembler::with_unknown_size(&info.hash, MAX_IMAGE)
+            } else {
+                match AssetAssembler::new(&info.hash, info.size, MAX_IMAGE) {
+                    Ok(a) => a,
+                    Err(_) => {
+                        // declared larger than any image we take: shown as unreadable, never asked for
+                        self.images.insert(info.hash.clone(), unreadable_asset());
+                        self.changes.doc = true;
+                        continue;
+                    }
+                }
+            };
             self.assemblers.insert(info.hash.clone(), asm);
             self.in_flight.insert(info.hash.clone());
             self.client.send_ephemeral(Message::AssetRequest { hash: info.hash });
         }
     }
 
-    fn on_chunk(&mut self, c: &inkboard_session::proto::AssetChunk) {
+    fn on_chunk(&mut self, c: &AssetChunk) {
         let Some(asm) = self.assemblers.get_mut(&c.hash) else { return };
         match asm.push(c) {
             Ok(None) => {}
             Ok(Some(data)) => {
                 self.assemblers.remove(&c.hash);
                 self.in_flight.remove(&c.hash);
-                let mime = self.manifest.iter().find(|a| a.hash == c.hash).map(|a| a.mime.clone()).unwrap_or_default();
-                self.images.insert(c.hash.clone(), Asset { mime, data: Arc::new(data) });
-                self.changes.doc = true;
+                self.finish_image(&c.hash, data);
                 self.request_images();
             }
-            Err(_) => {
-                // damaged or out of order: dropped, asked for again with the next snapshot
+            Err(e) => {
+                // dropped and asked for again; an image whose content keeps not matching its hash is given up (marker shown)
                 self.assemblers.remove(&c.hash);
                 self.in_flight.remove(&c.hash);
+                if !matches!(e, Error::Unexpected(_)) {
+                    let n = self.failures.entry(c.hash.clone()).or_insert(0);
+                    *n += 1;
+                    if *n >= IMAGE_FAILURES_MAX {
+                        self.images.insert(c.hash.clone(), unreadable_asset());
+                        self.changes.notices.push(Notice::ImageUnreadable);
+                        self.changes.doc = true;
+                    }
+                }
+                self.request_images();
+            }
+        }
+    }
+
+    /// A complete image arrived (its hash was checked): kept if its type and declared dimensions are sane, else the marker is kept.
+    fn finish_image(&mut self, hash: &str, data: Vec<u8>) {
+        let declared = self.manifest.iter().chain(&self.extra).find(|a| a.hash == hash && !a.mime.is_empty()).map(|a| a.mime.clone());
+        let mime = declared.or_else(|| sniff_mime(&data).map(str::to_owned));
+        let asset = match mime {
+            Some(m) if check_image_bounds(&data, &m).is_ok() => Asset { mime: m, data: Arc::new(data) },
+            _ => {
+                self.changes.notices.push(Notice::ImageUnreadable);
+                unreadable_asset()
+            }
+        };
+        self.images.insert(hash.to_owned(), asset);
+        self.changes.doc = true;
+    }
+
+    /// Images that modifications of others use and that the manifest of the snapshot does not list: when the identifier is a hash
+    /// (guests upload under their hash), the image can be asked for by it.
+    fn learn_images(&mut self, ops: &[WireOp]) {
+        for id in image_assets(ops) {
+            if is_hash(id.as_str()) && !self.host_knows(&id) {
+                self.extra.push(AssetInfo { hash: id.0.clone(), id, size: 0, mime: String::new() });
             }
         }
     }
@@ -1120,8 +1486,6 @@ impl App {
             disk_mtime: self.disk_mtime.take(),
             system_image: self.system_image,
         });
-        // images cannot be uploaded to the host yet: pasting a system image does nothing
-        self.system_image = || None;
         self.ed.record_ops(true);
         self.drag = None;
         self.draft = None;
@@ -1169,7 +1533,7 @@ impl App {
             let ended = matches!(g.state(), GuestState::Ended(_));
             // modifications made on the previous frame go first: the refresh below replaces the board
             let ops = self.ed.take_recorded_ops();
-            if !ops.is_empty() && !g.submit_local(&ops) {
+            if !ops.is_empty() && !g.submit_local(&ops, &self.ed.doc.assets) {
                 self.mirror.refresh = true;
             }
             self.mirror.refresh |= changes.doc;
@@ -1221,6 +1585,10 @@ impl App {
             Notice::PendingDiscarded(_) => t("Changes made while you were disconnected could not be kept."),
             Notice::RoleChanged(Role::Edit) => t("The host lets you edit now."),
             Notice::RoleChanged(Role::View) => t("The host changed your access to read-only."),
+            Notice::ImageTooLarge { max, .. } => tr!("Image too large ({} MB maximum): this change was cancelled.", max >> 20),
+            Notice::ImageUnreadable => t("Unreadable image"),
+            Notice::ImageRefused(RejectReason::Quota) => t("Upload quota exceeded: this change was refused."),
+            Notice::ImageRefused(_) => t("The host refused this image: this change was cancelled."),
         };
         self.toast(&msg);
     }

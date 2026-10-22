@@ -16,12 +16,12 @@ use inkboard_core::{BoxGeom, Label};
 use inkboard_session::codec::read_hello;
 use inkboard_session::crypto::{HostKeys, SecureChannel, SeededEntropy, Ticket, verify_join_proof};
 use inkboard_session::limits::check_message;
-use inkboard_session::proto::{ByeReason, DocMeta, ParticipantInfo, Presence, RefuseReason, RejectReason, Welcome};
+use inkboard_session::proto::{AssetChunk, AssetInfo, ByeReason, DocMeta, ParticipantInfo, Presence, RefuseReason, RejectReason, Welcome};
 use inkboard_session::sequencer::{CatchUp, Submitted};
 use inkboard_session::sim::{NetConfig, SimConn, SimNet, SimTransport};
 use inkboard_session::transport::{Connection, Transport};
 use inkboard_session::{Error, JsonCodec, Message, ParticipantId, Role, Sequencer, WireOp};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -49,6 +49,9 @@ struct Host {
     undos: usize,
     snapshots_after_resync: usize,
     hello_names: Vec<String>,
+    /// Images listed in the snapshot, and the pieces served for each hash (tests of the images the guest receives).
+    manifest: Vec<AssetInfo>,
+    blobs: HashMap<String, Vec<AssetChunk>>,
 }
 
 impl Host {
@@ -65,6 +68,8 @@ impl Host {
             undos: 0,
             snapshots_after_resync: 0,
             hello_names: Vec::new(),
+            manifest: Vec::new(),
+            blobs: HashMap::new(),
         }
     }
 
@@ -181,7 +186,7 @@ impl Host {
                 match resumed {
                     Some(r) => self.send_catch_up(i, r.last_seq, false),
                     None => {
-                        let s = self.seqr.snapshot(Vec::new());
+                        let s = self.seqr.snapshot(self.manifest.clone());
                         self.send(i, &Message::Snapshot(s));
                     }
                 }
@@ -207,6 +212,11 @@ impl Host {
             Message::Resync { last_seq } if self.peers[i].pid.is_some() => self.send_catch_up(i, last_seq, true),
             Message::Ping { nonce } => self.send(i, &Message::Pong { nonce }),
             Message::Undo => self.undos += 1,
+            Message::AssetRequest { hash } => {
+                for c in self.blobs.get(&hash).cloned().unwrap_or_default() {
+                    self.send(i, &Message::AssetChunk(c));
+                }
+            }
             _ => {}
         }
     }
@@ -895,3 +905,8 @@ fn capture_lot_d_screenshots() {
     }
     capture(&mut w.t, "lot-d-enterprise-error.png");
 }
+
+/* ------------------------------------------------------------------ images of a session (lot G) */
+
+#[path = "tests_session_images.rs"]
+mod images;
