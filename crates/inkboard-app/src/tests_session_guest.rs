@@ -1345,3 +1345,70 @@ mod fast_resume {
         assert!(!w.dir.join("relays").exists());
     }
 }
+
+/* ------------------------------------------------------------------ a hostile host (lot SF2, S-09) */
+
+#[test]
+fn a_snapshot_with_objects_out_of_bounds_ends_the_session_and_leaves_the_board_alone() {
+    let mut w = World::new(100);
+    w.join(Role::Edit, "Bob");
+    assert!(w.mirrors_host());
+    let mut evil = w.host.seqr.doc().clone();
+    if let inkboard_core::model::Kind::Box(b) = &mut evil.pages[0].objects[0].kind {
+        b.frame.x = 1e300;
+    }
+    let snapshot = inkboard_session::proto::Snapshot::new(&evil, w.host.seqr.seq() + 5, vec![]);
+    w.host.broadcast(&Message::Snapshot(snapshot));
+    w.pump(4);
+    assert!(matches!(w.guest_state(), GuestState::Ended(EndReason::Protocol(_))), "{:?}", w.guest_state());
+    assert!(w.mirrors_host(), "the board on screen is still the one the host really has");
+}
+
+#[test]
+fn a_modification_with_objects_out_of_bounds_ends_the_session() {
+    let mut w = World::new(100);
+    w.join(Role::Edit, "Bob");
+    let mut far = boxed("far", 0.0, 0.0);
+    if let inkboard_core::model::Kind::Box(b) = &mut far.kind {
+        b.frame.w = 1e300;
+    }
+    let ops = vec![put_on_first_page(&w, far)];
+    // the host's own sequencer does not check (a hostile host does not either)
+    let a = w.host.seqr.apply_local(ParticipantId::HOST, ops);
+    w.host.broadcast(&Message::Applied(a));
+    w.pump(4);
+    assert!(matches!(w.guest_state(), GuestState::Ended(EndReason::Protocol(_))));
+    assert!(w.app().ed.page().get(&Id("far".into())).is_none());
+}
+
+#[test]
+fn names_and_lists_sent_by_the_host_are_cleaned_and_bounded() {
+    let mut w = World::new(100);
+    w.join(Role::Edit, "Bob");
+    let mut list: Vec<ParticipantInfo> = (0..300)
+        .map(|i| ParticipantInfo { id: ParticipantId(i), name: format!("\u{202e}Eve\u{3164}\u{7}{}", "x".repeat(100)), color: (1, 2, 3), role: Role::Edit })
+        .collect();
+    list.push(ParticipantInfo { id: ParticipantId(999), name: "\u{3164}\u{2800}".into(), color: (1, 2, 3), role: Role::View });
+    w.host.broadcast(&Message::Participants { list });
+    w.pump(3);
+    let roster = w.app().guest.as_ref().unwrap().roster().to_vec();
+    assert!(roster.len() <= 256, "{} entries", roster.len());
+    for p in &roster {
+        assert!(p.name.chars().count() <= 40 && !p.name.contains('\u{202e}') && !p.name.contains('\u{3164}') && !p.name.contains('\u{7}'), "{:?}", p.name);
+        assert!(!p.name.trim().is_empty());
+    }
+}
+
+#[test]
+fn a_transient_state_never_replaces_an_object_of_another_identifier() {
+    let mut w = World::new(100);
+    w.join(Role::Edit, "Bob");
+    let before = w.t.app().ed.page().get(&Id("seed-1".into())).cloned().unwrap();
+    // "this is the state of seed-1", but it carries the identifier (and the look) of seed-2
+    let state = boxed("seed-2", 900.0, 900.0);
+    w.host.broadcast(&Message::Transient { object: Id("seed-1".into()), state: Box::new(state), author: Some(ParticipantId(7)) });
+    w.pump(4);
+    assert_eq!(w.t.app().ed.page().get(&Id("seed-1".into())), Some(&before));
+    assert!(w.t.app().ed.page().get(&Id("seed-2".into())).is_some_and(|o| o.frame().is_some_and(|f| f.x == 200.0)));
+    assert!(matches!(w.guest_state(), GuestState::Live), "a bad display message is dropped, the session goes on");
+}

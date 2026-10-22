@@ -111,6 +111,15 @@ pub fn sanitize_name(raw: &str) -> String {
     crate::names::clean_name(raw).unwrap_or_else(|| t("Guest"))
 }
 
+/// Most participants and most agent targets a guest takes from the host's messages.
+const MAX_ROSTER: usize = 256;
+const MAX_AGENT_TARGETS: usize = 100;
+
+/// The list of participants as the host sent it, bounded and with every name cleaned.
+fn clean_roster(list: &[ParticipantInfo]) -> Vec<ParticipantInfo> {
+    list.iter().take(MAX_ROSTER).map(|p| ParticipantInfo { name: sanitize_name(&p.name), ..p.clone() }).collect()
+}
+
 fn name_path(dir: &std::path::Path) -> std::path::PathBuf {
     dir.join("display_name")
 }
@@ -1270,9 +1279,10 @@ impl GuestSession {
     fn on_message(&mut self, msg: Message, now: u64) {
         match &msg {
             Message::Welcome(w) => {
-                self.host_name = w.host_name.clone();
+                // what the host says about people is cleaned like what a person types (the host may be hostile)
+                self.host_name = crate::names::clean_name(&w.host_name).unwrap_or_default();
                 if !w.participants.is_empty() {
-                    self.roster = w.participants.clone();
+                    self.roster = clean_roster(&w.participants);
                 }
                 self.welcomed = true;
             }
@@ -1281,13 +1291,18 @@ impl GuestSession {
                 self.manifest_seq = s.seq;
                 self.changes.doc = true;
             }
+            Message::SnapshotPart(p) if p.seq >= self.manifest_seq && p.head.is_some() => {
+                self.manifest = p.head.as_ref().map(|h| h.assets.clone()).unwrap_or_default();
+                self.manifest_seq = p.seq;
+                self.changes.doc = true;
+            }
             Message::Applied(a) => {
                 self.changes.doc = true;
                 self.changes.authors.push(a.author);
                 self.learn_images(&a.ops);
             }
             Message::Rejected { .. } => self.changes.doc = true,
-            Message::Participants { list } => self.roster = list.clone(),
+            Message::Participants { list } => self.roster = clean_roster(list),
             _ => {}
         }
         if let Err(e) = self.client.handle(msg, now) {
@@ -1354,7 +1369,12 @@ impl GuestSession {
                     let now = self.clock.now_ms();
                     self.on_ack(&hash, have, status, now);
                 }
-                m @ (Message::Presence(_) | Message::Transient { .. } | Message::StrokePoints { .. } | Message::Agent(_)) => self.changes.ephemeral.push(m),
+                Message::Agent(mut ev) => {
+                    ev.name = crate::names::clean_name(&ev.name).unwrap_or_else(|| t("Agent"));
+                    ev.targets.truncate(MAX_AGENT_TARGETS);
+                    self.changes.ephemeral.push(Message::Agent(ev));
+                }
+                m @ (Message::Presence(_) | Message::Transient { .. } | Message::StrokePoints { .. }) => self.changes.ephemeral.push(m),
                 _ => {}
             },
         }
@@ -1737,7 +1757,8 @@ impl App {
                 self.agent.remote.touch(id.0, now);
             }
             Message::Transient { object, state, author } => {
-                if author == me || (self.objects_moving() && self.sel.contains(&object)) {
+                // a state replaces the object of the same identifier, never another one
+                if state.id != object || author == me || (self.objects_moving() && self.sel.contains(&object)) {
                     return;
                 }
                 let Some(page) = self.ed.doc.pages.iter_mut().find(|p| p.index_of(&object).is_some()) else { return };

@@ -3,6 +3,7 @@
 
 use crate::crypto::SeededEntropy;
 use crate::error::{Error, Result};
+use crate::limits::Violation;
 use crate::transport::{Connection, Transport};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -49,6 +50,8 @@ struct Inner {
     open: HashSet<u64>,
     listeners: HashMap<String, VecDeque<SimConn>>,
     stats: NetStats,
+    /// Largest frame a connection accepts to send (like the real transport); `None`: no limit.
+    max_frame: Option<usize>,
 }
 
 impl Inner {
@@ -105,7 +108,13 @@ impl SimNet {
             open: HashSet::new(),
             listeners: HashMap::new(),
             stats: NetStats::default(),
+            max_frame: None,
         })))
+    }
+
+    /// Makes `send` refuse frames larger than `max` bytes, as the real transport does (`None`: no limit, the default).
+    pub fn set_max_frame(&self, max: Option<usize>) {
+        self.lock().max_frame = max;
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -211,6 +220,9 @@ impl Connection for SimConn {
         let mut g = self.net.lock();
         if !g.open.contains(&self.conn) {
             return Err(Error::Closed);
+        }
+        if let Some(max) = g.max_frame.filter(|&m| frame.len() > m) {
+            return Err(Violation::MessageTooLarge { size: frame.len(), max }.into());
         }
         g.stats.sent += 1;
         let (loss, dup) = (g.cfg.loss_ppm, g.cfg.dup_ppm);

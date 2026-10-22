@@ -22,9 +22,10 @@ use inkboard_session::crypto::{Entropy, FrameCipher, HostKeys, Link, OsEntropy, 
 use inkboard_session::limits::{Limits, Quota, RateLimiter, Violation, check_message, check_message_size, check_page_count};
 use inkboard_session::proto::{
     AgentEvent as WireAgent, AssetChunk, AssetInfo, ByeReason, DocMeta, Message, PROTO_VERSION, ParticipantId, ParticipantInfo, Presence, RefuseReason,
-    RejectReason, Role, Seq, Submit, UploadStatus, Welcome,
+    RejectReason, Role, Seq, Snapshot, Submit, UploadStatus, Welcome,
 };
 use inkboard_session::sequencer::{CatchUp, Sequencer, Submitted};
+use inkboard_session::snapshot::{PART_BYTES, into_messages};
 use inkboard_session::transport::{Connection, Transport};
 use inkboard_session::wire::{WireOp, apply_wire_all, ops_to_wire};
 use inkboard_session::{Error, JsonCodec};
@@ -104,11 +105,22 @@ const PALETTE: [(u8, u8, u8); 12] = [
 /// A closed connection stays readable this long (virtual or real milliseconds) so that the last message (refusal, removal) arrives.
 const CLOSE_LINGER_MS: u64 = 2_000;
 /// A connection that has not sent its first message after this long is dropped.
-const HANDSHAKE_MS: u64 = 30_000;
+const HANDSHAKE_MS: u64 = 10_000;
+/// Connections that have not sent anything yet are counted apart: only this many are kept (the oldest go first), so that connections
+/// opened by somebody who only knows the host's identity cannot take the places of real guests.
+const MAX_UNAUTHENTICATED: usize = 16;
+/// A connection younger than this is never cut for being over `MAX_UNAUTHENTICATED` (its first message may still be on its way).
+const SILENT_GRACE_MS: u64 = 2_000;
 const MAX_FRAMES_PER_POLL: usize = 1024;
+/// Bytes of frames read per `poll`, all connections together (what is left waits for the next `poll`): the work of one frame is
+/// proportional to its size, so this bounds how long one `poll` can take.
+const POLL_BYTES_BUDGET: usize = 8 << 20;
 const MAX_UPLOADS_PER_GUEST: usize = 2;
 const UPLOAD_POOL: usize = 32;
-const MAX_QUEUED_CHUNKS: usize = 512;
+/// Bytes of images kept for the modification that will use them, all guests together.
+const UPLOAD_POOL_BYTES: usize = 64 << 20;
+/// Bytes of image pieces waiting to be sent to one guest.
+const MAX_QUEUED_ASSET_BYTES: usize = 32 << 20;
 pub const MAX_NAME_CHARS: usize = crate::names::NAME_MAX;
 
 #[derive(Clone, Debug)]
@@ -119,6 +131,10 @@ pub struct HostConfig {
     pub max_participants: usize,
     /// Join requests waiting for the host's answer.
     pub max_pending: usize,
+    /// A request nobody answered is refused after this long, whatever the guest keeps sending.
+    pub pending_ms: u64,
+    /// Bytes of images all the guests together may upload during the session.
+    pub total_asset_quota_bytes: u64,
     /// Let people holding the read-only link in without asking.
     pub auto_accept_view: bool,
     pub limits: Limits,
@@ -147,6 +163,8 @@ impl Default for HostConfig {
             host_name: t("Host"),
             max_participants: 10,
             max_pending: 8,
+            pending_ms: 120_000,
+            total_asset_quota_bytes: 512 << 20,
             auto_accept_view: false,
             limits: Limits::default(),
             log_cap: 1_000,
@@ -287,6 +305,64 @@ pub(crate) fn image_assets(ops: &[WireOp]) -> Vec<AssetId> {
     out
 }
 
+/// Why a guest may not apply `ops` to `doc` (short English text), if they touch an object that is locked (by its own flag or by its
+/// layer), change a lock, or remove something locked. Only guests go through here: the host's own changes are not checked.
+fn lock_conflict(doc: &Document, ops: &[WireOp]) -> Option<&'static str> {
+    const TOUCH: &str = "the object or its layer is locked";
+    const CHANGE: &str = "only the host can lock or unlock";
+    // the locked objects of each page the operations name, found once (a board has thousands of objects, a submit up to 200 operations)
+    let mut locked: HashMap<&Id, HashSet<&Id>> = HashMap::new();
+    for op in ops {
+        if let WireOp::Put { page, .. } | WireOp::Delete { page, .. } | WireOp::Order { page, .. } = op
+            && let Some(p) = doc.page(page)
+        {
+            locked.entry(&p.id).or_insert_with(|| p.objects.iter().filter(|o| p.is_locked(o)).map(|o| &o.id).collect());
+        }
+    }
+    for op in ops {
+        match op {
+            WireOp::Put { page, object } => {
+                let Some(p) = doc.page(page) else { continue };
+                if object.locked {
+                    return Some(CHANGE); // a guest never makes an object locked (one already locked is refused just below)
+                }
+                if p.layer(&object.layer).is_some_and(|l| l.locked) || locked[&p.id].contains(&object.id) {
+                    return Some(TOUCH);
+                }
+            }
+            WireOp::Delete { page, ids } => {
+                let Some(p) = doc.page(page) else { continue };
+                if ids.iter().any(|i| locked[&p.id].contains(i)) {
+                    return Some(TOUCH);
+                }
+            }
+            WireOp::Order { page, ids } => {
+                let Some(p) = doc.page(page) else { continue };
+                let set = &locked[&p.id];
+                if !set.is_empty() && !p.objects.iter().map(|o| &o.id).filter(|i| set.contains(i)).eq(ids.iter().filter(|i| set.contains(i))) {
+                    return Some(TOUCH); // the locked objects keep their order (and none may be left out)
+                }
+            }
+            WireOp::SetLayers { page, layers } => {
+                let Some(p) = doc.page(page) else { continue };
+                let moved = layers.iter().any(|n| n.locked != p.layer(&n.id).is_some_and(|o| o.locked));
+                let lost = p.layers.iter().any(|o| o.locked && !layers.iter().any(|n| n.id == o.id));
+                if moved || lost {
+                    return Some(CHANGE);
+                }
+            }
+            WireOp::RemovePage { page } => {
+                let Some(p) = doc.page(page) else { continue };
+                if p.layers.iter().any(|l| l.locked) || p.objects.iter().any(|o| o.locked) {
+                    return Some(TOUCH);
+                }
+            }
+            WireOp::AddPage { .. } | WireOp::RenamePage { .. } | WireOp::SetBackground { .. } | WireOp::SetName { .. } => {}
+        }
+    }
+    None
+}
+
 fn object_count(doc: &Document) -> usize {
     doc.pages.iter().map(|p| p.objects.len()).sum()
 }
@@ -401,6 +477,14 @@ struct Conn {
     last_rx: u64,
     /// Image chunks waiting to be sent (a few per `poll`, so that one big image does not block everything).
     out: VecDeque<Message>,
+    /// Frames per second before the guest is admitted (afterwards its `Member` limiters apply).
+    rl: RateLimiter,
+}
+
+/// What `poll` read from a connection: a frame to decode, or one dropped unread because its sender is over its rate.
+enum Inbound {
+    Frame(Vec<u8>),
+    Flood,
 }
 
 struct Member {
@@ -414,7 +498,15 @@ struct Member {
     away_since: Option<u64>,
     ops_rl: RateLimiter,
     transient_rl: RateLimiter,
-    quota: Quota,
+    /// `Resync` and repeated `Hello` (each can make the host send the whole document), for readers as well.
+    sync_rl: RateLimiter,
+    /// Frames and bytes received, checked before a frame is decoded.
+    rx_frames: RateLimiter,
+    rx_bytes: RateLimiter,
+    /// Bytes of ephemeral messages (relayed to everybody).
+    eph_bytes: RateLimiter,
+    /// The guest has shown that it holds the document (it submitted, undid or resynchronized): a `Hello` from it is never answered.
+    confirmed: bool,
     strikes: u32,
     last_strike: u64,
     uploads: HashMap<String, Vec<u8>>,
@@ -427,6 +519,8 @@ struct Request {
     name: String,
     key_role: Role,
     peer: String,
+    /// When the request was made (it expires, see `HostConfig::pending_ms`).
+    at: u64,
 }
 
 /// A join request waiting for the host's answer ("Anna wants to join").
@@ -525,11 +619,19 @@ pub struct SessionHost {
     histories: AuthorHistories,
     assets: AssetIndex,
     uploaded: VecDeque<Uploaded>,
+    /// Image bytes charged to each transport identity: kept when a guest leaves and comes back, so that the quota cannot be reset.
+    quotas: HashMap<String, Quota>,
+    /// Image bytes charged to everybody during the session.
+    uploaded_total: u64,
     events: Vec<HostEvent>,
     roster_dirty: bool,
     entropy_counter: u64,
     /// Frames that could not be opened before any handshake (wrong key, garbage).
     dropped_frames: u64,
+    /// Size of the frame being handled (for the byte limiters that need the message first).
+    frame_len: usize,
+    /// Where the next `poll` starts reading, so that no connection is always served last.
+    rr: usize,
 }
 
 fn describe(v: &Violation) -> RejectReason {
@@ -568,10 +670,14 @@ impl SessionHost {
             histories: AuthorHistories::default(),
             assets,
             uploaded: VecDeque::new(),
+            quotas: HashMap::new(),
+            uploaded_total: 0,
             events: Vec::new(),
             roster_dirty: false,
             entropy_counter: 0,
             dropped_frames: 0,
+            frame_len: 0,
+            rr: 0,
         })
     }
 
@@ -596,6 +702,11 @@ impl SessionHost {
     #[cfg(test)]
     pub fn dropped_frames(&self) -> u64 {
         self.dropped_frames
+    }
+    /// Connections that exist, admitted or not.
+    #[cfg(test)]
+    pub fn connection_count(&self) -> usize {
+        self.conns.len()
     }
 
     pub fn take_events(&mut self) -> Vec<HostEvent> {
@@ -725,19 +836,38 @@ impl SessionHost {
         self.accept_connections();
         self.flush_host(ed);
         self.process_decisions();
-        let mut inbound: Vec<(u64, Vec<u8>)> = Vec::new();
-        for c in &mut self.conns {
+        // Frames are counted (rate, bytes) before anything is decoded, and only a budget of bytes is read per poll: what is over
+        // the budget stays queued for the next poll, so a flood cannot freeze the interface.
+        let mut inbound: Vec<(u64, Inbound)> = Vec::new();
+        let mut spent = 0usize;
+        let n = self.conns.len();
+        let first = if n == 0 { 0 } else { self.rr % n };
+        self.rr = self.rr.wrapping_add(1);
+        for k in 0..n {
+            let c = &mut self.conns[(first + k) % n];
             if matches!(c.state, ConnState::Closing { .. }) {
                 continue;
             }
             for _ in 0..MAX_FRAMES_PER_POLL {
+                if spent >= POLL_BYTES_BUDGET {
+                    break;
+                }
                 let Some(f) = c.conn.recv() else { break };
                 c.last_rx = now;
-                inbound.push((c.id, f));
+                spent += f.len();
+                let within = match c.state {
+                    ConnState::Member(pid) => self.members.get_mut(&pid).is_none_or(|m| m.rx_frames.allow(now) && m.rx_bytes.allow_n(now, f.len() as u64)),
+                    _ => c.rl.allow(now),
+                };
+                inbound.push((c.id, if within { Inbound::Frame(f) } else { Inbound::Flood }));
             }
         }
-        for (cid, frame) in inbound {
-            self.on_frame(cid, &frame, ed);
+        inbound.sort_by_key(|(cid, _)| *cid); // stable: the order of arrival on each connection is kept; the rotation only decides who is read first
+        for (cid, item) in inbound {
+            match item {
+                Inbound::Frame(frame) => self.on_frame(cid, &frame, ed),
+                Inbound::Flood => self.on_flood(cid),
+            }
         }
         self.drain_outgoing();
         self.housekeeping();
@@ -752,7 +882,8 @@ impl SessionHost {
         let cap = (self.cfg.max_participants + self.cfg.max_pending) * 2;
         while let Some(conn) = self.transport.as_mut().and_then(|t| t.accept()) {
             let mut conn = conn;
-            if self.conns.len() >= cap {
+            // connections that have not said anything yet are limited apart (see `housekeeping`): they do not use up this ceiling
+            if self.conns.iter().filter(|c| !matches!(c.state, ConnState::New)).count() >= cap {
                 conn.close();
                 continue;
             }
@@ -767,7 +898,18 @@ impl SessionHost {
                 opened: self.now,
                 last_rx: self.now,
                 out: VecDeque::new(),
+                rl: RateLimiter::new(10, 20),
             });
+        }
+    }
+
+    /// A frame dropped unread: the guest is over its rate. Somebody not admitted yet is simply disconnected.
+    fn on_flood(&mut self, cid: u64) {
+        let Some(i) = self.conn_index(cid) else { return };
+        match self.conns[i].state {
+            ConnState::Member(pid) => self.violation(pid, &Violation::RateExceeded { what: "frames" }, 0),
+            ConnState::Closing { .. } => {}
+            _ => self.fail_conn(i, "sending too fast".to_owned()),
         }
     }
 
@@ -786,12 +928,49 @@ impl SessionHost {
 
     /* ------------------------------------------------------------------------------------------------------------- sending */
 
-    fn send(&mut self, i: usize, msg: &Message) {
+    /// Sends `msg` on connection `i`. `false` when it could not be sent (frame too large for the transport, a guest that does not read,
+    /// a dead link): the connection is then closed (see `fail_conn`), never left half working.
+    fn send(&mut self, i: usize, msg: &Message) -> bool {
         let c = &mut self.conns[i];
-        if let Some(ch) = c.chan.as_mut()
-            && let Ok(frame) = ch.seal(msg)
-        {
-            let _ = c.conn.send(&frame);
+        let Some(ch) = c.chan.as_mut() else { return true };
+        let failure = match ch.seal(msg).and_then(|frame| c.conn.send(&frame)) {
+            Ok(()) => return true,
+            Err(e) => e.to_string(),
+        };
+        if !matches!(c.state, ConnState::Closing { .. }) {
+            self.fail_conn(i, failure);
+        }
+        false
+    }
+
+    /// The connection cannot be written to: it is closed at once. A guest keeps its place for a while, as after any lost connection
+    /// (it can come back and resume); the host is told.
+    fn fail_conn(&mut self, i: usize, why: String) {
+        let id = self.conns[i].id;
+        match self.conns[i].state {
+            ConnState::Member(pid) => {
+                if let Some(m) = self.members.get_mut(&pid)
+                    && m.conn == Some(id)
+                {
+                    m.conn = None;
+                    m.away_since = Some(self.now);
+                    let name = m.name.clone();
+                    self.events.push(HostEvent::Settled { id: pid });
+                    self.events.push(HostEvent::Warned { id: pid, name, reason: format!("connection closed: {why}") });
+                }
+            }
+            ConnState::Pending(r) => self.requests.retain(|q| q.id != r),
+            _ => {}
+        }
+        self.drop_conn(i);
+    }
+
+    /// A snapshot, in as many messages as the transport needs (see `inkboard_session::snapshot`).
+    fn send_snapshot(&mut self, i: usize, s: Snapshot) {
+        for m in into_messages(s, PART_BYTES) {
+            if !self.send(i, &m) {
+                break;
+            }
         }
     }
 
@@ -861,6 +1040,7 @@ impl SessionHost {
     /* ----------------------------------------------------------------------------------------------------------- frames */
 
     fn on_frame(&mut self, cid: u64, frame: &[u8], ed: &mut Editor) {
+        self.frame_len = frame.len();
         let Some(i) = self.conn_index(cid) else { return };
         if matches!(self.conns[i].state, ConnState::Closing { .. }) {
             return;
@@ -910,15 +1090,26 @@ impl SessionHost {
 
     fn on_hello(&mut self, i: usize, h: inkboard_session::proto::Hello) {
         let key_role = self.conns[i].key_role;
-        if !verify_join_proof(self.keys.key(key_role), &h.name, h.role_requested, &h.join_proof) {
-            return self.refuse(i, RefuseReason::BadProof);
-        }
         match self.conns[i].state {
-            // the guest repeats its `Hello` (it lost our answer): answer again
-            ConnState::Member(pid) => return self.welcome(i, pid, h.resume.map(|r| r.last_seq)),
+            // A guest already in repeats its `Hello` only when it lost our answer, and only until it has shown that it holds the
+            // document: answered within a small budget, then ignored (a guest that insists is punished like any other violation).
+            ConnState::Member(pid) => {
+                let now = self.now;
+                let Some(m) = self.members.get_mut(&pid) else { return };
+                if !m.sync_rl.allow(now) {
+                    return self.violation(pid, &Violation::RateExceeded { what: "repeated hellos" }, 0);
+                }
+                if m.confirmed {
+                    return;
+                }
+                return self.welcome(i, pid, h.resume.map(|r| r.last_seq));
+            }
             ConnState::Pending(_) => return,
             ConnState::Closing { .. } => return,
             ConnState::New => {}
+        }
+        if !verify_join_proof(self.keys.key(key_role), &h.name, h.role_requested, &h.join_proof) {
+            return self.refuse(i, RefuseReason::BadProof);
         }
         let peer = self.conns[i].conn.peer().to_owned();
         if self.banned.contains(&peer) {
@@ -954,7 +1145,7 @@ impl SessionHost {
         let request = self.next_request;
         self.next_request += 1;
         self.conns[i].state = ConnState::Pending(request);
-        self.requests.push(Request { id: request, conn: self.conns[i].id, name: name.clone(), key_role, peer });
+        self.requests.push(Request { id: request, conn: self.conns[i].id, name: name.clone(), key_role, peer, at: self.now });
         self.events.push(HostEvent::JoinRequest { request, name });
     }
 
@@ -991,7 +1182,11 @@ impl SessionHost {
             away_since: None,
             ops_rl: RateLimiter::new(l.ops_per_sec, l.ops_burst),
             transient_rl: RateLimiter::new(l.transient_per_sec, l.transient_burst),
-            quota: Quota::default(),
+            sync_rl: RateLimiter::new(l.sync_per_sec, l.sync_burst),
+            rx_frames: RateLimiter::new(l.frames_per_sec, l.frames_burst),
+            rx_bytes: RateLimiter::new(l.bytes_per_sec, l.bytes_burst),
+            eph_bytes: RateLimiter::new(l.ephemeral_bytes_per_sec, l.ephemeral_bytes_burst),
+            confirmed: false,
             strikes: 0,
             last_strike: 0,
             uploads: HashMap::new(),
@@ -1026,11 +1221,17 @@ impl SessionHost {
         self.send(i, &Message::Welcome(welcome));
         let manifest = self.assets.manifest();
         match last_seq.map(|s| self.seqr.catch_up(s, manifest.clone())) {
-            Some(CatchUp::Applied(v)) => v.into_iter().for_each(|a| self.send(i, &Message::Applied(a))),
-            Some(CatchUp::Snapshot(s)) => self.send(i, &Message::Snapshot(s)),
+            Some(CatchUp::Applied(v)) => {
+                for a in v {
+                    if !self.send(i, &Message::Applied(a)) {
+                        break;
+                    }
+                }
+            }
+            Some(CatchUp::Snapshot(s)) => self.send_snapshot(i, s),
             None => {
                 let s = self.seqr.snapshot(manifest);
-                self.send(i, &Message::Snapshot(s));
+                self.send_snapshot(i, s);
             }
         }
     }
@@ -1081,6 +1282,7 @@ impl SessionHost {
 
     fn on_message(&mut self, pid: ParticipantId, msg: Message, ed: &mut Editor) {
         let now = self.now;
+        let len = self.frame_len as u64;
         let Some(m) = self.members.get_mut(&pid) else { return };
         let role = m.role;
         if let Err(v) = check_message(&self.cfg.limits, &msg) {
@@ -1099,19 +1301,21 @@ impl SessionHost {
                 if role == Role::View {
                     return self.send_to(pid, &Message::Rejected { client_seq: s.client_seq, reason: RejectReason::ReadOnly });
                 }
+                m.confirmed = true;
                 self.on_submit(pid, s, ed);
             }
             Message::Undo | Message::Redo => {
                 if !m.ops_rl.allow(now) {
                     return self.violation(pid, &Violation::RateExceeded { what: "modifications" }, 0);
                 }
+                m.confirmed = true;
                 if role == Role::View {
                     return self.send_to(pid, &Message::Rejected { client_seq: 0, reason: RejectReason::ReadOnly });
                 }
                 self.on_undo(pid, matches!(msg, Message::Redo), ed);
             }
             Message::Transient { object, state, .. } => {
-                if !m.transient_rl.allow(now) {
+                if !m.transient_rl.allow(now) || !m.eph_bytes.allow_n(now, len) {
                     return self.violation(pid, &Violation::RateExceeded { what: "ephemeral messages" }, 0);
                 }
                 if role == Role::Edit {
@@ -1120,7 +1324,7 @@ impl SessionHost {
                 }
             }
             Message::StrokePoints { stroke, points, .. } => {
-                if !m.transient_rl.allow(now) {
+                if !m.transient_rl.allow(now) || !m.eph_bytes.allow_n(now, len) {
                     return self.violation(pid, &Violation::RateExceeded { what: "ephemeral messages" }, 0);
                 }
                 if role == Role::Edit {
@@ -1129,7 +1333,7 @@ impl SessionHost {
                 }
             }
             Message::Presence(mut p) => {
-                if !m.transient_rl.allow(now) {
+                if !m.transient_rl.allow(now) || !m.eph_bytes.allow_n(now, len) {
                     return self.violation(pid, &Violation::RateExceeded { what: "ephemeral messages" }, 0);
                 }
                 p.participant = Some(pid);
@@ -1138,11 +1342,22 @@ impl SessionHost {
                 self.broadcast(&Message::Presence(p), Some(pid));
             }
             Message::Resync { last_seq } => {
+                // one of the few requests that makes the host send a lot: its own budget, for readers as well
+                if !m.sync_rl.allow(now) {
+                    return self.violation(pid, &Violation::RateExceeded { what: "resynchronizations" }, 0);
+                }
+                m.confirmed = true;
                 let manifest = self.assets.manifest();
                 let Some(i) = self.members.get(&pid).and_then(|m| m.conn).and_then(|c| self.conn_index(c)) else { return };
                 match self.seqr.catch_up(last_seq, manifest) {
-                    CatchUp::Applied(v) => v.into_iter().for_each(|a| self.send(i, &Message::Applied(a))),
-                    CatchUp::Snapshot(s) => self.send(i, &Message::Snapshot(s)),
+                    CatchUp::Applied(v) => {
+                        for a in v {
+                            if !self.send(i, &Message::Applied(a)) {
+                                break;
+                            }
+                        }
+                    }
+                    CatchUp::Snapshot(s) => self.send_snapshot(i, s),
                 }
             }
             Message::AssetRequest { hash } => {
@@ -1202,6 +1417,10 @@ impl SessionHost {
         });
         if let Err(v) = check {
             return self.violation(pid, &v, client_seq);
+        }
+        // locks are the host's: a guest cannot touch a locked object or layer, nor lock or unlock anything
+        if let Some(why) = lock_conflict(&ed.doc, &s.ops) {
+            return self.violation(pid, &Violation::Locked(why), client_seq);
         }
         // an image must be one the board already has or one the guest has just uploaded (its asset id is the hash of its bytes)
         let wanted = image_assets(&s.ops);
@@ -1272,7 +1491,8 @@ impl SessionHost {
         let Some(id) = self.assets.by_hash.get(hash).cloned() else { return };
         let Some(data) = self.seqr.doc().assets.get(&id).map(|a| Arc::clone(&a.data)) else { return };
         let Some(i) = self.members.get(&pid).and_then(|m| m.conn).and_then(|c| self.conn_index(c)) else { return };
-        if self.conns[i].out.len() + data.len() / self.cfg.limits.max_asset_chunk_bytes.max(1) > MAX_QUEUED_CHUNKS {
+        let queued: usize = self.conns[i].out.iter().map(|m| if let Message::AssetChunk(c) = m { c.data.len() } else { 0 }).sum();
+        if queued + data.len() > MAX_QUEUED_ASSET_BYTES {
             return; // the guest asked for more than it can take: it asks again later
         }
         let chunk = self.cfg.limits.max_asset_chunk_bytes;
@@ -1322,12 +1542,21 @@ impl SessionHost {
         if let Err(why) = check_guest_upload(&data, mime) {
             return self.refuse_upload(pid, &c.hash, &Violation::Malformed(why));
         }
-        if let Err(v) = m.quota.charge(&limits, data.len() as u64) {
+        // the quota follows the transport identity (a guest that leaves and comes back keeps what it used), and the host has a total
+        let size = data.len() as u64;
+        if self.uploaded_total.saturating_add(size) > self.cfg.total_asset_quota_bytes {
+            let v = Violation::QuotaExceeded { used: self.uploaded_total, size, max: self.cfg.total_asset_quota_bytes };
             return self.refuse_upload(pid, &c.hash, &v);
         }
+        if let Err(v) = self.quotas.entry(m.peer.clone()).or_default().charge(&limits, size) {
+            return self.refuse_upload(pid, &c.hash, &v);
+        }
+        self.uploaded_total += size;
         self.uploaded.push_back(Uploaded { hash: c.hash.clone(), mime, data: Arc::new(data) });
-        while self.uploaded.len() > UPLOAD_POOL {
-            self.uploaded.pop_front();
+        let mut pool_bytes: usize = self.uploaded.iter().map(|u| u.data.len()).sum();
+        while self.uploaded.len() > UPLOAD_POOL || pool_bytes > UPLOAD_POOL_BYTES {
+            let Some(old) = self.uploaded.pop_front() else { break };
+            pool_bytes -= old.data.len();
         }
         self.ack_upload(pid, &c.hash, held, UploadStatus::Stored);
     }
@@ -1348,11 +1577,25 @@ impl SessionHost {
     fn housekeeping(&mut self) {
         let now = self.now;
         let (idle, hold) = (self.cfg.idle_ms, self.cfg.place_hold_ms);
+        // a request nobody answered expires, even if the guest keeps sending `Ping`s
+        let stale: Vec<(u64, u64)> = self.requests.iter().filter(|r| now.saturating_sub(r.at) >= self.cfg.pending_ms).map(|r| (r.id, r.conn)).collect();
+        for (rid, cid) in stale {
+            self.requests.retain(|r| r.id != rid);
+            if let Some(i) = self.conn_index(cid) {
+                self.refuse(i, RefuseReason::Declined);
+            }
+        }
+        // connections that have said nothing are limited apart: the oldest beyond the ceiling go
+        // (a connection gets a moment to send its first message: a burst of real guests is not cut short)
+        let mut silent: Vec<(u64, u64)> = self.conns.iter().filter(|c| matches!(c.state, ConnState::New)).map(|c| (c.opened, c.id)).collect();
+        silent.sort_unstable();
+        let excess = silent.len().saturating_sub(MAX_UNAUTHENTICATED);
+        let evict: HashSet<u64> = silent.iter().take(excess).filter(|e| now.saturating_sub(e.0) >= SILENT_GRACE_MS).map(|e| e.1).collect();
         let mut gone: Vec<usize> = Vec::new();
         for (i, c) in self.conns.iter().enumerate() {
             let dead = match c.state {
                 ConnState::Closing { until } => now >= until,
-                ConnState::New => !c.conn.is_open() || now.saturating_sub(c.opened) > HANDSHAKE_MS,
+                ConnState::New => !c.conn.is_open() || now.saturating_sub(c.opened) > HANDSHAKE_MS || evict.contains(&c.id),
                 ConnState::Pending(_) | ConnState::Member(_) => !c.conn.is_open() || now.saturating_sub(c.last_rx) > idle,
             };
             if dead {

@@ -1217,3 +1217,327 @@ fn the_agent_needs_the_host_to_read_a_file_or_export_while_a_guest_can_edit() {
     // the rest of the agent's work is not affected
     assert!(matches!(t.app().run_live("add_shape", &json!({"geom": "rect"})), crate::live::Reply::Ok(_)));
 }
+
+/* ------------------------------------------------------------------------------------------------ lot SF2: hardening */
+
+impl World {
+    /// A session whose board already holds `n` objects, on a network that refuses frames the way the real transport does.
+    fn with_objects(seed: u64, n: usize, tweak: impl FnOnce(&mut HostConfig)) -> Self {
+        let net = SimNet::new(seed, NetConfig::ideal());
+        net.set_max_frame(Some((1 << 20) + 1024));
+        let mut doc = Document::new("board");
+        doc.pages[0].objects = (0..n).map(|i| boxed(&format!("o{i}"), i as f64)).collect();
+        let ed = Editor::new(doc);
+        let mut cfg = HostConfig { entropy_seed: Some(seed ^ 0xA5A5), ..HostConfig::default() };
+        tweak(&mut cfg);
+        let host = SessionHost::start(cfg, &ed, Box::new(net.transport(HOST_ID)) as Box<dyn HostTransport>).unwrap();
+        let addr = HostAddress { host: HOST_ID.to_owned(), relays: Vec::new() };
+        Self { net, ed, host, addr, guests: Vec::new(), seed }
+    }
+
+    /// A raw peer let in by the host with `role`.
+    fn raw_member(&mut self, name: &str, role: Role) -> Raw {
+        let ticket = self.ticket(role);
+        let mut raw = Raw::new(&self.net, name, &ticket);
+        raw.hello(role);
+        self.rounds(3);
+        self.admit_all(role);
+        self.rounds(3);
+        raw.received();
+        raw
+    }
+}
+
+fn snapshot_messages(msgs: &[Message]) -> usize {
+    msgs.iter().filter(|m| matches!(m, Message::Snapshot(_) | Message::SnapshotPart(_))).count()
+}
+
+#[test]
+fn a_resync_loop_is_stopped_without_amplification_even_for_a_reader() {
+    let mut w = World::new(30, NetConfig::ideal(), |_| {});
+    for i in 0..40 {
+        w.ed.insert(boxed(&format!("b{i}"), f64::from(i)));
+        w.step();
+    }
+    assert!(w.host.seq() >= 40);
+    let mut raw = w.raw_member("reader", Role::View);
+    for _ in 0..300 {
+        raw.send(&Message::Resync { last_seq: 0 });
+    }
+    w.rounds(3);
+    let got = raw.received();
+    let applied = got.iter().filter(|m| matches!(m, Message::Applied(_))).count();
+    // unbounded, 300 requests brought 300 x 40 modifications back
+    assert!(applied <= 4 * 41, "the answers are bounded ({applied})");
+    assert!(got.iter().any(|m| matches!(m, Message::Kick { .. })), "then removed");
+    assert!(w.host.members().is_empty());
+}
+
+#[test]
+fn a_hello_loop_from_a_member_gets_no_more_snapshots() {
+    let mut w = World::new(31, NetConfig::ideal(), |_| {});
+    for i in 0..40 {
+        w.ed.insert(boxed(&format!("b{i}"), f64::from(i)));
+        w.step();
+    }
+    let mut raw = w.raw_member("editor", Role::Edit);
+    for _ in 0..300 {
+        raw.hello(Role::Edit);
+    }
+    w.rounds(3);
+    let got = raw.received();
+    assert!(snapshot_messages(&got) <= 4, "{} snapshots", snapshot_messages(&got));
+    assert!(got.iter().filter(|m| matches!(m, Message::Welcome(_))).count() <= 4);
+    assert!(w.host.members().is_empty(), "and the guest is removed");
+}
+
+#[test]
+fn a_hello_from_a_guest_that_holds_the_document_is_ignored() {
+    let mut w = World::new(32, NetConfig::ideal(), |_| {});
+    let mut raw = w.raw_member("editor", Role::Edit);
+    raw.send(&Message::Resync { last_seq: w.host.seq() });
+    w.rounds(2);
+    raw.received();
+    raw.hello(Role::Edit);
+    w.rounds(2);
+    assert!(raw.received().is_empty(), "no answer to somebody who has shown that it has the document");
+    assert_eq!(w.host.members().len(), 1, "and nothing is held against it (one hello)");
+}
+
+#[test]
+fn a_board_of_10000_objects_can_be_joined_and_a_guest_who_comes_back_resumes_its_place() {
+    let mut w = World::with_objects(33, 10_000, |c| {
+        c.log_cap = 5;
+        c.max_total_objects = 100_000;
+    });
+    let a = w.join("a", Role::Edit);
+    assert!(w.guests[a].client.is_live(), "joined over a transport that refuses frames above 1 MiB");
+    assert!(w.converged(), "all 10 000 objects arrived");
+    assert_eq!(w.guests[a].client.doc().pages[0].objects.len(), 10_000);
+    // away while the host works (more than the host keeps in its log: the way back is a snapshot, in parts too)
+    let pid = w.guests[a].client.participant();
+    w.guests[a].drop_connection();
+    w.rounds(3);
+    for i in 0..12 {
+        w.ed.insert(boxed(&format!("while-away{i}"), 5.0));
+        w.rounds(1);
+    }
+    let now = w.net.now();
+    w.guests[a].connect(now);
+    w.rounds(10);
+    assert_eq!(w.guests[a].client.participant(), pid, "same place");
+    assert_eq!(w.host.members().len(), 1, "no second place");
+    assert!(w.converged(), "caught up");
+    assert!(w.events(a).iter().any(|e| matches!(e, ClientEvent::SnapshotLoaded)));
+    // a guest can also edit that board
+    let page = w.page();
+    w.edit(a, vec![put(&page, boxed("mine", 1.0))]);
+    w.rounds(5);
+    assert!(w.ed.page().get(&"mine".into()).is_some() && w.converged());
+}
+
+#[test]
+fn a_frame_the_transport_refuses_closes_that_connection_cleanly_and_the_place_is_held() {
+    let mut w = World::new(34, NetConfig::ideal(), |_| {});
+    for i in 0..300 {
+        w.ed.insert(boxed(&format!("b{i}"), f64::from(i)));
+    }
+    w.rounds(2);
+    w.net.set_max_frame(Some(20_000)); // the snapshot (about 85 KB, below the size at which it is cut) cannot be sent
+    let a = w.join("a", Role::Edit);
+    assert!(w.guests[a].client.doc().pages[0].objects.is_empty(), "no snapshot arrived");
+    assert!(!w.guests[a].conn.as_ref().unwrap().is_open(), "the host closed the connection instead of ignoring the failure");
+    let m = w.host.members();
+    assert_eq!(m.len(), 1);
+    assert!(!m[0].connected, "place held, as after any lost connection");
+    assert!(w.host.take_events().iter().any(|e| matches!(e, HostEvent::Warned { reason, .. } if reason.contains("connection closed"))));
+    // the host is not affected: the guest comes back once the network accepts the frame
+    w.net.set_max_frame(None);
+    w.guests[a].drop_connection();
+    let now = w.net.now();
+    w.guests[a].connect(now);
+    w.rounds(3);
+    w.admit_all(Role::Edit); // it never got a document, so it asks as a newcomer
+    w.rounds(10);
+    assert!(w.guests[a].client.is_live() && w.converged());
+    assert!(w.host.members().iter().any(|m| m.connected));
+}
+
+#[test]
+fn a_guest_cannot_touch_what_the_host_locked() {
+    use inkboard_core::model::Layer;
+    let mut w = World::new(35, NetConfig::ideal(), |_| {});
+    let page = w.page();
+    let mut locked = boxed("locked", 10.0);
+    locked.locked = true;
+    let mut other = boxed("locked2", 20.0);
+    other.locked = true;
+    let mut in_layer = boxed("in-layer", 30.0);
+    in_layer.layer = "L2".into();
+    w.ed.insert(locked.clone());
+    w.ed.insert(other.clone());
+    w.ed.insert(boxed("free", 40.0));
+    w.ed.insert(in_layer.clone());
+    w.ed.doc.pages[0].layers.push(Layer { id: "L2".into(), name: "Locked layer".into(), visible: true, locked: true });
+    w.ed.bump_revision();
+    let a = w.join("a", Role::Edit);
+    assert!(w.converged());
+    let x = |w: &World, id: &str| x_of(&w.ed.doc, id);
+    // moving it, deleting it, unlocking it, reordering the locked ones, moving the object of a locked layer, unlocking the layer
+    let mut moved = locked.clone();
+    moved.locked = false;
+    moved.translate(inkboard_core::Pt::new(100.0, 0.0));
+    let mut moved_in_layer = in_layer.clone();
+    moved_in_layer.translate(inkboard_core::Pt::new(100.0, 0.0));
+    let unlocked_layers = vec![Layer { id: "L2".into(), name: "Locked layer".into(), visible: true, locked: false }];
+    let order: Vec<Id> = w.ed.page().objects.iter().map(|o| o.id.clone()).collect();
+    let mut swapped = order.clone();
+    let (i, j) = (order.iter().position(|i| i.as_str() == "locked").unwrap(), order.iter().position(|i| i.as_str() == "locked2").unwrap());
+    swapped.swap(i, j);
+    let mut new_locked = boxed("new-locked", 0.0);
+    new_locked.locked = true;
+    let attempts = vec![
+        vec![put(&page, moved)],
+        vec![WireOp::Delete { page: page.clone(), ids: vec!["locked".into()] }],
+        vec![WireOp::Order { page: page.clone(), ids: swapped }],
+        vec![put(&page, moved_in_layer)],
+        vec![WireOp::SetLayers { page: page.clone(), layers: unlocked_layers }],
+        vec![put(&page, new_locked)],
+    ];
+    for ops in attempts {
+        let now = w.net.now();
+        w.guests[a].client.edit(ops.clone(), now);
+        w.rounds(4);
+        let ev = w.events(a);
+        assert!(ev.iter().any(|e| matches!(e, ClientEvent::Rejected { reason: RejectReason::Invalid { .. }, .. })), "refused: {ops:?}");
+    }
+    assert_eq!(x(&w, "locked"), Some(10.0));
+    assert_eq!(x(&w, "in-layer"), Some(30.0));
+    assert!(w.ed.page().get(&"locked".into()).is_some_and(|o| o.locked) && w.ed.page().get(&"new-locked".into()).is_none());
+    assert!(w.ed.doc.pages[0].layers.iter().any(|l| l.locked));
+    assert!(w.converged(), "the optimistic copies were rolled back");
+    // what is not locked is free, and the host can still do anything
+    let mut free = w.ed.page().get(&"free".into()).unwrap().clone();
+    free.translate(inkboard_core::Pt::new(7.0, 0.0));
+    w.edit(a, vec![put(&page, free)]);
+    w.rounds(4);
+    assert_eq!(x(&w, "free"), Some(47.0));
+    w.ed.remove(&["locked".into()]);
+    w.rounds(4);
+    assert!(w.ed.page().get(&"locked".into()).is_none() && w.converged(), "the host deleted its own locked object");
+}
+
+#[test]
+fn a_huge_editing_identifier_and_a_transient_of_another_object_are_refused_not_relayed() {
+    let mut w = World::new(36, NetConfig::ideal(), |_| {});
+    let mut raw = w.raw_member("editor", Role::Edit);
+    let b = w.join("calm", Role::Edit);
+    w.events(b);
+    let presence = Presence {
+        participant: None,
+        page: w.page(),
+        cursor: None,
+        selection: vec![],
+        tool: None,
+        editing: Some("x".repeat(900_000).as_str().into()),
+        viewport: None,
+    };
+    raw.send(&Message::Presence(presence));
+    raw.send(&Message::Transient { object: "seed-1".into(), state: Box::new(boxed("somebody-else", 5.0)), author: None });
+    w.rounds(3);
+    assert!(w.events(b).iter().all(|e| !matches!(e, ClientEvent::Relay(_))), "nothing reached the others");
+    assert!(w.host.members().iter().all(|m| m.editing.is_none()));
+    let warnings = raw.received().iter().filter(|m| matches!(m, Message::Rejected { reason: RejectReason::Invalid { .. }, .. })).count();
+    assert!(warnings >= 1, "the sender was told");
+}
+
+#[test]
+fn ephemeral_data_is_limited_in_bytes_per_second_not_only_in_messages() {
+    let mut w = World::new(37, NetConfig::ideal(), |c| c.limits.ephemeral_bytes_burst = 100_000);
+    let a = w.join("a", Role::Edit);
+    let b = w.join("b", Role::Edit);
+    w.events(b);
+    let selection: Vec<Id> = (0..3_000).map(|i| Id(format!("object-{i:05}"))).collect();
+    for _ in 0..20 {
+        let p = Presence { participant: None, page: w.page(), cursor: None, selection: selection.clone(), tool: None, editing: None, viewport: None };
+        w.send(a, Message::Presence(p));
+    }
+    w.rounds(3);
+    let relayed = w.events(b).iter().filter(|e| matches!(e, ClientEvent::Relay(m) if matches!(**m, Message::Presence(_)))).count();
+    assert!((1..=4).contains(&relayed), "about 100 KB went through ({relayed} messages of 40 KB)");
+}
+
+#[test]
+fn sixty_silent_connections_do_not_keep_a_real_guest_out() {
+    let mut w = World::new(38, NetConfig::ideal(), |_| {});
+    let silent: Vec<SimConn> = (0..60).map(|i| w.net.transport(&format!("mute{i}")).connect(HOST_ID).unwrap()).collect();
+    w.rounds(3);
+    let a = w.join("real", Role::Edit);
+    assert!(w.guests[a].client.is_live(), "the real guest got in");
+    assert_eq!(w.host.members().len(), 1);
+    // the silent ones are trimmed to a small number once they have had their chance, and dropped after the handshake delay
+    w.rounds(250);
+    assert!(w.host.connection_count() <= 16 + 1, "{} connections", w.host.connection_count());
+    w.net.advance(20_000);
+    w.rounds(3);
+    assert_eq!(w.host.connection_count(), 1, "only the guest is left");
+    drop(silent);
+}
+
+#[test]
+fn a_request_nobody_answers_expires_even_if_the_guest_keeps_pinging() {
+    let mut w = World::new(39, NetConfig::ideal(), |c| c.pending_ms = 3_000);
+    let ticket = w.ticket(Role::Edit);
+    let mut raw = Raw::new(&w.net, "waiting", &ticket);
+    raw.hello(Role::Edit);
+    w.rounds(3);
+    assert_eq!(w.host.pending().len(), 1);
+    for k in 0..400 {
+        if k % 50 == 0 {
+            raw.send(&Message::Ping { nonce: k });
+        }
+        w.step();
+    }
+    assert!(w.host.pending().is_empty(), "the request expired although the guest was never silent");
+    assert!(raw.received().iter().any(|m| matches!(m, Message::Refused { .. })), "and the guest was told");
+}
+
+#[test]
+fn the_image_quota_follows_the_identity_when_a_guest_leaves_and_comes_back() {
+    let mut w = World::new(40, NetConfig::ideal(), |c| c.limits.guest_asset_quota_bytes = 3_000);
+    let image = |seed: u8| -> Vec<u8> { [&b"\x89PNG\r\n\x1a\n"[..], &vec![seed; 1_992]].concat() };
+    let mut raw = w.raw_member("up", Role::Edit);
+    let first = image(1);
+    for c in chunks(&first, &hash_hex(&first), 1_024) {
+        raw.send(&Message::AssetChunk(c));
+    }
+    w.rounds(2);
+    assert!(!raw.received().iter().any(|m| matches!(m, Message::Rejected { reason: RejectReason::Quota, .. })));
+    raw.send(&Message::Bye { reason: inkboard_session::proto::ByeReason::Left });
+    w.rounds(3);
+    assert!(w.host.members().is_empty(), "left");
+    // the same identity comes back: it is a newcomer, but what it already used still counts
+    let mut again = w.raw_member("up", Role::Edit);
+    let second = image(2);
+    for c in chunks(&second, &hash_hex(&second), 1_024) {
+        again.send(&Message::AssetChunk(c));
+    }
+    w.rounds(2);
+    assert!(again.received().iter().any(|m| matches!(m, Message::Rejected { reason: RejectReason::Quota, .. })), "2 000 + 2 000 bytes over 3 000");
+}
+
+#[test]
+fn a_poll_reads_a_bounded_amount_and_the_rest_waits_for_the_next_one() {
+    let mut w = World::new(41, NetConfig::ideal(), |_| {});
+    let mut raw = w.raw_member("busy", Role::Edit);
+    let hash = "a".repeat(64);
+    // 40 chunks of 256 KiB: about 14 MB of frames, more than one poll may read
+    for k in 0..40u64 {
+        raw.send(&Message::AssetChunk(AssetChunk { hash: hash.clone(), offset: k * (256 << 10), data: vec![7; 256 << 10], last: false }));
+    }
+    w.step();
+    let acks = raw.received().len(); // the host answers every chunk it reads
+    assert!(acks > 0 && acks < 40, "the poll stopped at its budget ({acks} of 40 chunks read)");
+    w.rounds(10);
+    assert_eq!(acks + raw.received().len(), 40, "and the rest was read afterwards");
+}

@@ -1,4 +1,4 @@
-//! Messages of the session protocol (version 1). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
+//! Messages of the session protocol (version 2). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
 
 use crate::error::{Error, Result};
 use crate::wire::WireOp;
@@ -7,7 +7,8 @@ use inkboard_core::model::{Background, Document, Id, Object, Page};
 use serde::{Deserialize, Serialize};
 
 /// Version of the protocol, carried by the first message (`Hello`) and by `Welcome`.
-pub const PROTO_VERSION: u32 = 1;
+/// v2: a snapshot too large for one frame travels as numbered `SnapshotPart`s (see `snapshot`).
+pub const PROTO_VERSION: u32 = 2;
 
 /// Fails with a clear message when the peer speaks another version of the protocol.
 pub fn check_proto(theirs: u32) -> Result<()> {
@@ -155,6 +156,27 @@ impl Snapshot {
     }
 }
 
+/// What the first part of a split snapshot carries besides pages.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotHead {
+    pub name: String,
+    pub background: Background,
+    pub assets: Vec<AssetInfo>,
+}
+
+/// One piece of a snapshot that does not fit in a single frame. Parts are numbered from 0, part 0 carries the `head`, the part with
+/// `last` ends the series. A page that spans several parts appears in each of them with the same identifier (its objects follow each
+/// other); a new part 0 (another `seq`) starts over.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotPart {
+    pub seq: Seq,
+    pub part: u32,
+    pub last: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<SnapshotHead>,
+    pub pages: Vec<Page>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetChunk {
     pub hash: String,
@@ -273,6 +295,8 @@ pub enum Message {
         reason: RefuseReason,
     },
     Snapshot(Snapshot),
+    /// A snapshot too large for one frame, in pieces (see [`SnapshotPart`]).
+    SnapshotPart(SnapshotPart),
     // images
     AssetRequest {
         hash: String,

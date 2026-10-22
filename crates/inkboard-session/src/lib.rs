@@ -17,6 +17,7 @@ pub mod limits;
 pub mod proto;
 pub mod sequencer;
 pub mod sim;
+pub mod snapshot;
 pub mod transport;
 pub mod wire;
 

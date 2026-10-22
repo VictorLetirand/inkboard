@@ -56,6 +56,14 @@ fn all_messages() -> Vec<Message> {
         Message::Refused { reason: RefuseReason::Version { host_proto: 7 } },
         Message::Refused { reason: RefuseReason::Full },
         Message::Snapshot(Snapshot::new(&doc, 5, vec![AssetInfo { id: id("img"), hash: "ab".repeat(32), size: 1234, mime: "image/png".into() }])),
+        Message::SnapshotPart(SnapshotPart {
+            seq: 5,
+            part: 0,
+            last: false,
+            head: Some(SnapshotHead { name: "d".into(), background: Background::default(), assets: vec![] }),
+            pages: vec![Page::new("p")],
+        }),
+        Message::SnapshotPart(SnapshotPart { seq: 5, part: 1, last: true, head: None, pages: vec![] }),
         Message::AssetRequest { hash: "ab".repeat(32) },
         Message::AssetChunk(AssetChunk { hash: "cd".repeat(32), offset: 65_536, data: (0..=255).collect(), last: true }),
         Message::AssetAck { hash: "cd".repeat(32), have: 262_144, status: UploadStatus::Receiving },
@@ -125,8 +133,8 @@ fn the_first_message_carries_the_protocol_version_and_a_mismatch_is_explicit() {
 
 #[test]
 fn a_future_hello_with_other_fields_still_gets_the_version_error() {
-    let future = br#"{"t":"hello","proto":2,"something_new":{"nested":[1,2,3]}}"#;
-    assert_eq!(read_hello(&JsonCodec, future).unwrap_err(), Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: 2 });
+    let future = br#"{"t":"hello","proto":99,"something_new":{"nested":[1,2,3]}}"#;
+    assert_eq!(read_hello(&JsonCodec, future).unwrap_err(), Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: 99 });
 }
 
 #[test]

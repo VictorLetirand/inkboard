@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::runtime::{Builder as RuntimeBuilder, Handle, Runtime};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use tokio::time::{sleep, timeout};
 
 /// ALPN of the session protocol (the trailing number is the transport framing version).
@@ -35,10 +35,15 @@ const CLOSE_NORMAL: u32 = 0;
 const CLOSE_REFUSED: u32 = 1;
 /// Frames buffered per direction before back-pressure (reader) or `Congested` (sender).
 const QUEUE: usize = 1024;
+/// Bytes buffered per direction, whatever the number of frames: a peer that does not read (sender side: `Congested`) or a flood
+/// that the application does not drain (reader side: back-pressure) cannot make this side hold more.
+const MAX_QUEUED_BYTES: usize = 32 << 20;
 /// Connections accepted by the transport but not yet taken with `accept`.
 const PENDING_ACCEPT: usize = 64;
+/// Connections that have not sent their preamble yet, at most (the others are refused at once).
+const MAX_HANDSHAKING: usize = 64;
 /// A peer that connects but does not send the preamble in time is dropped.
-const PREAMBLE_TIMEOUT: Duration = Duration::from_secs(10);
+const PREAMBLE_TIMEOUT: Duration = Duration::from_secs(5);
 /// On a local `close`, how long to wait for the peer to confirm it has read everything.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Dropping a transport waits this long (at most) for the connections closed just before to be flushed.
@@ -64,6 +69,9 @@ struct Shared {
     /// A local close is counted in the transport's `flushing` counter until the writer ends (see `flush_started`).
     flush_counted: AtomicBool,
     writer_done: AtomicBool,
+    /// Bytes waiting in the outgoing queue / in the inbox (see `MAX_QUEUED_BYTES`).
+    out_bytes: AtomicUsize,
+    in_bytes: AtomicUsize,
 }
 
 impl Shared {
@@ -74,6 +82,8 @@ impl Shared {
             gone: watch::channel(false).0,
             flush_counted: AtomicBool::new(false),
             writer_done: AtomicBool::new(false),
+            out_bytes: AtomicUsize::new(0),
+            in_bytes: AtomicUsize::new(0),
         })
     }
 
@@ -175,15 +185,27 @@ impl Connection for IrohConn {
             return Err(Violation::MessageTooLarge { size: frame.len(), max: self.max_frame }.into());
         }
         let Some(out) = self.out.as_ref().filter(|_| self.is_open()) else { return Err(self.close_cause().unwrap_or(Error::Closed)) };
+        let queued = &self.shared.out_bytes;
+        if queued.fetch_add(frame.len(), Ordering::SeqCst) + frame.len() > MAX_QUEUED_BYTES {
+            queued.fetch_sub(frame.len(), Ordering::SeqCst);
+            return Err(net(NetCause::Congested, "the outgoing queue holds too many bytes"));
+        }
         match out.try_send(frame.to_vec()) {
             Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => Err(net(NetCause::Congested, "the outgoing queue is full")),
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(self.close_cause().unwrap_or(Error::Closed)),
+            Err(e) => {
+                queued.fetch_sub(frame.len(), Ordering::SeqCst);
+                match e {
+                    mpsc::error::TrySendError::Full(_) => Err(net(NetCause::Congested, "the outgoing queue is full")),
+                    mpsc::error::TrySendError::Closed(_) => Err(self.close_cause().unwrap_or(Error::Closed)),
+                }
+            }
         }
     }
 
     fn recv(&mut self) -> Option<Vec<u8>> {
-        self.inbox.try_recv().ok()
+        let frame = self.inbox.try_recv().ok()?;
+        self.shared.in_bytes.fetch_sub(frame.len(), Ordering::SeqCst);
+        Some(frame)
     }
 
     fn is_open(&self) -> bool {
@@ -247,9 +269,17 @@ async fn read_frame(recv: &mut RecvStream, max_frame: usize) -> std::result::Res
 
 async fn read_loop(mut recv: RecvStream, inbox: mpsc::Sender<Vec<u8>>, shared: Arc<Shared>, conn: QuicConn, max_frame: usize) {
     loop {
+        // back-pressure by bytes: the application is not draining what is already here
+        while shared.in_bytes.load(Ordering::SeqCst) >= MAX_QUEUED_BYTES {
+            if inbox.is_closed() {
+                return;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
         match read_frame(&mut recv, max_frame).await {
             // `send` fails only when the handle is gone; the writer then flushes and closes.
             Ok(Some(frame)) => {
+                shared.in_bytes.fetch_add(frame.len(), Ordering::SeqCst);
                 if inbox.send(frame).await.is_err() {
                     break;
                 }
@@ -274,6 +304,7 @@ async fn write_loop(mut send: SendStream, mut queue: mpsc::Receiver<Vec<u8>>, sh
             frame = queue.recv() => match frame {
                 None => break true,
                 Some(frame) => {
+                    shared.out_bytes.fetch_sub(frame.len(), Ordering::SeqCst);
                     let len = (frame.len() as u32).to_le_bytes();
                     let written = async {
                         send.write_all(&len).await?;
@@ -427,7 +458,7 @@ async fn dial(
 }
 
 /// Reads the preamble of a new connection and publishes it, or closes it as refused.
-async fn welcome(incoming: Incoming, max_frame: usize, ready: mpsc::Sender<IrohConn>, flushing: Arc<AtomicUsize>) {
+async fn welcome(incoming: Incoming, max_frame: usize, ready: mpsc::Sender<IrohConn>, flushing: Arc<AtomicUsize>, _slot: OwnedSemaphorePermit) {
     let Ok(accepting) = incoming.accept() else { return };
     let Ok(conn) = accepting.await else { return };
     let opened = timeout(PREAMBLE_TIMEOUT, async {
@@ -448,8 +479,15 @@ async fn welcome(incoming: Incoming, max_frame: usize, ready: mpsc::Sender<IrohC
 }
 
 async fn accept_loop(endpoint: Endpoint, max_frame: usize, ready: mpsc::Sender<IrohConn>, flushing: Arc<AtomicUsize>) {
+    let slots = Arc::new(Semaphore::new(MAX_HANDSHAKING));
     while let Some(incoming) = endpoint.accept().await {
-        tokio::spawn(welcome(incoming, max_frame, ready.clone(), flushing.clone()));
+        // a flood of connections that never speak cannot pile up: beyond the limit they are refused before any work is done
+        match slots.clone().try_acquire_owned() {
+            Ok(slot) => {
+                tokio::spawn(welcome(incoming, max_frame, ready.clone(), flushing.clone(), slot));
+            }
+            Err(_) => incoming.refuse(),
+        }
     }
 }
 

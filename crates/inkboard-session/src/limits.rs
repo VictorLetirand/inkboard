@@ -3,10 +3,10 @@
 //! The host calls these before applying or relaying anything; a violation is reported to the guest (and repeated violations get
 //! the guest excluded, which is the job of the host manager, not of this crate).
 
-use crate::proto::{AssetChunk, Message};
+use crate::proto::{AssetChunk, AssetInfo, Message};
 use crate::wire::WireOp;
 use inkboard_core::geom::{Frame, Pt};
-use inkboard_core::model::{Id, Kind, Object};
+use inkboard_core::model::{Id, Kind, Object, Page};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -30,6 +30,9 @@ pub enum Violation {
     QuotaExceeded { used: u64, size: u64, max: u64 },
     #[error("sending too fast ({what})")]
     RateExceeded { what: &'static str },
+    /// A guest touched something the host locked (or tried to lock or unlock it).
+    #[error("{0}")]
+    Locked(&'static str),
 }
 
 /// Configurable limits (see `PLAN_REMOTE.md` section 4).
@@ -59,6 +62,35 @@ pub struct Limits {
     pub ops_burst: u32,
     pub transient_per_sec: u32,
     pub transient_burst: u32,
+    /// `Resync` and repeated `Hello` of one participant (each can make the host send the whole document).
+    pub sync_per_sec: u32,
+    pub sync_burst: u32,
+    /// Frames and bytes one participant may send, checked before any decoding.
+    pub frames_per_sec: u32,
+    pub frames_burst: u32,
+    pub bytes_per_sec: u32,
+    pub bytes_burst: u32,
+    /// Bytes of ephemeral messages (presence, transient states, stroke points) one participant may send; the host relays them to everybody.
+    pub ephemeral_bytes_per_sec: u32,
+    pub ephemeral_bytes_burst: u32,
+}
+
+impl Limits {
+    /// Bounds for what the host says: the same numeric and structural checks as for a guest (nothing non-finite, nothing huge), but
+    /// with the counts lifted, since the host legitimately sends whole pages or deletes thousands of objects in one modification.
+    pub fn host_trust() -> Self {
+        Self {
+            max_message_bytes: 16 << 20,
+            max_ops_per_message: 10_000,
+            max_objects_per_message: 100_000,
+            max_ids_per_message: 200_000,
+            max_text_chars: 1_000_000,
+            max_pen_points: 500_000,
+            max_pages: 1_000,
+            max_layers: 1_000,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Limits {
@@ -86,6 +118,14 @@ impl Default for Limits {
             ops_burst: 100,
             transient_per_sec: 60,
             transient_burst: 120,
+            sync_per_sec: 1,
+            sync_burst: 3,
+            frames_per_sec: 400,
+            frames_burst: 800,
+            bytes_per_sec: 8 << 20,
+            bytes_burst: 16 << 20,
+            ephemeral_bytes_per_sec: 2 << 20,
+            ephemeral_bytes_burst: 4 << 20,
         }
     }
 }
@@ -283,6 +323,10 @@ pub fn check_message(l: &Limits, m: &Message) -> Result<(), Violation> {
         Message::Submit(s) => check_ops(l, &s.ops),
         Message::Transient { object, state, .. } => {
             check_id(l, object)?;
+            // a state is shown in place of the object of the same identifier: never of another one
+            if state.id != *object {
+                return Err(Violation::Malformed("transient state does not belong to its object"));
+            }
             check_object(l, state)
         }
         Message::StrokePoints { stroke, points, .. } => {
@@ -300,6 +344,9 @@ pub fn check_message(l: &Limits, m: &Message) -> Result<(), Violation> {
             if let Some(t) = &p.tool {
                 check_name(l, t)?;
             }
+            if let Some(e) = &p.editing {
+                check_id(l, e)?;
+            }
             if let Some(r) = &p.viewport {
                 check_pt(l, "viewport", &Pt::new(r.x, r.y))?;
                 check_len("viewport", r.w, l.max_abs_value, true)?;
@@ -308,8 +355,69 @@ pub fn check_message(l: &Limits, m: &Message) -> Result<(), Violation> {
             Ok(())
         }
         Message::AssetChunk(c) => check_asset_chunk(l, c),
+        // only the host sends these: the guest checks them before showing them
+        Message::Agent(a) => {
+            check_name(l, &a.name)?;
+            check_name(l, &a.action)?;
+            too_many("identifiers", a.targets.len(), l.max_ids_per_message)?;
+            a.targets.iter().try_for_each(|id| check_id(l, id))?;
+            a.at.as_ref().map_or(Ok(()), |p| check_pt(l, "agent position", p))
+        }
+        Message::Participants { list } => {
+            too_many("participants", list.len(), MAX_PARTICIPANTS_LISTED)?;
+            list.iter().try_for_each(|p| check_name(l, &p.name))
+        }
         _ => Ok(()),
     }
+}
+
+/// Longest list of participants a guest accepts.
+pub const MAX_PARTICIPANTS_LISTED: usize = 1_000;
+
+/// Validates pages (identifiers, names, layers and every object); returns the number of objects. Used by a guest for what the host
+/// sends (snapshot or part of one).
+pub fn check_pages(l: &Limits, pages: &[Page]) -> Result<usize, Violation> {
+    too_many("pages", pages.len(), l.max_pages)?;
+    let mut objects = 0usize;
+    for p in pages {
+        check_id(l, &p.id)?;
+        check_name(l, &p.name)?;
+        too_many("layers", p.layers.len(), l.max_layers)?;
+        for layer in &p.layers {
+            check_id(l, &layer.id)?;
+            check_name(l, &layer.name)?;
+        }
+        objects += p.objects.len();
+        p.objects.iter().try_for_each(|o| check_object(l, o))?;
+    }
+    Ok(objects)
+}
+
+/// Structure of a whole document received from the host: page count, object count, no identifier used twice on a page.
+pub fn check_snapshot_shape(l: &Limits, pages: &[Page], max_objects: usize) -> Result<(), Violation> {
+    too_many("pages", pages.len(), l.max_pages)?;
+    let total: usize = pages.iter().map(|p| p.objects.len()).sum();
+    too_many("objects", total, max_objects)?;
+    let mut seen = std::collections::HashSet::new();
+    for p in pages {
+        seen.clear();
+        if !p.objects.iter().all(|o| seen.insert(&o.id)) {
+            return Err(Violation::Malformed("object identifier used twice on a page"));
+        }
+    }
+    Ok(())
+}
+
+/// Validates the list of images of a snapshot.
+pub fn check_manifest(l: &Limits, assets: &[AssetInfo]) -> Result<(), Violation> {
+    too_many("images", assets.len(), 100_000)?;
+    for a in assets {
+        check_id(l, &a.id)?;
+        if a.hash.len() > 128 || a.mime.len() > 128 {
+            return Err(Violation::Malformed("image description too long"));
+        }
+    }
+    Ok(())
 }
 
 /// Bytes of images uploaded by one guest.
@@ -352,11 +460,16 @@ impl RateLimiter {
     }
     /// Takes one token if available.
     pub fn allow(&mut self, now_ms: u64) -> bool {
+        self.allow_n(now_ms, 1)
+    }
+    /// Takes `n` tokens (e.g. bytes, for a limiter built with bytes per second) if available; nothing is taken otherwise.
+    pub fn allow_n(&mut self, now_ms: u64, n: u64) -> bool {
         let dt = now_ms.saturating_sub(self.last_ms);
         self.last_ms = self.last_ms.max(now_ms);
         self.tokens = self.tokens.saturating_add(dt.saturating_mul(self.refill)).min(self.capacity);
-        if self.tokens >= 1000 {
-            self.tokens -= 1000;
+        let cost = n.saturating_mul(1000);
+        if self.tokens >= cost {
+            self.tokens -= cost;
             true
         } else {
             false
