@@ -2,7 +2,7 @@
 //! Waits are polling loops with a generous bound that only prevents a hang; no test asserts a duration.
 #![cfg(not(target_arch = "wasm32"))]
 
-use inkboard_net::{IrohConn, IrohTransport, NetConfig, RelaySetting, addr_to_hints, ticket_to_addr};
+use inkboard_net::{CancelToken, IrohConn, IrohTransport, NetConfig, RelaySetting, addr_to_hints, ticket_to_addr};
 use inkboard_session::crypto::{FrameCipher, HostKeys, SecureChannel, SeededEntropy, SessionKey, Side, Ticket};
 use inkboard_session::error::{Error, NetCause};
 use inkboard_session::limits::Violation;
@@ -186,6 +186,43 @@ fn a_ticket_to_a_vanished_host_fails_as_unreachable() {
         Err(Error::Network { cause: NetCause::HostUnreachable, .. }) => {}
         other => panic!("expected HostUnreachable, got {other:?}"),
     }
+}
+
+#[test]
+fn a_cancelled_dial_ends_at_once_instead_of_at_the_connect_timeout() {
+    let (host, keys) = host();
+    let ticket = host.ticket(&keys, Role::Edit).unwrap();
+    drop(host);
+    // the timeout is far beyond what the test could wait for: only the cancellation can end the attempt
+    let mut guest = IrohTransport::guest(NetConfig { connect_timeout: Duration::from_secs(600), ..cfg() }).unwrap();
+    let token = CancelToken::new();
+    let t = token.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        t.cancel();
+    });
+    let result = guest.connect_ticket_cancellable(&ticket, &token);
+    canceller.join().unwrap();
+    assert!(matches!(result, Err(Error::Closed)), "expected Closed, got {result:?}");
+    // a token already cancelled stops the next attempt immediately too
+    assert!(matches!(guest.connect_ticket_cancellable(&ticket, &token), Err(Error::Closed)));
+}
+
+#[test]
+fn a_network_change_notice_is_harmless_and_the_connection_keeps_working() {
+    let (mut host, keys) = host();
+    let ticket = host.ticket(&keys, Role::Edit).unwrap();
+    let mut guest = IrohTransport::guest(cfg()).unwrap();
+    guest.network_change(); // before any endpoint exists: nothing to do
+    let mut g = guest.connect_ticket(&ticket).unwrap();
+    g.send(b"before").unwrap();
+    let mut h = accept(&mut host);
+    assert_eq!(recv(&mut h), b"before");
+    host.network_change();
+    guest.network_change();
+    h.send(b"after").unwrap();
+    assert_eq!(recv(&mut g), b"after");
+    assert!(g.is_open() && h.is_open());
 }
 
 #[test]

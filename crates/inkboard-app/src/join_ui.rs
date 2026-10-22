@@ -23,6 +23,8 @@ pub struct JoinWindow {
     pub unknown_relay: Option<String>,
     /// The user confirmed the unknown relay of this link.
     pub relay_confirmed: bool,
+    /// Custom relays, one `https://` address per line (the `relays` file; empty: the public relays).
+    pub relays: String,
 }
 
 /// What the relays named by a link mean for the user (see [`judge_relays`]).
@@ -100,7 +102,13 @@ impl App {
             None => crate::session_guest::load_name(),
         }
         .unwrap_or_else(|| t("Guest"));
-        self.join.window = Some(JoinWindow { from_system: link.is_some(), link: link.unwrap_or_default(), name, ..JoinWindow::default() });
+        let relays = crate::session_net::read_relays_text(&self.relays_dir());
+        self.join.window = Some(JoinWindow { from_system: link.is_some(), link: link.unwrap_or_default(), name, relays, ..JoinWindow::default() });
+    }
+
+    /// Folder of the `relays` file, next to `display_name`.
+    fn relays_dir(&self) -> std::path::PathBuf {
+        self.join.name_dir.clone().unwrap_or_else(inkboard_mcp::live::data_dir)
     }
 
     fn remember_name(&self, name: &str) {
@@ -122,8 +130,21 @@ impl App {
                 return;
             }
         };
+        // the custom relays are checked before anything is saved or started: https only, nothing silently ignored
+        let relays = match crate::session_net::parse_relay_list(&w.relays) {
+            Ok(urls) => urls,
+            Err(e) => {
+                if let Some(win) = self.join.window.as_mut() {
+                    win.error = Some(e.message());
+                }
+                return;
+            }
+        };
+        // the relays of the user (file or window) are known: they never ask for a confirmation
+        let mut configured = self.join.trusted_relays.clone();
+        configured.extend(relays.iter().cloned());
         // the relay of a link is chosen by whoever made it: nothing connects to an odd or unknown one without the user's say
-        match judge_relays(&ticket, &self.join.trusted_relays) {
+        match judge_relays(&ticket, &configured) {
             RelayVerdict::Refused(text) => {
                 if let Some(win) = self.join.window.as_mut() {
                     win.error = Some(tr!("This link uses a relay address that is not allowed: {}", text));
@@ -146,6 +167,7 @@ impl App {
             }
             return;
         }
+        crate::session_net::save_relays_to(&self.relays_dir(), &relays);
         self.start_joining(ticket, &name);
     }
 
@@ -259,6 +281,13 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             join = true;
         }
+        ui.add_space(4.0);
+        egui::CollapsingHeader::new(t("Custom relays")).default_open(!w.relays.trim().is_empty()).show(ui, |ui| {
+            if ui.add(egui::TextEdit::multiline(&mut w.relays).desired_rows(2).desired_width(f32::INFINITY).hint_text("https://relay.example.org")).changed() {
+                w.error = None;
+            }
+            ui.label(RichText::new(t("One https:// address per line. Empty: the public relays.")).weak().small());
+        });
         if let Some(e) = &w.error {
             ui.add_space(4.0);
             ui.colored_label(RED, e);
@@ -359,7 +388,8 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
     let pending = app.guest.as_ref().map_or(0, |g| g.pending_len());
     let sending = app.guest.as_ref().and_then(|g| g.upload_progress());
     let title = if host.is_empty() { t("Shared session") } else { tr!("Session of {}", host) };
-    let (mut leave, mut save) = (false, false);
+    let attempt = app.guest.as_ref().map_or(0, |g| g.reconnect_attempt());
+    let (mut leave, mut save, mut retry) = (false, false, false);
     bar(ctx, "guest-bar", Align2::RIGHT_TOP, vec2(-12.0, 12.0), Color32::from_rgb(0x2b, 0x4c, 0xb8), |ui| {
         ui.label(white(title).strong());
         if view {
@@ -375,13 +405,15 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
     match state {
         GuestState::Reconnecting => bar(ctx, "guest-reconnect", Align2::CENTER_TOP, vec2(0.0, 72.0), AMBER, |ui| {
             ui.spinner();
-            ui.label(white(t("Reconnecting…")).strong());
+            let title = if attempt > 0 { tr!("Reconnecting… (attempt {})", attempt) } else { t("Reconnecting…") };
+            ui.label(white(title).strong());
             let msg = if pending > 0 {
                 t("Your changes are kept and will be sent as soon as the connection is back.")
             } else {
                 t("The board is shown as it was; it is updated when the connection is back.")
             };
             ui.label(white(msg));
+            retry = bar_button(ui, t("Retry now"));
         }),
         GuestState::Ended(r) => {
             let msg = end_message(r);
@@ -395,6 +427,9 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
     }
     if save {
         app.save_as();
+    }
+    if retry && let Some(g) = app.guest.as_mut() {
+        g.retry_now();
     }
     if leave {
         app.close_join();

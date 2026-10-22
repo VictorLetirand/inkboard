@@ -17,4 +17,4 @@ pub mod transport;
 pub use config::{InvalidRelayUrl, NetConfig, RelaySetting, default_relay_urls};
 pub use diagnose::{Diagnosis, GatewayKind, classify_gateway, diagnose_relay};
 pub use ticket::{addr_to_hints, ticket_to_addr};
-pub use transport::{IrohConn, IrohTransport};
+pub use transport::{CancelToken, IrohConn, IrohTransport};

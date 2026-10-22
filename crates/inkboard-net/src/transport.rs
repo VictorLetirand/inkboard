@@ -361,14 +361,65 @@ fn dial_failure(endpoint: &Endpoint, relays_on: bool, detail: String) -> Error {
     }
 }
 
-async fn dial(endpoint: &Endpoint, addr: EndpointAddr, cfg: &NetConfig, relays_on: bool, flushing: &Arc<AtomicUsize>) -> Result<IrohConn> {
+/// Lets another thread abort a dial in progress (`connect_ticket_cancellable`): the attempt ends at once instead of at
+/// `connect_timeout`. Cloning shares the same token.
+#[derive(Clone, Debug)]
+pub struct CancelToken(Arc<watch::Sender<bool>>);
+
+impl Default for CancelToken {
+    fn default() -> Self {
+        Self(Arc::new(watch::channel(false).0))
+    }
+}
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.send_replace(true);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.0.borrow()
+    }
+
+    async fn cancelled(&self) {
+        let mut rx = self.0.subscribe();
+        // The wrapper drops the watch guard at once (it is not `Send`).
+        async {
+            rx.wait_for(|c| *c).await.ok();
+        }
+        .await;
+    }
+}
+
+async fn dial(
+    endpoint: &Endpoint,
+    addr: EndpointAddr,
+    cfg: &NetConfig,
+    relays_on: bool,
+    flushing: &Arc<AtomicUsize>,
+    cancel: Option<&CancelToken>,
+) -> Result<IrohConn> {
     let attempt = async {
         let conn = endpoint.connect(addr, ALPN).await.map_err(|e| dial_failure(endpoint, relays_on, e.to_string()))?;
         let (mut send, recv) = conn.open_bi().await.map_err(|e| map_conn_error(&e))?;
         send.write_all(PREAMBLE).await.map_err(|e| net(NetCause::HostUnreachable, e.to_string()))?;
         Ok::<_, Error>((conn, send, recv))
     };
-    match timeout(cfg.connect_timeout, attempt).await {
+    let aborted = async {
+        match cancel {
+            Some(c) => c.cancelled().await,
+            None => std::future::pending().await,
+        }
+    };
+    let result = tokio::select! {
+        r = timeout(cfg.connect_timeout, attempt) => r,
+        () = aborted => return Err(Error::Closed),
+    };
+    match result {
         Ok(Ok((conn, send, recv))) => Ok(IrohConn::start(conn, send, recv, cfg.max_frame, flushing)),
         Ok(Err(e)) => Err(e),
         Err(_) => Err(dial_failure(endpoint, relays_on, format!("no answer within {} s", cfg.connect_timeout.as_secs_f32()))),
@@ -524,6 +575,11 @@ impl IrohTransport {
     /// link cannot make this machine knock on an internal address. Whether an *unknown* public relay is acceptable is the user's
     /// call (the application asks before dialing).
     pub fn connect_ticket(&mut self, ticket: &Ticket) -> Result<IrohConn> {
+        self.connect_addr(self.ticket_addr(ticket)?, None)
+    }
+
+    /// The address of a ticket, without the relays this guest may not use (see [`IrohTransport::connect_ticket`]).
+    fn ticket_addr(&self, ticket: &Ticket) -> Result<EndpointAddr> {
         let mut addr = ticket_to_addr(ticket)?;
         let before = addr.addrs.len();
         addr.addrs.retain(|a| match a {
@@ -533,10 +589,25 @@ impl IrohTransport {
         if addr.addrs.is_empty() && before > 0 {
             return Err(net(NetCause::HostUnreachable, "the relay address in the link is not allowed (https on a public address is required)"));
         }
-        self.connect_addr(addr)
+        Ok(addr)
     }
 
-    fn connect_addr(&mut self, mut addr: EndpointAddr) -> Result<IrohConn> {
+    /// Like [`IrohTransport::connect_ticket`], but `cancel` ends the attempt at once (`Error::Closed`).
+    pub fn connect_ticket_cancellable(&mut self, ticket: &Ticket, cancel: &CancelToken) -> Result<IrohConn> {
+        self.connect_addr(self.ticket_addr(ticket)?, Some(cancel))
+    }
+
+    /// Tells the endpoints that the network may have changed (the computer woke up, an interface came back): iroh looks at the
+    /// interfaces again, probes the paths of its connections and rebinds its sockets if needed. Harmless when nothing changed; does
+    /// not block (the work runs on the transport's runtime).
+    pub fn network_change(&self) {
+        let endpoints = self.host.iter().map(|h| &h.endpoint).chain(self.guest.iter().map(|(_, e)| e)).cloned();
+        for e in endpoints {
+            self.rt().spawn(async move { e.network_change().await });
+        }
+    }
+
+    fn connect_addr(&mut self, mut addr: EndpointAddr, cancel: Option<&CancelToken>) -> Result<IrohConn> {
         let ticket_relays: Vec<RelayUrl> = addr.relay_urls().cloned().collect();
         let relays = GuestRelays::for_ticket(&self.cfg.relays, &ticket_relays);
         if relays == GuestRelays::Off {
@@ -557,7 +628,7 @@ impl IrohTransport {
                 e
             }
         };
-        rt.block_on(dial(&endpoint, addr, cfg, relays != GuestRelays::Off, &self.flushing))
+        rt.block_on(dial(&endpoint, addr, cfg, relays != GuestRelays::Off, &self.flushing, cancel))
     }
 }
 
@@ -572,7 +643,7 @@ impl Transport for IrohTransport {
             RelaySetting::Custom(urls) => urls.iter().cloned().map(TransportAddr::Relay).collect(),
             _ => Vec::new(),
         };
-        self.connect_addr(EndpointAddr::from_parts(id, relays))
+        self.connect_addr(EndpointAddr::from_parts(id, relays), None)
     }
 
     fn accept(&mut self) -> Option<IrohConn> {

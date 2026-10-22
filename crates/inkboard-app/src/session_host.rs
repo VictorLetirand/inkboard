@@ -37,6 +37,10 @@ use std::sync::Arc;
 /// associated type and cannot be a trait object).
 pub trait HostTransport {
     fn accept(&mut self) -> Option<Box<dyn Connection>>;
+
+    /// The session stops: frees the sockets and threads. A network transport does it in the background (closing waits for the
+    /// last frames to be delivered, which must never freeze the interface); the default just drops it.
+    fn release(self: Box<Self>) {}
 }
 
 impl<T: Transport> HostTransport for T
@@ -55,11 +59,22 @@ pub struct HostAddress {
     pub relays: Vec<String>,
 }
 
+/// What a background start returns: the transport (it crosses threads) and the address for the links.
+pub type StartResult = Result<(Box<dyn HostTransport + Send>, HostAddress), String>;
+/// A background start; the flag tells it that the user cancelled (its result is then dropped).
+pub type StartJob = Box<dyn FnOnce(&std::sync::atomic::AtomicBool) -> StartResult + Send>;
+
 /// The network side of "Share", implemented by the integration lot with `iroh` (and by a fake in the tests). It is only called when the
 /// user clicks "Share": the application stays offline otherwise.
 pub trait SessionNet {
     /// Opens the network side of a session: starts listening for guests and tells how to reach this host.
     fn start(&mut self) -> Result<(Box<dyn HostTransport>, HostAddress), String>;
+
+    /// A start that can run on a thread (binding sockets and waiting for the relay may take seconds): the job gets a flag set when
+    /// the user cancels. `None` (the default): only the blocking [`SessionNet::start`] exists (simulated networks).
+    fn start_job(&mut self) -> Option<StartJob> {
+        None
+    }
 
     /// Called on every frame while the session runs: a better address than the one `start` gave (a relay that answered late, a new
     /// network interface), which the links should use from now on. `None` when nothing changed.
@@ -679,7 +694,9 @@ impl SessionHost {
         self.requests.clear();
         self.decisions.clear();
         self.members.clear();
-        self.transport = None;
+        if let Some(t) = self.transport.take() {
+            t.release();
+        }
     }
 
     /// Relays an action of the host's MCP agent to the guests (they see the agent act).
