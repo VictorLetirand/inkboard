@@ -173,6 +173,12 @@ L'agent agit déjà dans l'application de l'hôte (mode direct). On y branche la
 ### Vague 1 bis — **I : intégration réelle** (après N, C, D)
 Brancher `inkboard-net` dans l'hôte (C) et l'invité (D) : l'application écoute (hôte) et se connecte (invité) par `iroh` ; liaison du diagnostic de relais au message d'erreur d'entreprise ; essais de bout en bout avec **deux processus réels** (hôte + invité) en boucle locale puis via relais public (test ignoré par défaut) ; reconnexion après coupure ; refus de version incompatible ; noms. Fichiers : modules de C et D, `inkboard-net`, tests d'intégration.
 
+### Reste à faire, ordonné (décision du 2026-10-22 : tout faire, tests manuels à la toute fin)
+**Vague 2 (en parallèle, fichiers distincts)** : **G** images pour les invités (téléversement par morceaux, réactivation des outils image/icônes/formule/collage/dépôt) ; **P** finitions de présence (tracés et déplacements en cours visibles, badge « X écrit… », « Suivre » fonctionnel) ; **S** revue de sécurité (lecture seule, rapport) ; **K** kit relais auto-hébergé + documentation d'utilisation (EN/FR).
+**Vague 3** : **R** reprise rapide après coupure (événement « en ligne », nouveau sondage du chemin) et démarrage/annulation sans gel de l'interface, réglage de la liste de relais ; **F1** socle web (cfg-gating de l'application pour `wasm32`, repris du spike S2) ; **H** polices embarquées communes pour les sessions ; **SF** correctifs issus de la revue S.
+**Vague 4** : **F2** transport `iroh` pour le navigateur (`wasm32`, relais seul) ; **F3** client navigateur de bout en bout (page statique, lien avec ticket dans le fragment, saisie du nom, rejoindre, édition, curseurs, message d'erreur d'entreprise, collage/dépôt d'images, copie à télécharger), construction CI de la page et publication statique, test automatisé contre un vrai hôte natif.
+**Fin** : régénération des références visuelles, documentation finale, essais de bout en bout (hôte natif + invité natif + invité navigateur) puis essais à la main avec appareils réels.
+
 ### Vague 2 (palier 3 et 4)
 
 | Lot | Contenu | Dépend de | Critères |
