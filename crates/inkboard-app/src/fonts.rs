@@ -16,6 +16,10 @@ fn read_system_font(file: &str) -> Option<Vec<u8>> {
     if cfg!(test) && std::env::var_os("INKBOARD_NO_SYSTEM_FONTS").is_some() {
         return None;
     }
+    // a browser has no system fonts (and none may be redistributed): the built-in fonts of egui are used
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
     let dirs: [&str; 3] = ["C:\\Windows\\Fonts", "/usr/share/fonts/truetype/dejavu", "/System/Library/Fonts/Supplemental"];
     dirs.iter().find_map(|d| std::fs::read(std::path::Path::new(d).join(file)).ok())
 }

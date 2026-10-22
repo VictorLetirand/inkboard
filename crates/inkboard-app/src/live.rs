@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
+/// Change reference for the `board_changes` tool (what the user changed since the agent last looked).
+pub use inkboard_mcp::tools::Snapshot as Tracker;
+
 /// The interface's reply to a request.
 #[derive(Debug)]
 pub enum Reply {

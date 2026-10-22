@@ -665,16 +665,21 @@ impl App {
 
     /// Inserts images chosen in a dialog, at the center of the view.
     pub fn insert_images_dialog(&mut self) {
-        let files = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg"]).pick_files().unwrap_or_default();
+        // in a browser the picked images arrive later (see `App::poll_platform`)
+        let files = crate::platform::pick_images();
         let c = self.view_center();
         self.insert_image_files(&files, c);
     }
 
     pub fn insert_image_files(&mut self, files: &[std::path::PathBuf], at: Pt) {
+        let items = files.iter().filter_map(|f| Some((f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase), std::fs::read(f).ok()?))).collect();
+        self.insert_image_bytes(items, at);
+    }
+
+    /// Inserts images given as (lowercase extension, content): a browser hands over bytes, never a path.
+    pub fn insert_image_bytes(&mut self, items: Vec<(Option<String>, Vec<u8>)>, at: Pt) {
         let mut ids = Vec::new();
-        for (i, f) in files.iter().enumerate() {
-            let Ok(bytes) = std::fs::read(f) else { continue };
-            let ext = f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+        for (i, (ext, bytes)) in items.into_iter().enumerate() {
             // a vector image stays sharp at any size: it may be shown larger than its natural size (an icon-sized SVG is enlarged)
             let (w, h, mime, max_k) = if ext.as_deref() == Some("svg") {
                 match std::str::from_utf8(&bytes).ok().and_then(inkboard_icons::svg_dimensions).filter(|(w, h)| *w > 0.0 && *h > 0.0) {
@@ -1059,7 +1064,7 @@ const LASER_LIFE: std::time::Duration = std::time::Duration::from_millis(900);
 
 /// Records the pointer position (laser tool) and draws the fading trail.
 fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, pointer: Option<Pos2>) {
-    let now = std::time::Instant::now();
+    let now = crate::platform::Instant::now();
     app.laser.retain(|(_, t)| now.duration_since(*t) < LASER_LIFE);
     if app.tool == Tool::Laser
         && let Some(p) = pointer
@@ -1071,7 +1076,7 @@ fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, poin
         return;
     }
     let red = Color32::from_rgb(0xff, 0x2d, 0x2d);
-    let alpha = |t: std::time::Instant| 1.0 - now.duration_since(t).as_secs_f32() / LASER_LIFE.as_secs_f32();
+    let alpha = |t: crate::platform::Instant| 1.0 - now.duration_since(t).as_secs_f32() / LASER_LIFE.as_secs_f32();
     for w in app.laser.windows(2) {
         let a = alpha(w[1].1).clamp(0.0, 1.0);
         painter.line_segment([w[0].0, w[1].0], Stroke::new(3.0 + 5.0 * a, red.gamma_multiply(a * 0.45)));

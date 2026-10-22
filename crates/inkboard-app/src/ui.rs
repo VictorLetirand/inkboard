@@ -3,9 +3,10 @@
 use crate::app::{App, Dialog};
 use crate::i18n::{t, tr};
 use crate::keymap::{Action, Shortcut};
+use crate::platform::Instant;
 use eframe::egui::{self, Color32, RichText as ERich, vec2};
 use inkboard_core::*;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /* ------------------------------------------------------- Presentation */
 

@@ -3,8 +3,9 @@
 
 use crate::app::App;
 use crate::i18n::t;
+use crate::platform::Instant;
 use std::path::Path;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 pub fn mtime(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()

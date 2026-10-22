@@ -6,6 +6,7 @@
 
 use crate::app::App;
 use crate::i18n::{t, tr};
+use crate::platform::Instant;
 use crate::render::Cam;
 use eframe::egui::epaint::Mesh;
 use eframe::egui::{self, Color32, FontId, Painter, Pos2, Shape, Stroke, StrokeKind, vec2};
@@ -13,7 +14,7 @@ use inkboard_core::geom::{Pt, Rect};
 use inkboard_core::{Id, Page};
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// A cursor disappears after this much inactivity (it fades during the last `FADE`).
 pub const IDLE: Duration = Duration::from_secs(5);
@@ -405,7 +406,7 @@ impl AgentPresence {
 }
 
 fn setting_path() -> std::path::PathBuf {
-    inkboard_mcp::live::data_dir().join("animate_agent")
+    crate::platform::data_dir().join("animate_agent")
 }
 
 /// Reads the "Animate the agent" setting (on by default).

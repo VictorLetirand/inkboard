@@ -247,7 +247,7 @@ fn an_image_added_by_a_guest_shows_on_the_host_and_on_a_second_guest() {
 fn an_icon_placed_by_a_guest_shows_on_the_host_and_on_a_second_guest() {
     let mut r = Room::new(2, |_| {});
     let (a, b) = (r.join("Anna", Role::Edit), r.join("Marc", Role::Edit));
-    let lib = inkboard_icons::Library::open(crate::library::PACK).unwrap();
+    let lib = inkboard_icons::Library::open(inkboard_icons::PACK).unwrap();
     let icon = lib.search("router", 1)[0];
     r.app(a).insert_icon(&lib, icon);
     r.until("the icon everywhere", |r| {

@@ -4,11 +4,11 @@
 //! the SVG rasterization cost.
 
 use crate::app::App;
+use crate::platform::Instant;
 use crate::render::TextureStats;
 use eframe::egui;
 use inkboard_core::*;
 use inkboard_icons::{IconRef, Library};
-use std::time::Instant;
 
 /// Phases of the scripted session: name and number of frames.
 const PHASES: [(&str, usize); 6] =

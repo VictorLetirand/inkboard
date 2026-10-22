@@ -3,15 +3,16 @@
 
 use crate::app::App;
 use crate::i18n::{t, tr};
+use crate::platform::Pack;
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, TextureHandle, TextureOptions, vec2};
 use inkboard_icons::{IconRef, Library};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The pack and its once-opened `Library` (resolves the built-in icons of an imported draw.io file) are shared with the MCP server: the
-/// pack is embedded once, by `inkboard-icons` (feature `embedded`).
-pub use inkboard_icons::{PACK, shared};
+/// The pack and its once-opened `Library` (resolves the built-in icons of an imported draw.io file). The desktop embeds the pack once,
+/// by `inkboard-icons` (feature `embedded`, shared with the MCP server); the web build downloads it when the library is first opened.
+pub use crate::platform::shared_icons as shared;
 
 /// `inkboard_formats::import_any`, with the icon library to resolve the built-in icons of draw.io files.
 pub fn import(name: &str, content: &str, m: &dyn inkboard_core::text::Measurer) -> Result<inkboard_formats::Imported, inkboard_formats::FormatError> {
@@ -55,8 +56,16 @@ impl Palette {
         self.focus = self.open;
     }
 
-    fn library(&mut self) -> Result<Arc<Library>, String> {
-        self.lib.get_or_insert_with(|| Library::open(PACK).map(Arc::new)).clone()
+    /// The library, or `None` while the pack is still downloading (web).
+    fn library(&mut self) -> Result<Option<Arc<Library>>, String> {
+        if self.lib.is_none() {
+            match crate::platform::request_icon_pack() {
+                Pack::Ready(bytes) => self.lib = Some(Library::open(bytes).map(Arc::new)),
+                Pack::Loading => return Ok(None),
+                Pack::Failed(e) => return Err(e),
+            }
+        }
+        self.lib.clone().expect("set above").map(Some)
     }
 
     /// Icons to show for the current filters (`None`: nothing chosen yet, show the groups).
@@ -108,7 +117,16 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let lib = match app.palette.library() {
-        Ok(l) => l,
+        Ok(Some(l)) => l,
+        Ok(None) => {
+            theme::floating(ctx, "icon-palette", Align2::RIGHT_TOP, vec2(-12.0, 64.0), 10, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(t("Loading the icon library…"));
+                });
+            });
+            return;
+        }
         Err(e) => {
             theme::floating(ctx, "icon-palette", Align2::RIGHT_TOP, vec2(-12.0, 64.0), 10, |ui| {
                 ui.label(tr!("Icon library unavailable: {}", e));
