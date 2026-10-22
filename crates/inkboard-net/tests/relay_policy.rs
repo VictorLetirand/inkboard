@@ -87,7 +87,7 @@ fn a_ticket_with_only_a_private_relay_is_refused_without_any_connection() {
     let mut guest =
         IrohTransport::guest(NetConfig { connect_timeout: Duration::from_secs(2), relays: RelaySetting::Disabled, ..NetConfig::default() }).unwrap();
     for relay in [format!("http://127.0.0.1:{port}/"), format!("https://127.0.0.1:{port}/"), "https://10.0.0.1/".to_owned()] {
-        match guest.connect_ticket(&ticket(&[relay.clone()])) {
+        match guest.connect_ticket(&ticket(std::slice::from_ref(&relay))) {
             Err(Error::Network { cause: NetCause::HostUnreachable, detail }) => assert!(detail.contains("not allowed"), "{relay}: {detail}"),
             other => panic!("{relay}: expected a refusal, got {other:?}"),
         }
