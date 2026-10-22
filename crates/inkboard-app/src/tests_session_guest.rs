@@ -386,6 +386,18 @@ fn joining_shows_a_mirror_identical_to_the_hosts_and_leaving_gives_the_local_boa
 }
 
 #[test]
+fn a_guest_uses_the_embedded_fonts_for_the_length_of_the_session() {
+    let mut w = World::new(100);
+    assert!(!w.app().fonts_embedded);
+    w.join(Role::Edit, "Bob");
+    w.pump(3);
+    assert!(w.app().guest_active() && w.app().fonts_embedded);
+    w.app().leave_guest();
+    w.pump(3);
+    assert!(!w.app().fonts_embedded, "the system fonts are back");
+}
+
+#[test]
 fn the_waiting_window_shows_until_the_host_answers() {
     let mut w = World::new(100);
     w.host.down = true;

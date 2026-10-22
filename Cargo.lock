@@ -2618,6 +2618,7 @@ dependencies = [
  "embed-resource",
  "image",
  "inkboard-core",
+ "inkboard-fonts",
  "inkboard-formats",
  "inkboard-icons",
  "inkboard-mcp",
@@ -2650,6 +2651,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "inkboard-fonts"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "epaint_default_fonts",
 ]
 
 [[package]]

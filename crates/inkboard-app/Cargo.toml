@@ -24,6 +24,7 @@ inkboard-mcp = { path = "../inkboard-mcp" }
 inkboard-icons = { path = "../inkboard-icons" }
 inkboard-session = { path = "../inkboard-session" }
 inkboard-net = { path = "../inkboard-net" }
+inkboard-fonts = { path = "../inkboard-fonts" }
 sys-locale = "0.3"
 
 [build-dependencies]

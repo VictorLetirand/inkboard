@@ -445,6 +445,10 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
                 app.agent.state.clear();
             }
         }
+        if !crate::fonts::ALWAYS_EMBEDDED && theme::menu_item(ui, Some("edit"), "Use built-in fonts", "", app.fonts_pref, true) {
+            app.fonts_pref = !app.fonts_pref;
+            crate::fonts::save_embedded_pref(app.fonts_pref);
+        }
         theme::menu_sep(ui);
         theme::menu_label(ui, "View");
         if mi(ui, "play", "Present full screen", &key(app, Action::Present)) {
