@@ -31,6 +31,8 @@ fn loopback_guest() -> GuestNet {
         net: NetConfig { connect_timeout: Duration::from_secs(10), ..NetConfig::loopback() },
         session: GuestConfig::default(),
         diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+        relays_dir: None,
+        watch_network: false,
     }
 }
 
@@ -77,9 +79,13 @@ impl Room {
         }
     }
 
-    /// "Start sharing" (what the button does).
+    /// "Start sharing" (what the button does): the start runs on a thread, the frames go on until it is done.
     fn start_sharing(&mut self) {
         crate::share_ui::start(self.host.app());
+        self.until("sharing to start", |r| {
+            let a = r.host.app();
+            a.share.starting.is_none() && (a.share.is_running() || a.share.error.is_some())
+        });
         let a = self.host.app();
         assert!(a.share.is_running(), "sharing did not start: {:?}", a.share.error);
     }
@@ -432,6 +438,8 @@ fn join_a_dead_host(relay_url: String) -> (Room, usize, crate::session_guest::Ne
         net: NetConfig { connect_timeout: Duration::from_secs(1), ..NetConfig::loopback() },
         session: GuestConfig { relay_url, ..GuestConfig::default() },
         diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+        relays_dir: None,
+        watch_network: false,
     };
     let g = room.add_guest_with("Marc", &join_url(&dead_host_ticket()), net);
     room.until("the failure and its diagnosis", |r| {
@@ -480,6 +488,8 @@ fn a_failed_join_does_not_freeze_the_interface() {
         net: NetConfig { connect_timeout: Duration::from_secs(1), ..NetConfig::loopback() },
         session: GuestConfig { relay_url: closed_port_url(), ..GuestConfig::default() },
         diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+        relays_dir: None,
+        watch_network: false,
     };
     let g = room.add_guest_with("Marc", &join_url(&dead_host_ticket()), net);
     let mut frames = 0;
@@ -519,4 +529,271 @@ fn public_relay_two_applications_share_a_board() {
     room.until("the host to get the guest's shape", |r| r.host_has(&from_guest));
     let from_host = room.host.add_rect(0.0, 200.0, 100.0, 60.0);
     room.until("the guest to get the host's shape", |r| r.guest_has(g, &from_host));
+}
+
+/* ------------------------------------------------------------------------------------------------------------ lot R */
+
+mod lot_r {
+    use super::*;
+    use crate::session_host::{HostAddress, HostTransport, SessionNet, StartJob};
+    use crate::session_net::{LocalAddrWatch, RelayListError, load_relays_from, parse_relay_list, save_relays_to};
+    use inkboard_net::RelaySetting;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::mpsc::{Receiver, Sender, channel};
+
+    fn temp_dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("inkboard-lot-r-{}", Id::new()))
+    }
+
+    /* ---- relay list */
+
+    #[test]
+    fn a_relay_list_accepts_https_only_ignores_empty_lines_and_repeats() {
+        assert_eq!(parse_relay_list(""), Ok(vec![]));
+        assert_eq!(parse_relay_list("\n  \n\t\n"), Ok(vec![]));
+        let text = "\u{feff} https://a.example.org \n\nHTTPS://b.example.org/path\r\nhttps://a.example.org\n";
+        assert_eq!(parse_relay_list(text), Ok(vec!["https://a.example.org".to_owned(), "HTTPS://b.example.org/path".to_owned()]));
+        assert_eq!(parse_relay_list("https://a.example.org\nhttp://b.example.org"), Err(RelayListError::NotHttps("http://b.example.org".into())));
+        assert_eq!(parse_relay_list("relay.example.org"), Err(RelayListError::NotHttps("relay.example.org".into())));
+        assert_eq!(parse_relay_list("ws://relay.example.org"), Err(RelayListError::NotHttps("ws://relay.example.org".into())));
+        assert!(matches!(parse_relay_list("https://"), Err(RelayListError::Invalid(_))));
+        assert!(matches!(parse_relay_list("https://not a host"), Err(RelayListError::Invalid(_))));
+        let many: String = (0..5).map(|i| format!("https://r{i}.example.org\n")).collect();
+        assert_eq!(parse_relay_list(&many), Err(RelayListError::TooMany));
+    }
+
+    #[test]
+    fn the_relays_file_is_read_by_the_host_and_the_guest_and_an_invalid_one_is_an_error() {
+        let dir = temp_dir();
+        let host = IrohHostNet::new(NetConfig::default()).with_relays_dir(dir.clone());
+        let guest = GuestNet { net: NetConfig::default(), relays_dir: Some(dir.clone()), ..loopback_guest() };
+        let is_default = |c: NetConfig| matches!(c.relays, RelaySetting::Default);
+        assert!(is_default(host.config().unwrap()) && is_default(guest.config()), "no file: the public relays");
+
+        save_relays_to(&dir, &["https://relay.example.org".to_owned(), "https://other.example.org".to_owned()]);
+        assert_eq!(std::fs::read_to_string(dir.join("relays")).unwrap(), "https://relay.example.org\nhttps://other.example.org\n");
+        assert_eq!(load_relays_from(&dir).unwrap().len(), 2);
+        for cfg in [host.config().unwrap(), guest.config()] {
+            let RelaySetting::Custom(urls) = cfg.relays else { panic!("the custom relays were not used") };
+            let urls: Vec<String> = urls.iter().map(ToString::to_string).collect();
+            assert!(urls.iter().any(|u| u.contains("relay.example.org")) && urls.iter().any(|u| u.contains("other.example.org")), "{urls:?}");
+        }
+        // an explicit choice (no relay, loopback tests) is not overridden by the file
+        let off = IrohHostNet::new(NetConfig::loopback()).with_relays_dir(dir.clone());
+        assert!(matches!(off.config().unwrap().relays, RelaySetting::Disabled));
+
+        // a hand-edited file that is not valid: an error for the host, never a silent return to the public relays
+        std::fs::write(dir.join("relays"), "http://insecure.example.org\n").unwrap();
+        assert!(host.config().unwrap_err().contains("https://"));
+        // an empty list removes the file: back to the public relays
+        save_relays_to(&dir, &[]);
+        assert!(!dir.join("relays").exists() && is_default(host.config().unwrap()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn starting_to_share_reads_the_relays_file_and_reports_an_invalid_one() {
+        set_for_thread(Some(Lang::En));
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("relays"), "http://insecure.example.org\n").unwrap();
+        let mut host = T::new();
+        host.app().share.net = Some(Box::new(IrohHostNet::new(NetConfig::default()).with_relays_dir(dir.clone())));
+        crate::share_ui::start(host.app());
+        for _ in 0..TURNS {
+            host.h.step();
+            if host.app().share.starting.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let a = host.app();
+        assert!(!a.share.is_running(), "nothing starts with an invalid list");
+        assert!(a.share.error.as_deref().is_some_and(|e| e.contains("https://")), "{:?}", a.share.error);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_share_window_checks_the_relays_field_before_saving() {
+        set_for_thread(Some(Lang::En));
+        let dir = temp_dir();
+        let mut t = T::new();
+        t.app().share.net = Some(Box::new(IrohHostNet::new(NetConfig::loopback())));
+        t.app().share.data_dir = Some(dir.clone());
+        t.app().share.open = true;
+        t.h.step();
+        t.h.step();
+        assert!(t.h.query_by_label("Custom relays").is_some());
+        crate::share_ui::set_relays(t.app(), "http://insecure.example.org");
+        t.h.step();
+        t.h.step();
+        assert!(t.h.query_by_label_contains("Not an https:// address").is_some());
+        assert!(!dir.join("relays").exists());
+        crate::share_ui::set_relays(t.app(), "\nhttps://relay.example.org\n");
+        t.h.step();
+        t.h.step();
+        assert!(t.h.query_by_label_contains("Not an https:// address").is_none());
+        assert_eq!(load_relays_from(&dir).unwrap(), ["https://relay.example.org"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /* ---- network detection */
+
+    #[test]
+    fn the_network_detection_fires_when_it_comes_back_or_changes_and_not_at_the_first_look() {
+        let a = Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)));
+        let b = Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)));
+        let mut w = LocalAddrWatch::default();
+        assert!(!w.observe(a), "the first look is not a change");
+        assert!(!w.observe(a), "nothing changed");
+        assert!(!w.observe(None), "the network went away: nothing to retry yet");
+        assert!(!w.observe(None));
+        assert!(w.observe(a), "back, with the same address");
+        assert!(w.observe(b), "another interface took over");
+        assert!(!w.observe(b));
+    }
+
+    /* ---- a start that does not freeze the interface */
+
+    struct NullTransport;
+
+    impl HostTransport for NullTransport {
+        fn accept(&mut self) -> Option<Box<dyn Connection>> {
+            None
+        }
+    }
+
+    /// A network whose start waits for the test to release it (no timer: the "simulated wait" is a channel).
+    struct GatedNet {
+        gate: Option<Receiver<()>>,
+        saw_cancel: Sender<bool>,
+    }
+
+    impl SessionNet for GatedNet {
+        fn start(&mut self) -> Result<(Box<dyn HostTransport>, HostAddress), String> {
+            Err("the blocking start must not be used".into())
+        }
+
+        fn start_job(&mut self) -> Option<StartJob> {
+            let (gate, saw) = (self.gate.take()?, self.saw_cancel.clone());
+            Some(Box::new(move |cancel| {
+                gate.recv().ok();
+                saw.send(cancel.load(std::sync::atomic::Ordering::SeqCst)).ok();
+                Ok((Box::new(NullTransport), HostAddress { host: "gated-host".into(), relays: Vec::new() }))
+            }))
+        }
+    }
+
+    fn gated() -> (T, Sender<()>, Receiver<bool>) {
+        set_for_thread(Some(Lang::En));
+        let (open, gate) = channel();
+        let (saw_cancel, saw) = channel();
+        let mut t = T::new();
+        t.app().share.net = Some(Box::new(GatedNet { gate: Some(gate), saw_cancel }));
+        t.app().share.open = true;
+        (t, open, saw)
+    }
+
+    #[test]
+    fn starting_to_share_does_not_block_the_interface_and_the_link_appears_when_ready() {
+        let (mut t, release, _saw) = gated();
+        crate::share_ui::start(t.app());
+        // the network is still "busy": the call returned, the interface answers, the state says so
+        for _ in 0..5 {
+            t.h.step();
+        }
+        assert!(t.app().share.starting.is_some() && !t.app().share.is_running());
+        assert!(t.h.query_by_label("Starting…").is_some(), "the window shows the state");
+        assert!(t.h.query_by_label("Start sharing").is_none(), "a second start is not offered");
+        release.send(()).unwrap();
+        for _ in 0..TURNS {
+            t.h.step();
+            if t.app().share.is_running() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let a = t.app();
+        assert!(a.share.is_running() && a.share.starting.is_none() && a.share.error.is_none());
+        assert_eq!(a.share.addr.as_ref().map(|x| x.host.as_str()), Some("gated-host"));
+    }
+
+    #[test]
+    fn cancel_while_starting_drops_the_start_and_tells_the_thread() {
+        let (mut t, release, saw) = gated();
+        crate::share_ui::start(t.app());
+        t.h.step();
+        t.h.step();
+        t.h.get_by_label("Cancel").click();
+        t.h.step();
+        t.h.step();
+        assert!(t.app().share.starting.is_none() && !t.app().share.is_running());
+        release.send(()).unwrap();
+        assert!(saw.recv().unwrap(), "the thread saw the cancellation");
+        for _ in 0..5 {
+            t.h.step();
+        }
+        let a = t.app();
+        assert!(!a.share.is_running() && a.share.error.is_none(), "the late result was dropped");
+        assert!(t.h.query_by_label("Start sharing").is_some(), "the user can start again");
+    }
+
+    #[test]
+    fn the_real_network_starts_on_a_thread_and_a_cancelled_start_can_be_redone() {
+        let mut room = Room::loopback();
+        crate::share_ui::start(room.host.app());
+        assert!(room.host.app().share.starting.is_some() && !room.host.app().share.is_running(), "the call did not wait for the network");
+        crate::share_ui::cancel_start(room.host.app());
+        assert!(room.host.app().share.starting.is_none());
+        room.turns(3);
+        assert!(!room.host.app().share.is_running());
+        room.start_sharing();
+        assert_eq!(room.host.app().share.error, None);
+        let link = room.link(Role::Edit);
+        assert!(link.starts_with("inkboard://join#"), "{link}");
+    }
+
+    /* ---- reconnection with the real network */
+
+    #[test]
+    fn retry_now_after_a_cut_resumes_the_same_participant_without_a_new_request() {
+        let mut room = Room::loopback();
+        room.start_sharing();
+        let g = room.join("Marc", Role::Edit);
+        let before = room.guests[g].app().guest.as_ref().unwrap().participant();
+        room.guests[g].app().guest.as_mut().unwrap().cut_connection();
+        room.guests[g].app().guest.as_mut().unwrap().retry_now();
+        let offline = room.guests[g].add_rect(200.0, 0.0, 50.0, 50.0);
+        room.until("the guest to be back", |r| r.guest_state(g) == GuestState::Live && r.host_has(&offline));
+        assert_eq!(room.guests[g].app().guest.as_ref().unwrap().participant(), before, "the same place");
+        assert_eq!(room.members(), ["Marc"]);
+        assert!(room.host.app().share.host.as_ref().unwrap().pending().is_empty(), "no new request to answer");
+    }
+
+    #[test]
+    fn cancelling_a_real_connection_attempt_ends_it_instead_of_waiting_for_the_timeout() {
+        // the handshake would last ten minutes: only the cancellation can end the dial thread, whose end lets the endpoint close
+        let mut room = Room::loopback();
+        let net = GuestNet {
+            net: NetConfig { connect_timeout: Duration::from_secs(600), ..NetConfig::loopback() },
+            session: GuestConfig { relay_url: closed_port_url(), ..GuestConfig::default() },
+            diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+            relays_dir: None,
+            watch_network: false,
+        };
+        let g = room.add_guest_with("Marc", &join_url(&dead_host_ticket()), net);
+        room.turns(20);
+        assert_eq!(room.guest_state(g), GuestState::Joining);
+        room.guests[g].app().leave_guest();
+        assert!(room.guests[g].app().guest.is_none());
+        let mut ended = false;
+        for _ in 0..1500 {
+            if crate::session_net::background_closes_pending() == 0 {
+                ended = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ended, "the attempt and the closing of its endpoint ended");
+    }
 }

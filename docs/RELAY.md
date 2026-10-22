@@ -90,7 +90,12 @@ Follow the minor versions (a minor is fully supported for about three months). S
 
 Inkboard can use a **custom list of relays** instead of the public ones. When you host a session with your relay, the link you share carries your relay's address: **guests do not need to configure anything**, they follow the link (verified in our tests with a local relay: the guest takes its relay from the link). If your guests are on a restricted network, the domain to ask the IT department to allow is your relay's domain (shown by the error window and by "Copy the diagnostic", see [SHARING.md](SHARING.md#restricted-networks-company-school)).
 
-> **To be completed by lot R.** The exact setting (where it is, what it is called, how the list is typed or stored, how to go back to the public relays) is implemented by another work package and is **not described here on purpose**. Describe it here once it exists: location in the interface or in a file, format of the list, default, and a test (start a session, check that the link contains your domain).
+> **The setting: "Custom relays".** It is a list of relays, kept in the file named `relays` in Inkboard's data folder (next to `display_name`), **one `https://…` address per line**; empty lines and repeats are ignored, `http://` and anything else are refused (at most 4 relays). It is read at each start by the host **and** by the guest.
+>
+> - **Host**: in the "Share" window, field "Custom relays" (saved when you leave the field, only if the list is valid; applied the next time you click "Start sharing"). If the file was edited by hand and is invalid, "Start sharing" fails with the reason instead of silently using the public relays.
+> - **Guest**: in the "Join a session" window, section "Custom relays" (checked when you click "Join"). Usually not needed: the link already carries the host's relay.
+> - **Back to the public relays** (the default): empty the field (the file is removed) or delete the file.
+> - **Test**: write your relay (`https://relay.example.org`) in the field, click "Start sharing", copy the link and check that your domain is in it (the link is a ticket; the relay is shown by the error window and by "Copy the diagnostic" when a guest cannot connect).
 
 What the code layer already supports, so that you know what to expect: a setting "default relays / custom list / no relay" exists in the network library; with a custom list, the relays of the link are used as well. That the link's relay address is arbitrary is a point the security review looks at.
 

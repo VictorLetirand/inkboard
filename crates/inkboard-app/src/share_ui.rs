@@ -6,7 +6,8 @@ use crate::app::App;
 use crate::i18n::{t, tr};
 use crate::presence::{Participant, ParticipantKind, PresenceState, RemoteGhost, RemotePerson};
 use crate::session_host::{
-    HostAddress, HostConfig, HostEvent, MemberView, PendingView, SessionHost, SessionNet, load_display_name, save_display_name, world_point,
+    HostAddress, HostConfig, HostEvent, HostTransport, MemberView, PendingView, SessionHost, SessionNet, StartResult, load_display_name, save_display_name,
+    world_point,
 };
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, RichText, Sense, vec2};
@@ -14,7 +15,11 @@ use inkboard_core::Id;
 use inkboard_core::geom::{Pt, Rect};
 use inkboard_session::proto::{ParticipantId, Presence, Role};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
 use std::time::{Duration, Instant};
 
 /// Minimum delay between two sends of the host's own cursor.
@@ -32,11 +37,25 @@ struct Remote {
 /// What the host's own presence message said last: cursor, selection, page, visible area, object being edited.
 type SentPresence = (Option<Pt>, Vec<Id>, Id, Option<Rect>, Option<Id>);
 
+/// A "Start sharing" running on a thread (binding the endpoint and waiting for the relay take up to seconds): the interface stays
+/// usable, and "Cancel" drops it.
+pub struct Starting {
+    rx: Receiver<StartResult>,
+    cancel: Arc<AtomicBool>,
+}
+
 /// Everything the interface keeps about sharing. Absent (`host == None`) = the application is offline, as it is by default.
 pub struct Share {
     /// Network side (`session_net::host_net`, `iroh`): a configuration only, nothing connects before "Start sharing".
     pub net: Option<Box<dyn SessionNet>>,
     pub host: Option<SessionHost>,
+    /// The start in progress, if any ("Starting…" in the Share window).
+    pub starting: Option<Starting>,
+    /// Folder of the `relays` file (the data folder when `None`; tests use a throw-away one).
+    pub data_dir: Option<std::path::PathBuf>,
+    /// The "Custom relays" field: loaded from the file when the window first shows it; the error of the last edit.
+    relays_text: Option<String>,
+    relays_error: Option<String>,
     pub addr: Option<HostAddress>,
     /// The Share window is shown.
     pub open: bool,
@@ -64,6 +83,10 @@ impl Share {
         Self {
             net: None,
             host: None,
+            starting: None,
+            data_dir: None,
+            relays_text: None,
+            relays_error: None,
             addr: None,
             open: false,
             error: None,
@@ -94,21 +117,67 @@ pub fn published_address(addr: &HostAddress, relays_only: bool) -> HostAddress {
     HostAddress { host: addr.host.clone(), relays }
 }
 
-/// "Start sharing": opens the network side and starts the session on the current board.
+/// "Start sharing": opens the network side and starts the session on the current board. A real network opens on a thread (the
+/// interface keeps running, "Starting…" is shown and the start can be cancelled): `tick` finishes the job; a simulated one blocks.
 pub fn start(app: &mut App) {
     app.share.error = None;
+    if app.share.starting.is_some() {
+        return;
+    }
     app.share.links_shown = false;
     let Some(net) = app.share.net.as_mut() else {
         app.share.error = Some(t("Sharing is not available in this build."));
         return;
     };
-    let (transport, addr) = match net.start() {
-        Ok(v) => v,
-        Err(e) => {
-            app.share.error = Some(tr!("Sharing failed: {}", e));
-            return;
+    if let Some(job) = net.start_job() {
+        let (tx, rx) = channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancel);
+        let spawned = std::thread::Builder::new().name("inkboard-share-start".to_owned()).spawn(move || {
+            // a send that fails means the user cancelled: the result (a transport) is dropped here, on this thread
+            let _ = tx.send(job(&flag));
+        });
+        match spawned {
+            Ok(_) => app.share.starting = Some(Starting { rx, cancel }),
+            Err(e) => app.share.error = Some(tr!("Sharing failed: {}", e)),
         }
-    };
+        return;
+    }
+    match net.start() {
+        Ok((transport, addr)) => begin_host(app, transport, addr),
+        Err(e) => app.share.error = Some(tr!("Sharing failed: {}", e)),
+    }
+}
+
+/// "Cancel" while starting: the thread ends on its own and what it opened is closed.
+pub fn cancel_start(app: &mut App) {
+    if let Some(s) = app.share.starting.take() {
+        s.cancel.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Finishes a start that ran on a thread (call on every frame).
+fn poll_start(app: &mut App, ctx: &egui::Context) {
+    let Some(s) = app.share.starting.as_ref() else { return };
+    match s.rx.try_recv() {
+        Ok(Ok((transport, addr))) => {
+            app.share.starting = None;
+            begin_host(app, transport, addr);
+        }
+        Ok(Err(e)) => {
+            app.share.starting = None;
+            app.share.error = Some(tr!("Sharing failed: {}", e));
+        }
+        Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(100)),
+        Err(TryRecvError::Disconnected) => {
+            app.share.starting = None;
+            app.share.error = Some(tr!("Sharing failed: {}", "the network thread stopped"));
+        }
+    }
+}
+
+/// The network side is open: the session starts on the current board.
+fn begin_host(app: &mut App, transport: Box<dyn HostTransport>, addr: HostAddress) {
     let cfg = HostConfig {
         host_name: crate::session_host::sanitize_name(&app.share.host_name, &t("Host")),
         max_participants: app.share.max_participants,
@@ -126,8 +195,9 @@ pub fn start(app: &mut App) {
     }
 }
 
-/// "Stop sharing": tells everybody, closes every connection.
+/// "Stop sharing": tells everybody, closes every connection (the sockets are released on a thread: no wait on screen).
 pub fn stop(app: &mut App) {
+    cancel_start(app);
     if let Some(mut h) = app.share.host.take() {
         h.stop();
         app.toast(&t("Sharing stopped"));
@@ -141,6 +211,7 @@ pub fn stop(app: &mut App) {
 
 /// Call on every frame before drawing: runs the session, forwards the agent and the host's cursor, collects the remote cursors.
 pub fn tick(app: &mut App, ctx: &egui::Context) {
+    poll_start(app, ctx);
     let Some(host) = app.share.host.as_mut() else { return };
     let now_ms = match &app.share.test_clock {
         Some(c) => c.load(std::sync::atomic::Ordering::Relaxed),
@@ -283,7 +354,9 @@ pub fn title_button(app: &mut App, ui: &mut egui::Ui) {
 
 enum Act {
     Start,
+    CancelStart,
     Stop,
+    Relays(String),
     Accept(u64, Role),
     Decline(u64),
     Kick(ParticipantId),
@@ -302,6 +375,24 @@ fn role_label(r: Role) -> String {
         Role::Edit => t("Can edit"),
         Role::View => t("Can view"),
     }
+}
+
+/// The "Custom relays" field was edited: a valid list (https only) is saved in the `relays` file, otherwise the field says why and
+/// nothing is saved.
+pub fn set_relays(app: &mut App, text: &str) {
+    match crate::session_net::parse_relay_list(text) {
+        Ok(urls) => {
+            crate::session_net::save_relays_to(&relays_dir(&app.share), &urls);
+            app.share.relays_text = Some(urls.join("\n"));
+            app.share.relays_error = None;
+        }
+        Err(e) => app.share.relays_error = Some(e.message()),
+    }
+}
+
+/// Folder of the `relays` file.
+fn relays_dir(share: &Share) -> std::path::PathBuf {
+    share.data_dir.clone().unwrap_or_else(inkboard_mcp::live::data_dir)
 }
 
 /// Draws the consent window (when somebody waits) and the Share window (when open). Call after the application frame.
@@ -363,6 +454,10 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
     let count = app.share.host.as_ref().map_or(1, SessionHost::participant_count);
     let following = app.agent.remote.following;
     let p = theme::current(ctx);
+    let starting = app.share.starting.is_some();
+    if app.share.relays_text.is_none() {
+        app.share.relays_text = Some(crate::session_net::read_relays_text(&relays_dir(&app.share)));
+    }
     let share = &mut app.share;
     egui::Window::new(t("Share"))
         .id(egui::Id::new("share-window"))
@@ -406,9 +501,32 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
             if ui.checkbox(&mut auto, t("Let people with the read-only link in without asking")).changed() {
                 acts.push(Act::AutoView(auto));
             }
+            ui.label(t("Custom relays"));
+            let text = share.relays_text.get_or_insert_with(String::new);
+            let r = ui.add(egui::TextEdit::multiline(text).desired_rows(2).desired_width(f32::INFINITY).hint_text("https://relay.example.org"));
+            if r.lost_focus() {
+                acts.push(Act::Relays(text.clone()));
+            }
+            let hint = if running {
+                t("One https:// address per line. Used the next time sharing starts.")
+            } else {
+                t("One https:// address per line. Empty: the public relays.")
+            };
+            ui.label(RichText::new(hint).small().color(p.mute));
+            if let Some(e) = &share.relays_error {
+                ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), e);
+            }
             ui.separator();
             if !running {
-                if ui.button(t("Start sharing")).clicked() {
+                if starting {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(t("Starting…"));
+                        if ui.button(t("Cancel")).clicked() {
+                            acts.push(Act::CancelStart);
+                        }
+                    });
+                } else if ui.button(t("Start sharing")).clicked() {
                     acts.push(Act::Start);
                 }
                 return;
@@ -502,7 +620,9 @@ fn participant_row(ui: &mut egui::Ui, share: &mut Share, following: Option<u32>,
 fn apply(app: &mut App, ctx: &egui::Context, act: Act) {
     match act {
         Act::Start => start(app),
+        Act::CancelStart => cancel_start(app),
         Act::Stop => stop(app),
+        Act::Relays(text) => set_relays(app, &text),
         Act::Accept(r, role) => {
             if let Some(h) = app.share.host.as_mut() {
                 h.accept(r, role);

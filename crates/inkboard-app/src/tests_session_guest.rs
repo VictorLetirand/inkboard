@@ -956,3 +956,269 @@ fn capture_lot_d_screenshots() {
 
 #[path = "tests_session_images.rs"]
 mod images;
+
+/* ------------------------------------------------------------------ fast resume after an outage (lot R) */
+
+/// Virtual time only: the network is simulated, the outage and its end are flags, the clock is the simulated one. No assertion about
+/// a real duration.
+mod fast_resume {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicU32};
+
+    #[derive(Default)]
+    struct Net {
+        /// Every attempt to connect fails at once (no network at all).
+        offline: AtomicBool,
+        /// Every attempt returns a connection that never opens (a handshake that hangs).
+        stuck: AtomicBool,
+        /// The detection reports "the network is back", once.
+        back: AtomicBool,
+        /// Times the session told the link that the network changed.
+        notices: AtomicU32,
+        /// Virtual time of each attempt to connect.
+        attempts: Mutex<Vec<u64>>,
+        /// For each connection that never opens: was it closed by the session?
+        stuck_closed: Mutex<Vec<Arc<AtomicBool>>>,
+    }
+
+    impl Net {
+        fn attempts(&self) -> Vec<u64> {
+            self.attempts.lock().unwrap().clone()
+        }
+        fn count(&self) -> usize {
+            self.attempts.lock().unwrap().len()
+        }
+    }
+
+    struct Link {
+        inner: SimTransport,
+        net: Arc<Net>,
+        clock: Arc<AtomicU64>,
+    }
+
+    struct Stuck(Arc<AtomicBool>);
+
+    impl Connection for Stuck {
+        fn peer(&self) -> &str {
+            HOST_ID
+        }
+        fn send(&mut self, _frame: &[u8]) -> Result<(), Error> {
+            Ok(())
+        }
+        fn recv(&mut self) -> Option<Vec<u8>> {
+            None
+        }
+        fn is_open(&self) -> bool {
+            false
+        }
+        fn close(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl GuestLink for Link {
+        fn connect(&mut self, host: &str) -> Result<Box<dyn Connection>, ConnectError> {
+            self.net.attempts.lock().unwrap().push(self.clock.load(Ordering::Relaxed));
+            if self.net.offline.load(Ordering::SeqCst) {
+                return Err(ConnectError::new(ConnectErrorKind::NoNetwork, "no route to the network"));
+            }
+            if self.net.stuck.load(Ordering::SeqCst) {
+                let closed = Arc::new(AtomicBool::new(false));
+                self.net.stuck_closed.lock().unwrap().push(closed.clone());
+                return Ok(Box::new(Stuck(closed)));
+            }
+            GuestLink::connect(&mut self.inner, host)
+        }
+        fn network_changed(&mut self) {
+            self.net.notices.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct Watch(Arc<Net>);
+
+    impl NetWatch for Watch {
+        fn changed(&mut self) -> bool {
+            self.0.back.swap(false, Ordering::SeqCst)
+        }
+    }
+
+    /// The usual world, but the guests are built on a link and a network detection that the test drives.
+    fn world(net: &Arc<Net>) -> World {
+        let mut w = World::new(100);
+        let (sim, clock, net) = (w.net.clone(), w.clock.clone(), net.clone());
+        w.app().join.factory = Some(Box::new(move |ticket, name| {
+            let link = Box::new(Link { inner: sim.transport("guest"), net: net.clone(), clock: clock.clone() });
+            let diag = Arc::new(FakeDiagnoser(zscaler()));
+            let mut s = GuestSession::new(link, diag, ticket, name, Box::new(SeededEntropy::new(3)), Clock::Virtual(clock.clone()), GuestConfig::default());
+            s.set_net_watch(Box::new(Watch(net.clone())));
+            s
+        }));
+        w
+    }
+
+    /// The network goes away under a joined guest: its connection closes, and nothing can be reached any more.
+    fn outage(w: &mut World, net: &Net) {
+        net.offline.store(true, Ordering::SeqCst);
+        w.host.cut();
+        w.host.down = true;
+    }
+
+    fn network_back(w: &mut World, net: &Net) {
+        net.offline.store(false, Ordering::SeqCst);
+        w.host.down = false;
+    }
+
+    #[test]
+    fn the_signal_that_the_network_is_back_triggers_an_attempt_at_once() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        w.join(Role::Edit, "Bob");
+        let pid = w.app().guest.as_ref().unwrap().participant();
+        outage(&mut w, &net);
+        w.pump(400); // 20 s of virtual outage: the attempts are now spaced by the longest pause
+        assert_eq!(w.guest_state(), GuestState::Reconnecting);
+        let before = net.count();
+        assert!(before > 4, "attempts were made during the outage ({before})");
+        network_back(&mut w, &net);
+        net.back.store(true, Ordering::SeqCst);
+        w.pump(25); // 1.25 s of virtual time, far under the pause of 8 s that would otherwise be waited
+        assert!(net.count() > before, "an attempt was made as soon as the detection said so");
+        assert!(net.notices.load(Ordering::SeqCst) >= 1, "the transport was told to probe its paths again");
+        w.pump(40);
+        assert_eq!(w.guest_state(), GuestState::Live);
+        assert_eq!(w.app().guest.as_ref().unwrap().participant(), pid, "same identifier of participant");
+        assert_eq!(w.app().guest.as_ref().unwrap().reconnect_attempt(), 0, "the counter starts again once back");
+        assert!(w.mirrors_host());
+    }
+
+    #[test]
+    fn without_the_signal_the_next_attempt_waits_for_its_spaced_pause() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        w.join(Role::Edit, "Bob");
+        outage(&mut w, &net);
+        w.pump(400);
+        // just after an attempt: the next one is far away
+        for _ in 0..400 {
+            let n = net.count();
+            w.pump(1);
+            if net.count() > n {
+                break;
+            }
+        }
+        network_back(&mut w, &net);
+        let n = net.count();
+        w.pump(25);
+        assert_eq!(net.count(), n, "the control of the test above: nothing starts by itself within the pause");
+        assert_eq!(w.guest_state(), GuestState::Reconnecting);
+    }
+
+    #[test]
+    fn attempts_are_close_together_at_first_and_then_spaced() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        w.join(Role::Edit, "Bob");
+        outage(&mut w, &net);
+        w.pump(1500); // 75 s of virtual outage
+        let times = net.attempts();
+        let gaps: Vec<u64> = times.windows(2).map(|p| p[1] - p[0]).collect();
+        assert!(gaps.len() >= 8, "{gaps:?}");
+        assert!(gaps[..5].iter().all(|g| *g <= 1_100), "close together at first: {gaps:?}");
+        assert!(gaps[5] > gaps[4] && gaps[6] > gaps[5], "then spaced more and more: {gaps:?}");
+        let last = *gaps.last().unwrap();
+        assert!((7_900..=8_100).contains(&last), "up to the longest pause: {gaps:?}");
+    }
+
+    #[test]
+    fn retry_now_abandons_the_attempt_in_progress_and_starts_another_at_once() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        w.join(Role::Edit, "Bob");
+        net.stuck.store(true, Ordering::SeqCst);
+        w.host.cut();
+        w.pump(10);
+        assert_eq!(w.guest_state(), GuestState::Reconnecting);
+        assert_eq!(net.stuck_closed.lock().unwrap().len(), 1, "one attempt, hanging");
+        assert!(!net.stuck_closed.lock().unwrap()[0].load(Ordering::SeqCst));
+        w.app().guest.as_mut().unwrap().retry_now();
+        assert!(net.stuck_closed.lock().unwrap()[0].load(Ordering::SeqCst), "the attempt in progress was really cut");
+        w.pump(2);
+        assert_eq!(net.stuck_closed.lock().unwrap().len(), 2, "a new attempt started without waiting for the old one to expire");
+        assert_eq!(w.app().guest.as_ref().unwrap().reconnect_attempt(), 2);
+        assert!(net.notices.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[test]
+    fn a_hanging_attempt_is_cut_after_its_own_short_limit_and_the_next_one_waits_a_little() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        w.join(Role::Edit, "Bob");
+        net.stuck.store(true, Ordering::SeqCst);
+        w.host.cut();
+        w.pump(200); // 10 s of virtual time
+        let closed = net.stuck_closed.lock().unwrap().iter().filter(|c| c.load(Ordering::SeqCst)).count();
+        assert!(closed >= 1, "an attempt that hangs is cut by the session itself");
+        assert!(net.stuck_closed.lock().unwrap().len() <= 3, "and the attempts are not made back to back");
+    }
+
+    #[test]
+    fn the_banner_says_which_attempt_it_is_and_the_button_retries_now() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        w.join(Role::Edit, "Bob");
+        net.stuck.store(true, Ordering::SeqCst);
+        w.host.cut();
+        w.pump(10);
+        assert!(w.t.h.query_by_label_contains("Reconnecting… (attempt 1)").is_some());
+        w.t.h.get_by_label("Retry now").click();
+        w.pump(3);
+        assert_eq!(net.stuck_closed.lock().unwrap().len(), 2);
+        assert!(w.t.h.query_by_label_contains("Reconnecting… (attempt 2)").is_some());
+    }
+
+    #[test]
+    fn cancel_cuts_the_connection_attempt_in_progress() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        net.stuck.store(true, Ordering::SeqCst);
+        let link = join_url(&w.host.ticket(Role::Edit));
+        w.app().open_join_window(Some(link));
+        w.app().submit_join();
+        w.pump(10);
+        assert_eq!(w.guest_state(), GuestState::Joining);
+        assert_eq!(net.stuck_closed.lock().unwrap().len(), 1);
+        assert!(!net.stuck_closed.lock().unwrap()[0].load(Ordering::SeqCst));
+        w.t.h.get_by_label("Cancel").click();
+        w.pump(2);
+        assert!(net.stuck_closed.lock().unwrap()[0].load(Ordering::SeqCst), "Cancel really cut the attempt");
+        assert!(w.app().guest.is_none());
+    }
+
+    #[test]
+    fn custom_relays_typed_in_the_join_window_are_checked_then_saved() {
+        let net = Arc::new(Net::default());
+        let mut w = world(&net);
+        let link = join_url(&w.host.ticket(Role::Edit));
+        w.app().open_join_window(Some(link));
+        w.app().join.window.as_mut().unwrap().relays = "https://ok.example.org\nhttp://insecure.example.org".into();
+        w.app().submit_join();
+        assert!(w.app().guest.is_none(), "an http address is refused: nothing starts");
+        assert!(w.app().join.window.as_ref().unwrap().error.as_deref().is_some_and(|e| e.contains("https://") && e.contains("insecure")));
+        assert!(!w.dir.join("relays").exists(), "nothing saved");
+        w.app().join.window.as_mut().unwrap().relays = "\n  https://relay.example.org  \n\n".into();
+        w.app().submit_join();
+        assert!(w.app().guest.is_some());
+        assert_eq!(std::fs::read_to_string(w.dir.join("relays")).unwrap(), "https://relay.example.org\n");
+        // the next window starts with what is saved; an empty field goes back to the public relays
+        w.app().leave_guest();
+        w.app().open_join_window(None);
+        assert_eq!(w.app().join.window.as_ref().unwrap().relays.trim(), "https://relay.example.org");
+        let link = join_url(&w.host.ticket(Role::Edit));
+        w.app().open_join_window(Some(link));
+        w.app().join.window.as_mut().unwrap().relays.clear();
+        w.app().submit_join();
+        assert!(!w.dir.join("relays").exists());
+    }
+}
