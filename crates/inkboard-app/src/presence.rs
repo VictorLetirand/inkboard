@@ -4,6 +4,8 @@
 //! Everything here is cosmetic: it never touches the document, its history or its revision, nor what the MCP tools answer.
 //! Motion is a pure function of time (`PresenceState::position_at`), so drawing needs no per-frame state update.
 
+use crate::app::App;
+use crate::i18n::{t, tr};
 use crate::render::Cam;
 use eframe::egui::epaint::Mesh;
 use eframe::egui::{self, Color32, FontId, Painter, Pos2, Shape, Stroke, StrokeKind, vec2};
@@ -30,6 +32,10 @@ const OUTBOX_MAX: usize = 256;
 const GLIDE: Duration = Duration::from_millis(90);
 /// A stroke being drawn by somebody else disappears after this long without a new point (its final form arrives as an object).
 const STROKE_IDLE: Duration = Duration::from_secs(3);
+/// Points kept of a stroke somebody else is drawing.
+const MAX_STROKE_POINTS: usize = 20_000;
+/// The "is typing" badge disappears when no presence message renews it (a message comes at least every 2 s).
+const EDITING_IDLE: Duration = Duration::from_secs(6);
 /// Tools that only read the board: shown as a look, never as a move.
 const LOOK_TOOLS: [&str; 7] = ["describe_board", "board_changes", "render", "export", "find_objects", "search_icons", "list_icon_groups"];
 
@@ -195,8 +201,11 @@ impl PresenceState {
         if from.dist(to) > 0.01 {
             self.legs.push(Leg { from, to, start: now, end: now + GLIDE });
         }
+        // a keep-alive repeating the same position is not activity: a resting cursor fades after the idle delay
+        if self.cursor != Some(to) || self.last_activity.is_none() {
+            self.last_activity = Some(now);
+        }
         self.cursor = Some(to);
-        self.last_activity = Some(now);
     }
 
     fn push_leg(&mut self, to: Pt, anchor: Pt, now: Instant, fast: bool) -> Instant {
@@ -252,6 +261,16 @@ pub struct AgentPresence {
 pub struct RemotePerson {
     pub page: Id,
     pub state: PresenceState,
+    /// Object whose text they are editing, and when that was last said (the badge fades when the news stops coming).
+    pub editing: Option<(Id, Instant)>,
+    /// Area of the page they see (what "Follow" follows).
+    pub viewport: Option<Rect>,
+}
+
+impl RemotePerson {
+    pub fn new(page: Id, state: PresenceState) -> Self {
+        Self { page, state, editing: None, viewport: None }
+    }
 }
 
 /// A stroke somebody else is drawing right now (points received so far, in world units).
@@ -262,32 +281,84 @@ pub struct RemoteStroke {
     pub last: Instant,
 }
 
+/// An object somebody else is moving or resizing right now, as they show it (drawn over the board, never part of it).
+#[derive(Clone, Debug)]
+pub struct RemoteGhost {
+    pub author: u32,
+    pub object: inkboard_core::Object,
+    pub last: Instant,
+}
+
 /// Remote participants shown on the canvas: cursor with name, selection outline, stroke in progress. Cosmetic like the rest.
 #[derive(Clone, Debug, Default)]
 pub struct RemotePresence {
     pub people: std::collections::BTreeMap<u32, RemotePerson>,
     pub strokes: std::collections::BTreeMap<Id, RemoteStroke>,
+    /// Objects being moved or resized by somebody else, on the host (a guest's mirror shows them in place instead).
+    pub ghosts: std::collections::BTreeMap<Id, RemoteGhost>,
     /// Page shown to this user: only the people on that page are drawn.
     pub page: Option<Id>,
+    /// The participant whose view this user's view follows.
+    pub following: Option<u32>,
+    /// Page and view set by the last following step: any other value means the user moved the view.
+    follow_set: Option<(Id, inkboard_core::View)>,
+    /// Added to the clock by [`Self::now`]: tests make time pass with it instead of waiting.
+    pub skew: Duration,
 }
 
 impl RemotePresence {
     /// Forgets everything (the session is over).
     pub fn clear(&mut self) {
-        *self = Self::default();
+        *self = Self { skew: self.skew, ..Self::default() };
+    }
+
+    /// The instant presence is timed with.
+    pub fn now(&self) -> Instant {
+        Instant::now() + self.skew
     }
 
     /// Is something drawn that changes with time (the caller then asks for a repaint)?
     pub fn is_animating(&self, now: Instant) -> bool {
-        self.people.values().any(|p| p.state.is_animating(now)) || !self.strokes.is_empty()
+        self.people.values().any(|p| p.state.is_animating(now) || p.editing.is_some()) || !self.strokes.is_empty() || !self.ghosts.is_empty()
     }
 
-    fn paint(&self, painter: &Painter, cam: &Cam, now: Instant) {
-        for p in self.people.values().filter(|p| self.page.as_ref().is_none_or(|cur| *cur == p.page)) {
+    /// New points of a stroke in progress.
+    pub fn add_stroke(&mut self, stroke: Id, author: u32, points: Vec<Pt>, now: Instant) {
+        let s = self.strokes.entry(stroke).or_insert_with(|| RemoteStroke { author, pts: Vec::new(), last: now });
+        if s.pts.len() < MAX_STROKE_POINTS {
+            s.pts.extend(points);
+        }
+        s.last = now;
+    }
+
+    /// The gesture of `author` is over (its result arrived as an ordinary modification) or cannot continue: nothing of it remains drawn.
+    pub fn settle(&mut self, author: u32) {
+        self.strokes.retain(|_, s| s.author != author);
+        self.ghosts.retain(|_, g| g.author != author);
+    }
+
+    /// `author` is still there (a presence message arrived): a gesture held still is not a gesture abandoned.
+    pub fn touch(&mut self, author: u32, now: Instant) {
+        self.strokes.values_mut().filter(|s| s.author == author).for_each(|s| s.last = now);
+        self.ghosts.values_mut().filter(|g| g.author == author).for_each(|g| g.last = now);
+    }
+
+    fn paint(&self, painter: &Painter, cam: &Cam, now: Instant, page: &Page) {
+        let here = |p: &RemotePerson| self.page.as_ref().is_none_or(|cur| *cur == p.page);
+        for p in self.people.values().filter(|p| here(p)) {
             draw_presence(painter, cam, &p.state, now);
+            if let Some((id, _)) = p.editing.as_ref().filter(|(_, seen)| now.saturating_duration_since(*seen) < EDITING_IDLE)
+                && let Some(o) = page.get(id)
+            {
+                draw_editing_badge(painter, cam.rect_s(page.bounds(o)), &p.state.participant);
+            }
         }
         for s in self.strokes.values() {
-            let color = self.people.get(&s.author).map_or(Color32::GRAY, |p| p.state.participant.color);
+            let owner = self.people.get(&s.author);
+            if owner.is_some_and(|p| !here(p)) {
+                continue;
+            }
+            let color = owner.map_or(Color32::GRAY, |p| p.state.participant.color);
             let pts: Vec<Pos2> = s.pts.iter().map(|p| cam.s(*p)).collect();
             if pts.len() >= 2 {
                 painter.add(Shape::line(pts, Stroke::new(3.0_f32, color.gamma_multiply(0.85))));
@@ -295,9 +366,15 @@ impl RemotePresence {
         }
     }
 
-    /// Drops the strokes that have gone quiet.
+    /// Drops what has gone quiet: strokes and moves whose author stopped sending, editing badges nobody renews.
     pub fn prune(&mut self, now: Instant) {
         self.strokes.retain(|_, s| now.saturating_duration_since(s.last) < STROKE_IDLE);
+        self.ghosts.retain(|_, g| now.saturating_duration_since(g.last) < STROKE_IDLE);
+        for p in self.people.values_mut() {
+            if p.editing.as_ref().is_some_and(|(_, seen)| now.saturating_duration_since(*seen) >= EDITING_IDLE) {
+                p.editing = None;
+            }
+        }
     }
 }
 
@@ -317,9 +394,9 @@ impl AgentPresence {
         self.outbox.push_back(ev);
     }
 
-    pub fn paint(&self, painter: &Painter, cam: &Cam, ctx: &egui::Context) {
+    pub fn paint(&self, painter: &Painter, cam: &Cam, ctx: &egui::Context, page: &Page) {
         let now = Instant::now();
-        self.remote.paint(painter, cam, now);
+        self.remote.paint(painter, cam, self.remote.now(), page);
         draw_presence(painter, cam, &self.state, now);
         if self.state.is_animating(now) || self.remote.is_animating(now) {
             ctx.request_repaint();
@@ -468,6 +545,117 @@ pub fn draw_presence(painter: &Painter, cam: &Cam, st: &PresenceState, now: Inst
     painter.galley(badge.min + vec2(6.0, 3.0), galley, Color32::WHITE);
 }
 
+/// "Anna is typing…" above an object whose text somebody is editing: informative only, nothing is locked.
+fn draw_editing_badge(painter: &Painter, frame: egui::Rect, who: &Participant) {
+    let color = who.color;
+    painter.rect_stroke(frame.expand(3.0), 4.0, Stroke::new(2.0_f32, color), StrokeKind::Middle);
+    let galley = painter.layout_no_wrap(tr!("{} is typing…", who.name), FontId::proportional(12.0), Color32::WHITE);
+    let badge = egui::Rect::from_min_size(frame.left_top() + vec2(0.0, -galley.size().y - 14.0), galley.size() + vec2(12.0, 6.0));
+    painter.rect_filled(badge, 8.0, color);
+    painter.galley(badge.min + vec2(6.0, 3.0), galley, Color32::WHITE);
+}
+
+/* ------------------------------------------------------------------ following a participant */
+
+/// Delay of the view's glide toward the followed view (the more, the smoother).
+const FOLLOW_RATE: f32 = 12.0;
+
+/// Starts or stops following `who` (their page and visible area); the view then moves by itself until the user acts.
+pub fn follow(app: &mut App, who: Option<u32>) {
+    app.agent.remote.following = who;
+    app.agent.remote.follow_set = None;
+}
+
+/// Call on every frame before the canvas: the view glides toward the followed participant's, unless the user has just moved it
+/// (zoom, scroll, page change, a key) which ends the following.
+pub fn follow_frame(app: &mut App, ctx: &egui::Context) {
+    let Some(id) = app.agent.remote.following else { return };
+    let cur = (app.ed.current.clone(), app.ed.page().view);
+    let typing = ctx.wants_keyboard_input();
+    let key = !typing && ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })));
+    if app.agent.remote.follow_set.as_ref().is_some_and(|s| *s != cur) || app.editing.is_some() || key {
+        return follow(app, None);
+    }
+    let Some(p) = app.agent.remote.people.get(&id) else { return };
+    let (page, vp, cursor) = (p.page.clone(), p.viewport, p.state.cursor);
+    if app.ed.doc.page(&page).is_some() && app.ed.current != page {
+        app.commit_editing();
+        app.ed.current = page;
+        app.sel.clear();
+    }
+    let view = app.ed.page().view;
+    let (w, h) = (f64::from(app.canvas_size.0.max(100.0)), f64::from(app.canvas_size.1.max(100.0)));
+    let target = match (vp, cursor) {
+        (Some(vp), _) => {
+            let zoom = (w / vp.w.max(1.0)).min(h / vp.h.max(1.0)).clamp(0.05, 8.0);
+            let c = vp.center();
+            inkboard_core::View { x: w / 2.0 - c.x * zoom, y: h / 2.0 - c.y * zoom, zoom }
+        }
+        (None, Some(c)) => inkboard_core::View { x: w / 2.0 - c.x * view.zoom, y: h / 2.0 - c.y * view.zoom, ..view },
+        (None, None) => return,
+    };
+    let dt = ctx.input(|i| i.stable_dt).clamp(0.001, 0.1);
+    let k = f64::from(1.0 - (-FOLLOW_RATE * dt).exp());
+    let close = (target.x - view.x).abs() < 0.5 && (target.y - view.y).abs() < 0.5 && (target.zoom / view.zoom - 1.0).abs() < 0.002;
+    let next = if close {
+        target
+    } else {
+        inkboard_core::View { x: view.x + (target.x - view.x) * k, y: view.y + (target.y - view.y) * k, zoom: view.zoom * (target.zoom / view.zoom).powf(k) }
+    };
+    app.set_view(next);
+    app.agent.remote.follow_set = Some((app.ed.current.clone(), next));
+    if !close {
+        ctx.request_repaint();
+    }
+}
+
+/// The bar "Following Anna — Stop following" and, for a guest, the list of the others with their "Follow" button (the host has its own
+/// in the Share window).
+pub fn follow_ui(app: &mut App, ctx: &egui::Context) {
+    let mut set: Option<Option<u32>> = None;
+    if app.guest_active() {
+        let people: Vec<(u32, String, Color32)> = app.guest.as_ref().map(|g| g.others()).unwrap_or_default();
+        if let Some(f) = app.agent.remote.following
+            && !people.iter().any(|p| p.0 == f)
+        {
+            set = Some(None);
+        }
+        if !people.is_empty() {
+            egui::Area::new(egui::Id::new("guest-people")).anchor(egui::Align2::RIGHT_TOP, vec2(-12.0, 52.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    for (id, name, color) in &people {
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
+                            ui.painter().circle_filled(r.center(), 5.0, *color);
+                            ui.label(name);
+                            let on = app.agent.remote.following == Some(*id);
+                            if ui.small_button(if on { t("Stop following") } else { t("Follow") }).clicked() {
+                                set = Some((!on).then_some(*id));
+                            }
+                        });
+                    }
+                });
+            });
+        }
+    }
+    if let Some(id) = app.agent.remote.following {
+        let name = app.agent.remote.people.get(&id).map_or_else(|| tr!("Participant {}", id), |p| p.state.participant.name.clone());
+        egui::Area::new(egui::Id::new("follow-bar")).anchor(egui::Align2::CENTER_BOTTOM, vec2(0.0, -16.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(tr!("Following {}", name));
+                    if ui.button(t("Stop following")).clicked() {
+                        set = Some(None);
+                    }
+                });
+            });
+        });
+    }
+    if let Some(who) = set {
+        follow(app, who);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,6 +734,30 @@ mod tests {
             assert_eq!(p.outbox.len(), 1);
             assert!(p.state.cursor.is_none() && p.state.last_activity.is_none());
         }
+    }
+
+    #[test]
+    fn remote_strokes_end_with_their_gesture_or_after_the_safety_delay_and_a_sign_of_life_renews_them() {
+        let t0 = Instant::now();
+        let mut r = RemotePresence::default();
+        r.add_stroke(Id("s1".into()), 1, vec![Pt::ZERO, Pt::new(5.0, 5.0)], t0);
+        r.add_stroke(Id("s2".into()), 2, vec![Pt::ZERO], t0);
+        r.settle(1);
+        assert_eq!(r.strokes.len(), 1, "the gesture of author 1 is over");
+        r.touch(2, t0 + Duration::from_secs(2));
+        r.prune(t0 + Duration::from_secs(4));
+        assert_eq!(r.strokes.len(), 1, "author 2 was heard from 2 s ago");
+        r.prune(t0 + Duration::from_secs(6));
+        assert!(r.strokes.is_empty(), "nobody renewed it");
+    }
+
+    #[test]
+    fn a_resting_remote_cursor_fades_even_though_its_position_is_repeated() {
+        let t0 = Instant::now();
+        let mut s = PresenceState::new(Participant { id: "g".into(), name: "Anna".into(), color: Color32::RED, kind: ParticipantKind::Human });
+        s.glide_to(Pt::new(10.0, 10.0), t0);
+        s.glide_to(Pt::new(10.0, 10.0), t0 + Duration::from_secs(4)); // a keep-alive
+        assert_eq!(s.opacity(t0 + IDLE), 0.0);
     }
 
     #[test]

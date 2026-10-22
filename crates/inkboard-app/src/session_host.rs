@@ -443,6 +443,22 @@ pub enum HostEvent {
         id: ParticipantId,
         presence: Box<Presence>,
     },
+    /// An editor is moving or resizing `object`: this is its state for now (relayed to the guests; not part of the board).
+    Transient {
+        id: ParticipantId,
+        object: Id,
+        state: Box<inkboard_core::Object>,
+    },
+    /// New points of a stroke an editor is drawing.
+    Stroke {
+        id: ParticipantId,
+        stroke: Id,
+        points: Vec<Pt>,
+    },
+    /// The gesture of this guest is over (its result was submitted) or its connection dropped: whatever was shown of it goes away.
+    Settled {
+        id: ParticipantId,
+    },
 }
 
 /* ----------------------------------------------------------------------------------------------------------- the host */
@@ -1046,6 +1062,7 @@ impl SessionHost {
                     return self.violation(pid, &Violation::RateExceeded { what: "ephemeral messages" }, 0);
                 }
                 if role == Role::Edit {
+                    self.events.push(HostEvent::Transient { id: pid, object: object.clone(), state: state.clone() });
                     self.broadcast(&Message::Transient { object, state, author: Some(pid) }, Some(pid));
                 }
             }
@@ -1054,6 +1071,7 @@ impl SessionHost {
                     return self.violation(pid, &Violation::RateExceeded { what: "ephemeral messages" }, 0);
                 }
                 if role == Role::Edit {
+                    self.events.push(HostEvent::Stroke { id: pid, stroke: stroke.clone(), points: points.clone() });
                     self.broadcast(&Message::StrokePoints { stroke, points, author: Some(pid) }, Some(pid));
                 }
             }
@@ -1109,6 +1127,7 @@ impl SessionHost {
     }
 
     fn on_submit(&mut self, pid: ParticipantId, s: Submit, ed: &mut Editor) {
+        self.events.push(HostEvent::Settled { id: pid });
         let l = &self.cfg.limits;
         let client_seq = s.client_seq;
         let pages = ed.doc.pages.len() + s.ops.iter().filter(|o| matches!(o, WireOp::AddPage { .. })).count();
@@ -1281,6 +1300,7 @@ impl SessionHost {
                     {
                         m.conn = None;
                         m.away_since = Some(now);
+                        self.events.push(HostEvent::Settled { id: pid });
                     }
                 }
                 _ => {}

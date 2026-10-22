@@ -4,30 +4,33 @@
 
 use crate::app::App;
 use crate::i18n::{t, tr};
-use crate::presence::{Participant, ParticipantKind, PresenceState, RemotePerson};
+use crate::presence::{Participant, ParticipantKind, PresenceState, RemoteGhost, RemotePerson};
 use crate::session_host::{
     HostAddress, HostConfig, HostEvent, MemberView, PendingView, SessionHost, SessionNet, load_display_name, save_display_name, world_point,
 };
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, RichText, Sense, vec2};
+use inkboard_core::Id;
 use inkboard_core::geom::{Pt, Rect};
-use inkboard_core::{Id, View};
 use inkboard_session::proto::{ParticipantId, Presence, Role};
 use std::collections::HashMap;
+use std::sync::{Arc, atomic::AtomicU64};
 use std::time::{Duration, Instant};
 
 /// Minimum delay between two sends of the host's own cursor.
 const PRESENCE_EVERY: Duration = Duration::from_millis(50);
+/// An unchanged presence is still repeated this often: it keeps the cursor, the "is typing" badge and the gestures of the host alive.
+const PRESENCE_KEEPALIVE: Duration = Duration::from_secs(2);
+/// At most this many ghosts (objects being moved by guests) are kept.
+const MAX_GHOSTS: usize = 256;
 
 /// What a guest last said about its view (the cursor itself lives in `app.agent.remote`, drawn by `presence.rs`).
 struct Remote {
-    page: Id,
     selection: Vec<Id>,
-    viewport: Option<Rect>,
 }
 
-/// What the host's own presence message said last: cursor, selection, page, visible area.
-type SentPresence = (Option<Pt>, Vec<Id>, Id, Option<Rect>);
+/// What the host's own presence message said last: cursor, selection, page, visible area, object being edited.
+type SentPresence = (Option<Pt>, Vec<Id>, Id, Option<Rect>, Option<Id>);
 
 /// Everything the interface keeps about sharing. Absent (`host == None`) = the application is offline, as it is by default.
 pub struct Share {
@@ -41,7 +44,8 @@ pub struct Share {
     pub host_name: String,
     pub max_participants: usize,
     pub auto_accept_view: bool,
-    pub following: Option<ParticipantId>,
+    /// Tests: the session's time in ms, moved by hand (the real clock otherwise).
+    pub test_clock: Option<Arc<AtomicU64>>,
     renaming: Option<(ParticipantId, String)>,
     copied: Option<Instant>,
     remote: HashMap<ParticipantId, Remote>,
@@ -62,7 +66,7 @@ impl Share {
             host_name,
             max_participants: HostConfig::default().max_participants,
             auto_accept_view: false,
-            following: None,
+            test_clock: None,
             renaming: None,
             copied: None,
             remote: HashMap::new(),
@@ -117,7 +121,6 @@ pub fn stop(app: &mut App) {
     }
     app.share.addr = None;
     app.share.remote.clear();
-    app.share.following = None;
     app.agent.remote.clear();
 }
 
@@ -126,7 +129,10 @@ pub fn stop(app: &mut App) {
 /// Call on every frame before drawing: runs the session, forwards the agent and the host's cursor, collects the remote cursors.
 pub fn tick(app: &mut App, ctx: &egui::Context) {
     let Some(host) = app.share.host.as_mut() else { return };
-    let now_ms = u64::try_from(app.share.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let now_ms = match &app.share.test_clock {
+        Some(c) => c.load(std::sync::atomic::Ordering::Relaxed),
+        None => u64::try_from(app.share.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    };
     host.poll(&mut app.ed, now_ms);
     if let Some(addr) = app.share.net.as_mut().and_then(|n| n.refresh()) {
         app.share.addr = Some(addr);
@@ -145,6 +151,7 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
 }
 
 fn on_event(app: &mut App, ev: HostEvent, members: &[MemberView]) {
+    let now = app.agent.remote.now();
     match ev {
         HostEvent::JoinRequest { name, .. } => {
             app.toast(&tr!("{} wants to join", name));
@@ -152,74 +159,80 @@ fn on_event(app: &mut App, ev: HostEvent, members: &[MemberView]) {
         }
         HostEvent::Joined { name, .. } => app.toast(&tr!("{} joined", name)),
         HostEvent::Left { id, name } => {
-            app.share.remote.remove(&id);
-            app.agent.remote.people.remove(&id.0);
+            forget_person(app, id);
             app.toast(&tr!("{} left", name));
         }
         HostEvent::Excluded { id, name, .. } => {
-            app.share.remote.remove(&id);
-            app.agent.remote.people.remove(&id.0);
+            forget_person(app, id);
             app.toast(&tr!("{} was removed", name));
         }
         HostEvent::Warned { name, reason, .. } => app.toast(&tr!("{} went over a limit: {}", name, reason)),
         HostEvent::UndoSkipped { .. } => {}
         HostEvent::Presence { id, presence } => {
             let Some(m) = members.iter().find(|m| m.id == id) else { return };
-            let now = Instant::now();
             let (r, g, b) = m.color;
-            let person = app.agent.remote.people.entry(id.0).or_insert_with(|| RemotePerson {
-                page: presence.page.clone(),
-                state: PresenceState::new(Participant {
-                    id: format!("guest-{}", id.0),
-                    name: m.name.clone(),
-                    color: Color32::from_rgb(r, g, b),
-                    kind: ParticipantKind::Human,
-                }),
+            let person = app.agent.remote.people.entry(id.0).or_insert_with(|| {
+                RemotePerson::new(
+                    presence.page.clone(),
+                    PresenceState::new(Participant {
+                        id: format!("guest-{}", id.0),
+                        name: m.name.clone(),
+                        color: Color32::from_rgb(r, g, b),
+                        kind: ParticipantKind::Human,
+                    }),
+                )
             });
             match presence.cursor {
                 Some(c) => person.state.glide_to(c, now),
                 None => person.state.last_activity = Some(now),
             }
             person.page = presence.page.clone();
-            app.share.remote.insert(id, Remote { page: presence.page.clone(), selection: presence.selection.clone(), viewport: presence.viewport });
-            if app.share.following == Some(id) {
-                follow_view(app, id);
+            person.viewport = presence.viewport;
+            person.editing = presence.editing.clone().map(|e| (e, now));
+            app.agent.remote.touch(id.0, now);
+            app.share.remote.insert(id, Remote { selection: presence.selection.clone() });
+        }
+        HostEvent::Transient { id, object, state } => {
+            // only objects the board has: a guest cannot make the host draw things out of nothing
+            let known = app.ed.doc.pages.iter().any(|p| p.index_of(&object).is_some());
+            let ghosts = &mut app.agent.remote.ghosts;
+            if known && (ghosts.len() < MAX_GHOSTS || ghosts.contains_key(&object)) {
+                ghosts.insert(object, RemoteGhost { author: id.0, object: *state, last: now });
             }
         }
+        HostEvent::Stroke { id, stroke, points } => app.agent.remote.add_stroke(stroke, id.0, points, now),
+        HostEvent::Settled { id } => app.agent.remote.settle(id.0),
     }
 }
 
-/// The view follows a participant: same page, same visible area.
-fn follow_view(app: &mut App, id: ParticipantId) {
-    let Some((page, vp)) = app.share.remote.get(&id).and_then(|r| r.viewport.map(|v| (r.page.clone(), v))) else { return };
-    if app.ed.doc.page(&page).is_some() && app.ed.current != page {
-        app.commit_editing();
-        app.ed.current = page;
-        app.sel.clear();
+/// A participant is gone: its cursor, what it was drawing and the following of it end.
+fn forget_person(app: &mut App, id: ParticipantId) {
+    app.share.remote.remove(&id);
+    app.agent.remote.people.remove(&id.0);
+    app.agent.remote.settle(id.0);
+    if app.agent.remote.following == Some(id.0) {
+        crate::presence::follow(app, None);
     }
-    let (w, h) = (f64::from(app.canvas_size.0.max(100.0)), f64::from(app.canvas_size.1.max(100.0)));
-    let zoom = (w / vp.w.max(1.0)).min(h / vp.h.max(1.0)).clamp(0.05, 8.0);
-    let c = vp.center();
-    app.set_view(View { x: w / 2.0 - c.x * zoom, y: h / 2.0 - c.y * zoom, zoom });
 }
 
 fn send_own_presence(app: &mut App, ctx: &egui::Context) {
     if app.share.last_presence.as_ref().is_some_and(|(t0, _)| t0.elapsed() < PRESENCE_EVERY) {
         return;
     }
+    let editing = app.editing.as_ref().map(|e| e.id.clone());
     let view = app.ed.page().view;
     let cursor = ctx.pointer_latest_pos().filter(|p| app.canvas_rect.contains(*p)).map(|p| world_point(p, app.canvas_rect.min, view));
     let z = view.zoom.max(1e-6);
     let (cw, ch) = (f64::from(app.canvas_size.0), f64::from(app.canvas_size.1));
     let viewport = Some(Rect::new(-view.x / z, -view.y / z, cw / z, ch / z));
     let page = app.ed.current.clone();
-    let key: SentPresence = (cursor, app.sel.clone(), page.clone(), viewport);
-    if app.share.last_presence.as_ref().is_some_and(|(_, last)| *last == key) {
+    let key: SentPresence = (cursor, app.sel.clone(), page.clone(), viewport, editing.clone());
+    if app.share.last_presence.as_ref().is_some_and(|(t0, last)| *last == key && t0.elapsed() < PRESENCE_KEEPALIVE) {
         return;
     }
     app.share.last_presence = Some((Instant::now(), key.clone()));
     if let Some(h) = app.share.host.as_mut() {
-        h.send_host_presence(Presence { participant: None, page, cursor, selection: key.1, tool: None, editing: None, viewport });
+        h.send_host_presence(Presence { participant: None, page, cursor, selection: key.1, tool: None, editing, viewport });
     }
 }
 
@@ -227,7 +240,7 @@ fn send_own_presence(app: &mut App, ctx: &egui::Context) {
 fn refresh_remote(app: &mut App, members: &[MemberView]) {
     let page = app.ed.page().clone();
     app.agent.remote.page = Some(page.id.clone());
-    app.agent.remote.prune(Instant::now());
+    app.agent.remote.prune(app.agent.remote.now());
     for (id, p) in &mut app.agent.remote.people {
         let Some(m) = members.iter().find(|m| m.id.0 == *id) else { continue };
         p.state.participant.name.clone_from(&m.name);
@@ -330,6 +343,7 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
         _ => None,
     };
     let count = app.share.host.as_ref().map_or(1, SessionHost::participant_count);
+    let following = app.agent.remote.following;
     let p = theme::current(ctx);
     let share = &mut app.share;
     egui::Window::new(t("Share"))
@@ -409,7 +423,7 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
                 ui.label(format!("{} ({})", share.host.as_ref().map_or("", SessionHost::host_name), t("you")));
             });
             for m in &members {
-                participant_row(ui, share, m, acts);
+                participant_row(ui, share, following, m, acts);
             }
             ui.separator();
             if ui.button(t("Stop sharing")).clicked() {
@@ -421,7 +435,7 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
     }
 }
 
-fn participant_row(ui: &mut egui::Ui, share: &mut Share, m: &MemberView, acts: &mut Vec<Act>) {
+fn participant_row(ui: &mut egui::Ui, share: &mut Share, following: Option<u32>, m: &MemberView, acts: &mut Vec<Act>) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
         ui.painter().circle_filled(r.center(), 5.0, Color32::from_rgb(m.color.0, m.color.1, m.color.2));
@@ -444,9 +458,9 @@ fn participant_row(ui: &mut egui::Ui, share: &mut Share, m: &MemberView, acts: &
         if ui.small_button(role_label(m.role)).on_hover_text(t("Change the access")).clicked() {
             acts.push(Act::SetRole(m.id, other));
         }
-        let following = share.following == Some(m.id);
-        if ui.small_button(if following { t("Stop following") } else { t("Follow") }).clicked() {
-            acts.push(Act::Follow((!following).then_some(m.id)));
+        let on = following == Some(m.id.0);
+        if ui.small_button(if on { t("Stop following") } else { t("Follow") }).clicked() {
+            acts.push(Act::Follow((!on).then_some(m.id)));
         }
         if ui.small_button(t("Remove")).clicked() {
             acts.push(Act::Kick(m.id));
@@ -483,12 +497,7 @@ fn apply(app: &mut App, ctx: &egui::Context, act: Act) {
                 h.rename(id, &name);
             }
         }
-        Act::Follow(id) => {
-            app.share.following = id;
-            if let Some(id) = id {
-                follow_view(app, id);
-            }
-        }
+        Act::Follow(id) => crate::presence::follow(app, id.map(|i| i.0)),
         Act::NewLinks => {
             if let Some(h) = app.share.host.as_mut()
                 && let Err(e) = h.regenerate_links()

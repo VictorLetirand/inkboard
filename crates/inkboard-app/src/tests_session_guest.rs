@@ -336,6 +336,10 @@ impl Drop for World {
     }
 }
 
+// Lot P: presence finishing touches (strokes and moves in progress, typing badge, follow), in their own file.
+#[path = "tests_presence.rs"]
+mod presence_lot;
+
 fn put_on_first_page(w: &World, o: Object) -> WireOp {
     WireOp::Put { page: w.host.seqr.doc().pages[0].id.clone(), object: Box::new(o) }
 }
