@@ -31,7 +31,7 @@ type SentPresence = (Option<Pt>, Vec<Id>, Id, Option<Rect>);
 
 /// Everything the interface keeps about sharing. Absent (`host == None`) = the application is offline, as it is by default.
 pub struct Share {
-    /// Network side, provided by the integration lot (`iroh`); none in this build until then.
+    /// Network side (`session_net::host_net`, `iroh`): a configuration only, nothing connects before "Start sharing".
     pub net: Option<Box<dyn SessionNet>>,
     pub host: Option<SessionHost>,
     pub addr: Option<HostAddress>,
@@ -128,6 +128,9 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
     let Some(host) = app.share.host.as_mut() else { return };
     let now_ms = u64::try_from(app.share.started.elapsed().as_millis()).unwrap_or(u64::MAX);
     host.poll(&mut app.ed, now_ms);
+    if let Some(addr) = app.share.net.as_mut().and_then(|n| n.refresh()) {
+        app.share.addr = Some(addr);
+    }
     for ev in app.agent.outbox.drain(..) {
         host.forward_agent(&ev);
     }

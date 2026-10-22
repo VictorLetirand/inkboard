@@ -20,7 +20,7 @@ use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, TransportAddr};
 use std::fmt::Display;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::runtime::{Builder as RuntimeBuilder, Handle, Runtime};
@@ -41,6 +41,8 @@ const PENDING_ACCEPT: usize = 64;
 const PREAMBLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// On a local `close`, how long to wait for the peer to confirm it has read everything.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+/// Dropping a transport waits this long (at most) for the connections closed just before to be flushed.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn net(cause: NetCause, detail: impl Into<String>) -> Error {
     Error::Network { cause, detail: detail.into() }
@@ -59,11 +61,41 @@ struct Shared {
     fault: Mutex<Option<Error>>,
     /// Set when the peer is gone (end of stream or error): tells the writer to stop.
     gone: watch::Sender<bool>,
+    /// A local close is counted in the transport's `flushing` counter until the writer ends (see `flush_started`).
+    flush_counted: AtomicBool,
+    writer_done: AtomicBool,
 }
 
 impl Shared {
     fn new() -> Arc<Self> {
-        Arc::new(Self { open: AtomicBool::new(true), fault: Mutex::new(None), gone: watch::channel(false).0 })
+        Arc::new(Self {
+            open: AtomicBool::new(true),
+            fault: Mutex::new(None),
+            gone: watch::channel(false).0,
+            flush_counted: AtomicBool::new(false),
+            writer_done: AtomicBool::new(false),
+        })
+    }
+
+    /// The handle stopped writing: until the writer has drained its queue, dropping the transport must wait (frames such as the
+    /// final `Bye` would be lost otherwise). Exactly one of this call and `writer_ended` undoes the count.
+    fn flush_started(&self, flushing: &AtomicUsize) {
+        flushing.fetch_add(1, Ordering::SeqCst);
+        self.flush_counted.store(true, Ordering::SeqCst);
+        if self.writer_done.load(Ordering::SeqCst) {
+            self.flush_finished(flushing);
+        }
+    }
+
+    fn flush_finished(&self, flushing: &AtomicUsize) {
+        if self.flush_counted.swap(false, Ordering::SeqCst) {
+            flushing.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    fn writer_ended(&self, flushing: &AtomicUsize) {
+        self.writer_done.store(true, Ordering::SeqCst);
+        self.flush_finished(flushing);
     }
 
     /// The first call wins and records the cause.
@@ -87,6 +119,8 @@ pub struct IrohConn {
     shared: Arc<Shared>,
     conn: QuicConn,
     max_frame: usize,
+    /// Connections of the transport that are closing but not yet flushed.
+    flushing: Arc<AtomicUsize>,
 }
 
 impl std::fmt::Debug for IrohConn {
@@ -97,13 +131,21 @@ impl std::fmt::Debug for IrohConn {
 
 impl IrohConn {
     /// Starts the two tasks. Must run inside the transport's runtime.
-    fn start(conn: QuicConn, send: SendStream, recv: RecvStream, max_frame: usize) -> Self {
+    fn start(conn: QuicConn, send: SendStream, recv: RecvStream, max_frame: usize, flushing: &Arc<AtomicUsize>) -> Self {
         let shared = Shared::new();
         let (out_tx, out_rx) = mpsc::channel(QUEUE);
         let (in_tx, in_rx) = mpsc::channel(QUEUE);
         tokio::spawn(read_loop(recv, in_tx, shared.clone(), conn.clone(), max_frame));
-        tokio::spawn(write_loop(send, out_rx, shared.clone(), conn.clone()));
-        Self { peer: conn.remote_id().to_string(), out: Some(out_tx), inbox: in_rx, shared, conn, max_frame }
+        tokio::spawn(write_loop(send, out_rx, shared.clone(), conn.clone(), flushing.clone()));
+        Self { peer: conn.remote_id().to_string(), out: Some(out_tx), inbox: in_rx, shared, conn, max_frame, flushing: flushing.clone() }
+    }
+
+    /// Drops the queue's sender: the writer drains what is queued, then closes. Counted so that the transport can wait for it.
+    fn stop_writing(&mut self) {
+        if self.out.is_some() {
+            self.shared.flush_started(&self.flushing);
+            self.out = None;
+        }
     }
 
     /// Why the connection is closed: `None` while open; `Error::Closed` for a plain close, otherwise the cause
@@ -118,7 +160,7 @@ impl IrohConn {
     /// Host side: closes the connection and tells the peer that it was refused (it sees `Network { Refused }`).
     pub fn refuse(&mut self) {
         self.shared.mark_closed(None);
-        self.out = None;
+        self.stop_writing();
         self.conn.close(VarInt::from_u32(CLOSE_REFUSED), b"refused");
     }
 }
@@ -151,7 +193,7 @@ impl Connection for IrohConn {
     /// Flushes the queued frames in the background, then closes the connection.
     fn close(&mut self) {
         self.shared.mark_closed(None);
-        self.out = None;
+        self.stop_writing();
     }
 }
 
@@ -224,7 +266,7 @@ async fn read_loop(mut recv: RecvStream, inbox: mpsc::Sender<Vec<u8>>, shared: A
     }
 }
 
-async fn write_loop(mut send: SendStream, mut queue: mpsc::Receiver<Vec<u8>>, shared: Arc<Shared>, conn: QuicConn) {
+async fn write_loop(mut send: SendStream, mut queue: mpsc::Receiver<Vec<u8>>, shared: Arc<Shared>, conn: QuicConn, flushing: Arc<AtomicUsize>) {
     let mut gone = shared.gone.subscribe();
     // `true` when the local side asked to close: then the queue is drained first and the peer given time to read it.
     let local_close = loop {
@@ -257,6 +299,7 @@ async fn write_loop(mut send: SendStream, mut queue: mpsc::Receiver<Vec<u8>>, sh
         timeout(FLUSH_TIMEOUT, conn.closed()).await.ok();
     }
     conn.close(VarInt::from_u32(CLOSE_NORMAL), b"bye");
+    shared.writer_ended(&flushing);
 }
 
 /* -------------------------------------------------------------- Endpoints */
@@ -318,7 +361,7 @@ fn dial_failure(endpoint: &Endpoint, relays_on: bool, detail: String) -> Error {
     }
 }
 
-async fn dial(endpoint: &Endpoint, addr: EndpointAddr, cfg: &NetConfig, relays_on: bool) -> Result<IrohConn> {
+async fn dial(endpoint: &Endpoint, addr: EndpointAddr, cfg: &NetConfig, relays_on: bool, flushing: &Arc<AtomicUsize>) -> Result<IrohConn> {
     let attempt = async {
         let conn = endpoint.connect(addr, ALPN).await.map_err(|e| dial_failure(endpoint, relays_on, e.to_string()))?;
         let (mut send, recv) = conn.open_bi().await.map_err(|e| map_conn_error(&e))?;
@@ -326,14 +369,14 @@ async fn dial(endpoint: &Endpoint, addr: EndpointAddr, cfg: &NetConfig, relays_o
         Ok::<_, Error>((conn, send, recv))
     };
     match timeout(cfg.connect_timeout, attempt).await {
-        Ok(Ok((conn, send, recv))) => Ok(IrohConn::start(conn, send, recv, cfg.max_frame)),
+        Ok(Ok((conn, send, recv))) => Ok(IrohConn::start(conn, send, recv, cfg.max_frame, flushing)),
         Ok(Err(e)) => Err(e),
         Err(_) => Err(dial_failure(endpoint, relays_on, format!("no answer within {} s", cfg.connect_timeout.as_secs_f32()))),
     }
 }
 
 /// Reads the preamble of a new connection and publishes it, or closes it as refused.
-async fn welcome(incoming: Incoming, max_frame: usize, ready: mpsc::Sender<IrohConn>) {
+async fn welcome(incoming: Incoming, max_frame: usize, ready: mpsc::Sender<IrohConn>, flushing: Arc<AtomicUsize>) {
     let Ok(accepting) = incoming.accept() else { return };
     let Ok(conn) = accepting.await else { return };
     let opened = timeout(PREAMBLE_TIMEOUT, async {
@@ -347,15 +390,15 @@ async fn welcome(incoming: Incoming, max_frame: usize, ready: mpsc::Sender<IrohC
         conn.close(VarInt::from_u32(CLOSE_REFUSED), b"bad preamble");
         return;
     };
-    let guest = IrohConn::start(conn, send, recv, max_frame);
+    let guest = IrohConn::start(conn, send, recv, max_frame, &flushing);
     if let Err(mpsc::error::TrySendError::Full(mut guest)) = ready.try_send(guest) {
         guest.refuse();
     }
 }
 
-async fn accept_loop(endpoint: Endpoint, max_frame: usize, ready: mpsc::Sender<IrohConn>) {
+async fn accept_loop(endpoint: Endpoint, max_frame: usize, ready: mpsc::Sender<IrohConn>, flushing: Arc<AtomicUsize>) {
     while let Some(incoming) = endpoint.accept().await {
-        tokio::spawn(welcome(incoming, max_frame, ready.clone()));
+        tokio::spawn(welcome(incoming, max_frame, ready.clone(), flushing.clone()));
     }
 }
 
@@ -374,6 +417,11 @@ async fn collect_hints(endpoint: &Endpoint, cfg: &NetConfig) -> Vec<String> {
         }
     };
     timeout(cfg.ready_timeout, ready).await.ok();
+    snapshot_hints(endpoint, cfg)
+}
+
+/// What is known now, without waiting.
+fn snapshot_hints(endpoint: &Endpoint, cfg: &NetConfig) -> Vec<String> {
     let mut addr = endpoint.addr();
     addr.addrs.retain(|a| matches!(a, TransportAddr::Relay(_)) || matches!(a, TransportAddr::Ip(sa) if !sa.ip().is_loopback()));
     if cfg.loopback_only {
@@ -400,6 +448,8 @@ pub struct IrohTransport {
     cfg: NetConfig,
     host: Option<HostState>,
     guest: Option<(GuestRelays, Endpoint)>,
+    /// Connections closed by their handle whose writer has not finished flushing: `drop` waits for them.
+    flushing: Arc<AtomicUsize>,
 }
 
 impl std::fmt::Debug for IrohTransport {
@@ -423,13 +473,14 @@ impl IrohTransport {
         let rt = runtime()?;
         let endpoint = rt.block_on(bind_host(&cfg))?;
         let (tx, ready) = mpsc::channel(PENDING_ACCEPT);
-        rt.spawn(accept_loop(endpoint.clone(), cfg.max_frame, tx));
-        Ok(Self { rt: Some(rt), cfg, host: Some(HostState { endpoint, ready }), guest: None })
+        let flushing = Arc::new(AtomicUsize::new(0));
+        rt.spawn(accept_loop(endpoint.clone(), cfg.max_frame, tx, flushing.clone()));
+        Ok(Self { rt: Some(rt), cfg, host: Some(HostState { endpoint, ready }), guest: None, flushing })
     }
 
     /// Guest side: nothing is bound until `connect_ticket`.
     pub fn guest(cfg: NetConfig) -> Result<Self> {
-        Ok(Self { rt: Some(runtime()?), cfg, host: None, guest: None })
+        Ok(Self { rt: Some(runtime()?), cfg, host: None, guest: None, flushing: Arc::new(AtomicUsize::new(0)) })
     }
 
     pub fn config(&self) -> &NetConfig {
@@ -451,6 +502,12 @@ impl IrohTransport {
     pub fn hints(&self) -> Result<Vec<String>> {
         let host = self.host.as_ref().ok_or(Error::Unexpected("this transport was not created with IrohTransport::host"))?;
         Ok(self.rt().block_on(collect_hints(&host.endpoint, &self.cfg)))
+    }
+
+    /// Host side: the hints known right now (no waiting; empty for a guest). They improve while the relay and the local addresses
+    /// are discovered: compare with the ones in use to refresh the links.
+    pub fn current_hints(&self) -> Vec<String> {
+        self.host.as_ref().map(|h| snapshot_hints(&h.endpoint, &self.cfg)).unwrap_or_default()
     }
 
     /// Host side: the ticket of the link for `role` (identity and hints of this endpoint, key of the role).
@@ -486,7 +543,7 @@ impl IrohTransport {
                 e
             }
         };
-        rt.block_on(dial(&endpoint, addr, cfg, relays != GuestRelays::Off))
+        rt.block_on(dial(&endpoint, addr, cfg, relays != GuestRelays::Off, &self.flushing))
     }
 }
 
@@ -515,7 +572,16 @@ impl Drop for IrohTransport {
         // Closing gracefully needs `block_on`, which is forbidden inside an async runtime: skip it there.
         if Handle::try_current().is_err() {
             let endpoints: Vec<Endpoint> = self.host.take().map(|h| h.endpoint).into_iter().chain(self.guest.take().map(|(_, e)| e)).collect();
+            let flushing = self.flushing.clone();
             rt.block_on(async {
+                // connections closed just before (the final `Bye`) get the time to deliver their queue
+                timeout(DRAIN_TIMEOUT, async {
+                    while flushing.load(Ordering::SeqCst) > 0 {
+                        sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .ok();
                 for e in endpoints {
                     timeout(Duration::from_secs(2), e.close()).await.ok();
                 }

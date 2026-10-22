@@ -232,6 +232,37 @@ fn ticket_hints_round_trip_through_the_iroh_address() {
 }
 
 #[test]
+fn dropping_a_transport_right_after_closing_its_connections_delivers_the_last_frames() {
+    let (mut host, keys) = host();
+    let ticket = host.ticket(&keys, Role::Edit).unwrap();
+    let mut guest = IrohTransport::guest(cfg()).unwrap();
+    let mut g = guest.connect_ticket(&ticket).unwrap();
+    g.send(b"hello").unwrap();
+    let mut h = accept(&mut host);
+    assert_eq!(recv(&mut h), b"hello");
+    // what the application does when sharing stops: the last message, close, release the transport at once
+    for i in 0..20u8 {
+        h.send(&[i; 2000]).unwrap();
+    }
+    h.close();
+    drop(host);
+    for i in 0..20u8 {
+        assert_eq!(recv(&mut g), vec![i; 2000]);
+    }
+    wait_for("the guest to see the end", || (!g.is_open()).then_some(()));
+}
+
+#[test]
+fn current_hints_are_available_without_waiting_and_match_the_ticket() {
+    let (host, keys) = host();
+    let ticket = host.ticket(&keys, Role::Edit).unwrap();
+    assert_eq!(host.current_hints(), ticket.relays);
+    assert!(!ticket.relays.is_empty());
+    let guest = IrohTransport::guest(cfg()).unwrap();
+    assert!(guest.current_hints().is_empty());
+}
+
+#[test]
 fn defaults_follow_the_decisions_of_the_plan() {
     let cfg = NetConfig::default();
     assert_eq!(cfg.idle_timeout, Duration::from_secs(120));

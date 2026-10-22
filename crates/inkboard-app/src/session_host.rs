@@ -60,6 +60,12 @@ pub struct HostAddress {
 pub trait SessionNet {
     /// Opens the network side of a session: starts listening for guests and tells how to reach this host.
     fn start(&mut self) -> Result<(Box<dyn HostTransport>, HostAddress), String>;
+
+    /// Called on every frame while the session runs: a better address than the one `start` gave (a relay that answered late, a new
+    /// network interface), which the links should use from now on. `None` when nothing changed.
+    fn refresh(&mut self) -> Option<HostAddress> {
+        None
+    }
 }
 
 /* --------------------------------------------------------------------------------------------------------------- settings */

@@ -97,6 +97,11 @@ impl App {
     }
 
     fn start_joining(&mut self, ticket: Ticket, name: &str) {
+        if self.join.factory.is_none() {
+            return;
+        }
+        // a board is either hosted or joined: the host side is not polled while a guest session is open
+        crate::share_ui::stop(self);
         let Some(make) = self.join.factory.as_ref() else { return };
         let session = make(ticket.clone(), name);
         self.join.last = Some((ticket, name.to_owned()));

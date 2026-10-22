@@ -23,6 +23,7 @@ inkboard-formats = { path = "../inkboard-formats" }
 inkboard-mcp = { path = "../inkboard-mcp" }
 inkboard-icons = { path = "../inkboard-icons" }
 inkboard-session = { path = "../inkboard-session" }
+inkboard-net = { path = "../inkboard-net" }
 sys-locale = "0.3"
 
 [build-dependencies]

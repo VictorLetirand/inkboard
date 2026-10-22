@@ -2621,6 +2621,7 @@ dependencies = [
  "inkboard-formats",
  "inkboard-icons",
  "inkboard-mcp",
+ "inkboard-net",
  "inkboard-pen",
  "inkboard-session",
  "raw-window-handle",

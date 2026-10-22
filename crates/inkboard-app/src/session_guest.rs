@@ -203,6 +203,12 @@ impl ConnectError {
 /// What a guest needs from the network: open a connection to the host named in the ticket. Any `Transport` is one.
 pub trait GuestLink {
     fn connect(&mut self, host: &str) -> Result<Box<dyn Connection>, ConnectError>;
+
+    /// For links that connect in the background (the application must not freeze while a network handshake runs): `connect` then
+    /// returns at once with a connection that is not open yet, and the reason why it never opened is taken here.
+    fn take_failure(&mut self) -> Option<ConnectError> {
+        None
+    }
 }
 
 impl<T: Transport> GuestLink for T
@@ -640,6 +646,14 @@ impl GuestSession {
         std::mem::take(&mut self.changes)
     }
 
+    /// Tests: the network drops under the session (the connection closes without the session having decided anything).
+    #[cfg(test)]
+    pub fn cut_connection(&mut self) {
+        if let Some(c) = self.conn.as_mut() {
+            c.close();
+        }
+    }
+
     /// The user leaves: the host is told, the connection closed. The mirror remains available.
     pub fn leave(&mut self) {
         if matches!(self.stage, Stage::Ended(_)) {
@@ -684,8 +698,9 @@ impl GuestSession {
         self.flush();
     }
 
+    /// The relay of the link to diagnose (the hints also hold direct addresses, which are not a connection service).
     fn relay_url(&self) -> String {
-        self.ticket.relays.first().cloned().unwrap_or_else(|| self.cfg.relay_url.clone())
+        self.ticket.relays.iter().find(|h| h.starts_with("http://") || h.starts_with("https://")).cloned().unwrap_or_else(|| self.cfg.relay_url.clone())
     }
 
     fn try_connect(&mut self, now: u64) {
@@ -773,6 +788,11 @@ impl GuestSession {
             return self.connection_lost(now, ConnectErrorKind::Other, "the connection was closed");
         }
         if !self.conn_opened {
+            if let Some(e) = self.link.take_failure() {
+                // same as an attempt that fails at once: reported before the first welcome, retried with a pause afterwards
+                self.conn = None;
+                return self.connect_failed(e.kind, &e.detail, now);
+            }
             if now.saturating_sub(self.connecting_since) >= self.cfg.connect_timeout_ms {
                 self.connection_lost(now, ConnectErrorKind::TimedOut, "the connection could not be established in time");
             }
