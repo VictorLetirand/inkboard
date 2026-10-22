@@ -19,8 +19,9 @@ use crate::i18n::{t, tr};
 use crate::join_ui::SessionFactory;
 use crate::session_guest::{Clock, ConnectError, ConnectErrorKind, Diagnosis, GuestConfig, GuestLink, GuestSession, NetWatch, RelayDiagnoser};
 use crate::session_host::{HostAddress, HostTransport, SessionNet, StartJob, StartResult};
+use inkboard_net::diagnose::{DiagnoseOptions, diagnose_relay_with};
 use inkboard_net::ticket::MAX_HINTS;
-use inkboard_net::{CancelToken, GatewayKind, IrohConn, IrohTransport, NetConfig, RelaySetting, diagnose_relay};
+use inkboard_net::{CancelToken, GatewayKind, IrohConn, IrohTransport, NetConfig, RelaySetting};
 use inkboard_session::crypto::{OsEntropy, Ticket};
 use inkboard_session::error::{Error, NetCause, Result};
 use inkboard_session::transport::{Connection, Transport};
@@ -491,11 +492,19 @@ impl Connection for Dialing {
 /// "answers normally" can be told apart.
 pub struct NetDiagnoser {
     pub timeout: Duration,
+    /// Relays configured by the user (host names or URLs): besides the relays of n0, the only ones that may be on a private address.
+    pub trusted: Vec<String>,
+    /// Test mode: diagnose loopback / plain-HTTP addresses too.
+    pub allow_private: bool,
+    /// Folder of the `relays` file: its relays are configured, hence known (read at each diagnosis, the file may have just changed).
+    pub relays_dir: Option<PathBuf>,
 }
 
 impl RelayDiagnoser for NetDiagnoser {
     fn diagnose(&self, relay_url: &str) -> Diagnosis {
-        let d = diagnose_relay(relay_url, self.timeout);
+        let mut trusted = self.trusted.clone();
+        trusted.extend(self.relays_dir.as_deref().and_then(|d| load_relays_from(d).ok()).unwrap_or_default());
+        let d = diagnose_relay_with(relay_url, self.timeout, &DiagnoseOptions { trusted, allow_private: self.allow_private });
         Diagnosis {
             reachable: d.reachable_tcp,
             http_status: d.http_status,
@@ -524,7 +533,12 @@ impl GuestNet {
         Self {
             net: NetConfig { connect_timeout: GUEST_CONNECT, ..NetConfig::default() },
             session: GuestConfig::default(),
-            diagnoser: Arc::new(NetDiagnoser { timeout: DIAGNOSE }),
+            diagnoser: Arc::new(NetDiagnoser {
+                timeout: DIAGNOSE,
+                trusted: Vec::new(),
+                allow_private: false,
+                relays_dir: Some(inkboard_mcp::live::data_dir()),
+            }),
             relays_dir: Some(inkboard_mcp::live::data_dir()),
             watch_network: true,
         }
@@ -546,7 +560,12 @@ impl GuestNet {
                 failure: Arc::new(Mutex::new(None)),
                 poke: Arc::new(AtomicBool::new(false)),
             });
-            let mut session = GuestSession::new(link, Arc::clone(&self.diagnoser), ticket, name, Box::new(OsEntropy), Clock::real(), self.session.clone());
+            // the relays of the `relays` file are configured by the user: known, no confirmation, advice allowed
+            let mut config = self.session.clone();
+            if let RelaySetting::Custom(urls) = &link.cfg.relays {
+                config.trusted_relays.extend(urls.iter().map(ToString::to_string));
+            }
+            let mut session = GuestSession::new(link, Arc::clone(&self.diagnoser), ticket, name, Box::new(OsEntropy), Clock::real(), config);
             if self.watch_network {
                 session.set_net_watch(Box::new(LocalAddrWatch::default()));
             }

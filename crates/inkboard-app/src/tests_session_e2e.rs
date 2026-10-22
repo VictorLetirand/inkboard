@@ -26,11 +26,16 @@ use std::time::Duration;
 /// Upper bound of the polling loops (turns of one frame per application and a 2 ms pause).
 const TURNS: usize = 3000;
 
+/// Test diagnoser: the servers of these tests are on the loopback interface over plain HTTP (a mode the application never uses).
+fn diagnoser() -> NetDiagnoser {
+    NetDiagnoser { timeout: Duration::from_secs(3), trusted: Vec::new(), allow_private: true, relays_dir: None }
+}
+
 fn loopback_guest() -> GuestNet {
     GuestNet {
         net: NetConfig { connect_timeout: Duration::from_secs(10), ..NetConfig::loopback() },
         session: GuestConfig::default(),
-        diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+        diagnoser: Arc::new(diagnoser()),
         relays_dir: None,
         watch_network: false,
     }
@@ -437,7 +442,7 @@ fn join_a_dead_host(relay_url: String) -> (Room, usize, crate::session_guest::Ne
     let net = GuestNet {
         net: NetConfig { connect_timeout: Duration::from_secs(1), ..NetConfig::loopback() },
         session: GuestConfig { relay_url, ..GuestConfig::default() },
-        diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+        diagnoser: Arc::new(diagnoser()),
         relays_dir: None,
         watch_network: false,
     };
@@ -487,7 +492,7 @@ fn a_failed_join_does_not_freeze_the_interface() {
     let net = GuestNet {
         net: NetConfig { connect_timeout: Duration::from_secs(1), ..NetConfig::loopback() },
         session: GuestConfig { relay_url: closed_port_url(), ..GuestConfig::default() },
-        diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+        diagnoser: Arc::new(diagnoser()),
         relays_dir: None,
         watch_network: false,
     };
@@ -503,10 +508,9 @@ fn a_failed_join_does_not_freeze_the_interface() {
 #[test]
 fn network_errors_are_classified_for_the_guest() {
     use crate::session_guest::RelayDiagnoser;
-    let d =
-        NetDiagnoser { timeout: Duration::from_secs(3) }.diagnose(&serve("HTTP/1.1 403 Forbidden\r\nServer: Zscaler/6.2\r\nConnection: close\r\n\r\nblocked"));
+    let d = diagnoser().diagnose(&serve("HTTP/1.1 403 Forbidden\r\nServer: Zscaler/6.2\r\nConnection: close\r\n\r\nblocked"));
     assert!(d.reachable && d.http_status == Some(403) && d.gateway.as_deref() == Some("Zscaler"), "{d:?}");
-    let d = NetDiagnoser { timeout: Duration::from_secs(3) }.diagnose(&closed_port_url());
+    let d = diagnoser().diagnose(&closed_port_url());
     assert!(!d.reachable && d.gateway.is_none() && d.http_status.is_none(), "{d:?}");
 }
 
@@ -777,7 +781,7 @@ mod lot_r {
         let net = GuestNet {
             net: NetConfig { connect_timeout: Duration::from_secs(600), ..NetConfig::loopback() },
             session: GuestConfig { relay_url: closed_port_url(), ..GuestConfig::default() },
-            diagnoser: Arc::new(NetDiagnoser { timeout: Duration::from_secs(3) }),
+            diagnoser: Arc::new(diagnoser()),
             relays_dir: None,
             watch_network: false,
         };

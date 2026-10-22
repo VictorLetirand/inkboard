@@ -318,6 +318,46 @@ fn an_image_over_the_size_limit_is_cancelled_locally_with_a_message() {
 }
 
 #[test]
+fn a_vector_image_with_a_filter_is_cancelled_locally_with_a_message() {
+    let mut r = Room::new(12, |_| {});
+    let a = r.join("Anna", Role::Edit);
+    let heavy = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><filter id="f"><feGaussianBlur stdDeviation="300"/></filter><rect width="20" height="20" filter="url(#f)"/></svg>"##;
+    insert_raw(&mut r.guests[a], "image/svg+xml", heavy.to_vec());
+    r.rounds(20);
+    assert!(toast(&mut r.guests[a]).contains("not allowed"), "{}", toast(&mut r.guests[a]));
+    assert!(images_of(&r.app(a).ed).is_empty(), "the image is gone from the guest's board");
+    assert_eq!((r.session(a).chunks_sent, r.host_images()), (0, 0), "nothing was sent");
+    assert_eq!(r.host.members().len(), 1);
+}
+
+#[test]
+fn a_texture_is_never_larger_than_the_graphics_limit() {
+    use crate::render::decode_asset_within;
+    use inkboard_core::model::Asset;
+    for (w, h) in [(20_000, 1), (1, 20_000), (9_000, 300)] {
+        let asset = Asset { mime: "image/png".to_owned(), data: Arc::new(noise_png(w, h, 3)) };
+        for max in [2048usize, 8192] {
+            let img = decode_asset_within(&asset, max).unwrap_or_else(|| panic!("{w}x{h} cannot be shown"));
+            assert!(img.size[0] >= 1 && img.size[1] >= 1 && img.size[0] <= max && img.size[1] <= max, "{w}x{h} -> {:?} for {max}", img.size);
+        }
+        let img = decode_asset(&asset).expect("default limit");
+        assert!(img.size[0] <= 4096 && img.size[1] <= 4096);
+    }
+    // an image that is already small is not touched
+    let small = Asset { mime: "image/png".to_owned(), data: Arc::new(noise_png(30, 20, 4)) };
+    assert_eq!(decode_asset_within(&small, 8192).unwrap().size, [30, 20]);
+    // a tiny file declaring 60 000 x 60 000 pixels is not decoded
+    let bomb = Asset { mime: "image/png".to_owned(), data: Arc::new(bomb_png()) };
+    assert!(decode_asset_within(&bomb, 8192).is_none());
+    // a huge vector image is rasterized within the limit too
+    let wide = Asset {
+        mime: "image/svg+xml".to_owned(),
+        data: Arc::new(br#"<svg xmlns="http://www.w3.org/2000/svg" width="40000" height="10"><rect width="40000" height="10"/></svg>"#.to_vec()),
+    };
+    assert!(decode_asset_within(&wide, 8192).is_some_and(|i| i.size[0] <= 8192));
+}
+
+#[test]
 fn an_image_over_the_quota_is_refused_by_the_host_and_cancelled_on_the_guest() {
     let (first, second) = (noise_png(120, 90, 20), noise_png(120, 90, 21));
     let quota = (first.len() + 100) as u64;

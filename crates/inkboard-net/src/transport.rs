@@ -569,13 +569,32 @@ impl IrohTransport {
 
     /// Guest side: connects to the host named by the ticket. Fails with `Error::Network` and a cause (`RelayUnreachable`,
     /// `HostUnreachable`, `TimedOut`, `Refused`) no later than `connect_timeout`.
+    ///
+    /// The relay URLs of a ticket are written by whoever made the link: those that are not `https` on a public address and an
+    /// ordinary port are dropped (unless they belong to the configured list, or `allow_private_relays` is set: tests) so that a
+    /// link cannot make this machine knock on an internal address. Whether an *unknown* public relay is acceptable is the user's
+    /// call (the application asks before dialing).
     pub fn connect_ticket(&mut self, ticket: &Ticket) -> Result<IrohConn> {
-        self.connect_addr(ticket_to_addr(ticket)?, None)
+        self.connect_addr(self.ticket_addr(ticket)?, None)
+    }
+
+    /// The address of a ticket, without the relays this guest may not use (see [`IrohTransport::connect_ticket`]).
+    fn ticket_addr(&self, ticket: &Ticket) -> Result<EndpointAddr> {
+        let mut addr = ticket_to_addr(ticket)?;
+        let before = addr.addrs.len();
+        addr.addrs.retain(|a| match a {
+            TransportAddr::Relay(url) => self.cfg.allows_ticket_relay(url),
+            _ => true,
+        });
+        if addr.addrs.is_empty() && before > 0 {
+            return Err(net(NetCause::HostUnreachable, "the relay address in the link is not allowed (https on a public address is required)"));
+        }
+        Ok(addr)
     }
 
     /// Like [`IrohTransport::connect_ticket`], but `cancel` ends the attempt at once (`Error::Closed`).
     pub fn connect_ticket_cancellable(&mut self, ticket: &Ticket, cancel: &CancelToken) -> Result<IrohConn> {
-        self.connect_addr(ticket_to_addr(ticket)?, Some(cancel))
+        self.connect_addr(self.ticket_addr(ticket)?, Some(cancel))
     }
 
     /// Tells the endpoints that the network may have changed (the computer woke up, an interface came back): iroh looks at the

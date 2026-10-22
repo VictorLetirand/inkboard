@@ -8,13 +8,14 @@
 //! verification, only to read what the gateway answers, and the diagnosis says so (`tls_trusted == Some(false)`).
 //! Limit: the system proxy settings and the operating system certificate store are not used (neither are they by iroh itself).
 
+use crate::config::{check_relay_url, is_known_relay, is_public_ip};
 use iroh::RelayUrl;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::WebPkiSupportedAlgorithms;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme};
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -73,26 +74,50 @@ pub fn classify_gateway(status: u16, server: Option<&str>, body: &str, tls_trust
     None
 }
 
-/// Requests `url` (the relay's address, `https://` or `http://`) and reports what answers. Never panics, never blocks longer
-/// than about `timeout` (plus a small margin).
+/// What a diagnosis may do. The default is the strict policy; the URL of a link is written by whoever made the link.
+#[derive(Clone, Debug, Default)]
+pub struct DiagnoseOptions {
+    /// Relays configured by the user (host names or URLs), besides the public relays of n0: *known* relays. Only a known relay may
+    /// be on a private address and gets the retry without certificate verification.
+    pub trusted: Vec<String>,
+    /// Test mode: any `http(s)` address is allowed (loopback, LAN) as if it were known.
+    pub allow_private: bool,
+}
+
+/// Requests `url` (the relay's address) and reports what answers. Never panics, never blocks longer than about `timeout` (plus a
+/// small margin). Strict policy (see [`DiagnoseOptions`]): an *unknown* relay (neither one of n0 nor configured) is only contacted
+/// over `https` on a public address, at `/`, with the name resolved first and the connection made to a checked address, and the
+/// certificate must be valid (no retry without verification). A redirect is never followed.
 pub fn diagnose_relay(url: &str, timeout: Duration) -> Diagnosis {
+    diagnose_relay_with(url, timeout, &DiagnoseOptions::default())
+}
+
+/// [`diagnose_relay`] with explicit options.
+pub fn diagnose_relay_with(url: &str, timeout: Duration, opts: &DiagnoseOptions) -> Diagnosis {
     let Ok(parsed) = url.trim().parse::<RelayUrl>() else {
-        return Diagnosis { summary: format!("invalid relay URL: {url}"), ..Diagnosis::new(url) };
+        return Diagnosis { summary: format!("invalid relay URL: {}", printable(url)), ..Diagnosis::new(url) };
     };
-    let Some(host) = parsed.host_str().map(str::to_owned) else {
-        return Diagnosis { summary: format!("invalid relay URL (no host): {url}"), ..Diagnosis::new(url) };
+    let Some(host) = parsed.host_str().map(|h| h.trim_start_matches('[').trim_end_matches(']').to_owned()) else {
+        return Diagnosis { summary: format!("invalid relay URL (no host): {}", printable(url)), ..Diagnosis::new(url) };
     };
+    let known = opts.allow_private || is_known_relay(parsed.as_str(), &opts.trusted);
+    if !known && check_relay_url(parsed.as_str(), false).is_err() {
+        let summary = format!("{}: relay address not contacted (an unknown relay is only diagnosed over https on a public address)", printable(&host));
+        return Diagnosis { summary, ..Diagnosis::new(&host) };
+    }
     let tls = parsed.scheme() == "https";
     let port = parsed.port_or_known_default().unwrap_or(if tls { 443 } else { 80 });
-    let path = match parsed.query() {
-        Some(q) => format!("{}?{q}", parsed.path()),
-        None => parsed.path().to_owned(),
+    // an unknown relay is asked for `/` only: the path and query of the link are not sent
+    let path = match (known, parsed.query()) {
+        (false, _) => "/".to_owned(),
+        (true, Some(q)) => format!("{}?{q}", parsed.path()),
+        (true, None) => parsed.path().to_owned(),
     };
     let (tx, rx) = mpsc::channel();
     let worker_host = host.clone();
     let deadline = Instant::now() + timeout;
     let spawned = std::thread::Builder::new().name("relay-diagnosis".to_owned()).spawn(move || {
-        tx.send(run(&worker_host, port, tls, &path, deadline)).ok();
+        tx.send(run(&worker_host, port, tls, &path, deadline, known)).ok();
     });
     let mut d = Diagnosis::new(&host);
     if spawned.is_err() {
@@ -109,21 +134,35 @@ pub fn diagnose_relay(url: &str, timeout: Duration) -> Diagnosis {
     }
 }
 
-fn run(host: &str, port: u16, tls: bool, path: &str, deadline: Instant) -> Diagnosis {
+/// `known`: a relay of n0 or a configured one (see [`DiagnoseOptions`]). Anything else is only contacted at a public address, and a
+/// certificate that is not valid ends the diagnosis (nothing is read from a server that could not prove who it is).
+fn run(host: &str, port: u16, tls: bool, path: &str, deadline: Instant, known: bool) -> Diagnosis {
     let mut d = Diagnosis::new(host);
-    let sock = match connect_tcp(host, port, deadline) {
+    let addrs = match resolve(host, port, known) {
+        Ok(a) => a,
+        Err(e) => {
+            d.summary = format!("cannot open a TCP connection to {}:{port}: {e}", printable(host));
+            return d;
+        }
+    };
+    let sock = match connect_tcp(&addrs, deadline) {
         Ok(s) => s,
         Err(e) => {
-            d.summary = format!("cannot open a TCP connection to {host}:{port}: {e}");
+            d.summary = format!("cannot open a TCP connection to {}:{port}: {e}", printable(host));
             return d;
         }
     };
     d.reachable_tcp = true;
     let answer = if tls {
         match https(sock, host, path, deadline, true) {
+            Err(Failure::Certificate(_)) if !known => {
+                d.tls_trusted = Some(false);
+                d.summary = format!("{}:{port} reachable, but its certificate is not trusted: nothing was read (unknown relay)", printable(host));
+                return d;
+            }
             Err(Failure::Certificate(_)) => {
                 d.tls_trusted = Some(false);
-                connect_tcp(host, port, deadline).map_err(|e| e.to_string()).and_then(|s| https(s, host, path, deadline, false).map_err(Failure::into_text))
+                connect_tcp(&addrs, deadline).map_err(|e| e.to_string()).and_then(|s| https(s, host, path, deadline, false).map_err(Failure::into_text))
             }
             Err(f) => Err(f.into_text()),
             Ok(raw) => {
@@ -152,6 +191,11 @@ fn run(host: &str, port: u16, tls: bool, path: &str, deadline: Instant) -> Diagn
     d
 }
 
+/// Text that came from the network or from a link, made safe to show and copy: control characters removed, at most 120 characters.
+fn printable(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(120).collect()
+}
+
 fn summarize(d: &Diagnosis, port: u16) -> String {
     let status = d.http_status.map_or_else(|| "no HTTP status".to_owned(), |s| format!("HTTP {s}"));
     let server = d.server_header.as_deref().map(|s| format!(" (Server: {s})")).unwrap_or_default();
@@ -175,10 +219,24 @@ fn remaining(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1))
 }
 
-fn connect_tcp(host: &str, port: u16, deadline: Instant) -> std::io::Result<TcpStream> {
+/// Resolves the name once. Unless the relay is `known`, only public addresses are kept: the connection is made to one of these exact
+/// addresses (no second resolution that could answer differently), and a name that points inside the network is not contacted.
+fn resolve(host: &str, port: u16, known: bool) -> std::io::Result<Vec<SocketAddr>> {
+    let all: Vec<SocketAddr> = (host, port).to_socket_addrs()?.collect();
+    if known {
+        return Ok(all);
+    }
+    let public: Vec<SocketAddr> = all.iter().copied().filter(|a| is_public_ip(a.ip())).collect();
+    if public.is_empty() && !all.is_empty() {
+        return Err(std::io::Error::new(ErrorKind::PermissionDenied, "the name points to a non-public address: not contacted"));
+    }
+    Ok(public)
+}
+
+fn connect_tcp(addrs: &[SocketAddr], deadline: Instant) -> std::io::Result<TcpStream> {
     let mut last = std::io::Error::new(ErrorKind::NotFound, "the name does not resolve to any address");
-    for addr in (host, port).to_socket_addrs()? {
-        match TcpStream::connect_timeout(&addr, remaining(deadline).min(Duration::from_secs(5))) {
+    for addr in addrs {
+        match TcpStream::connect_timeout(addr, remaining(deadline).min(Duration::from_secs(5))) {
             Ok(s) => return Ok(s),
             Err(e) => last = e,
         }
@@ -279,7 +337,7 @@ fn parse_response(raw: &[u8]) -> Option<Response> {
         return None;
     }
     let status = first.next()?.parse().ok()?;
-    let server = lines.filter_map(|l| l.split_once(':')).find(|(k, _)| k.trim().eq_ignore_ascii_case("server")).map(|(_, v)| v.trim().to_owned());
+    let server = lines.filter_map(|l| l.split_once(':')).find(|(k, _)| k.trim().eq_ignore_ascii_case("server")).map(|(_, v)| printable(v.trim()));
     let body = String::from_utf8_lossy(raw.get(end + 4..).unwrap_or(&[])).into_owned();
     Some(Response { status, server, body })
 }
@@ -322,5 +380,24 @@ impl ServerCertVerifier for AcceptAnyCertificate {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.0.supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_that_resolves_to_a_private_address_is_not_contacted_unless_the_relay_is_known() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // `localhost` stands for a public-looking name whose DNS answer points inside the network
+        let d = run("localhost", port, false, "/", Instant::now() + Duration::from_secs(5), false);
+        assert!(!d.reachable_tcp && d.summary.contains("non-public"), "{}", d.summary);
+        assert!(listener.accept().is_err(), "the private address was contacted");
+        // a known (configured) relay may be on a private address: the resolution keeps it
+        assert!(resolve("localhost", port, true).is_ok_and(|a| !a.is_empty()));
+        assert!(resolve("localhost", port, false).is_err());
     }
 }

@@ -236,8 +236,8 @@ pub(crate) fn is_hash(s: &str) -> bool {
 }
 
 /// Longest side and number of pixels a bitmap received from somebody else may declare (read from the header, before any decoding).
-const MAX_IMAGE_SIDE: u32 = 16_384;
-const MAX_IMAGE_PIXELS: u64 = 80_000_000;
+const MAX_IMAGE_SIDE: u32 = inkboard_formats::raster::MAX_BITMAP_SIDE;
+const MAX_IMAGE_PIXELS: u64 = inkboard_formats::raster::MAX_BITMAP_PIXELS;
 
 /// Checks the dimensions a bitmap declares, without decoding it (a tiny file can claim gigabytes of pixels). Vector images are only
 /// required to be text; a bitmap whose header cannot be read passes (it cannot be decoded either). `Err` is a short English reason.
@@ -246,10 +246,24 @@ pub(crate) fn check_image_bounds(data: &[u8], mime: &str) -> Result<(), &'static
         return std::str::from_utf8(data).map(|_| ()).map_err(|_| "the vector image is not valid text");
     }
     // a header that cannot be read declares nothing: the decoder fails on it the same way and the image is drawn as unreadable
-    let Ok(reader) = image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format() else { return Ok(()) };
-    let Ok((w, h)) = reader.into_dimensions() else { return Ok(()) };
+    // (a truncated file whose first bytes do declare huge dimensions is still caught by the plain header reader)
+    let dims = image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().ok().and_then(|r| r.into_dimensions().ok());
+    let Some((w, h)) = dims.or_else(|| inkboard_formats::raster::declared_dimensions(data)) else { return Ok(()) };
     if w == 0 || h == 0 || w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE || u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS {
         return Err("image dimensions out of bounds");
+    }
+    Ok(())
+}
+
+/// What the host accepts from a guest's upload: [`check_image_bounds`], and for a vector image the white list of
+/// `inkboard_formats::raster::check_untrusted_svg` (no filter, pattern, mask, script, external link; bounded complexity), because every
+/// participant will draw it. `Err` is a short English reason (shown to the guest).
+pub(crate) fn check_guest_upload(data: &[u8], mime: &str) -> Result<(), &'static str> {
+    check_image_bounds(data, mime)?;
+    if mime == "image/svg+xml" {
+        // `check_image_bounds` made sure it is text
+        inkboard_formats::raster::check_untrusted_svg(&String::from_utf8_lossy(data))
+            .map_err(|_| "vector image with features that are not allowed (filter, pattern, mask, script, external link) or too complex")?;
     }
     Ok(())
 }
@@ -1305,7 +1319,7 @@ impl SessionHost {
         let Some(mime) = sniff_mime(&data) else {
             return self.refuse_upload(pid, &c.hash, &Violation::Malformed("not an image (png, jpeg, gif, webp or svg)"));
         };
-        if let Err(why) = check_image_bounds(&data, mime) {
+        if let Err(why) = check_guest_upload(&data, mime) {
             return self.refuse_upload(pid, &c.hash, &Violation::Malformed(why));
         }
         if let Err(v) = m.quota.charge(&limits, data.len() as u64) {

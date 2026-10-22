@@ -12,7 +12,7 @@ use inkboard_core::style::Style;
 use inkboard_core::{BoxGeom, Editor, Label};
 use inkboard_session::assets::{AssetAssembler, chunks, hash_hex};
 use inkboard_session::crypto::{FrameCipher, Link, SecureChannel, SeededEntropy, SessionKey, Side, Ticket, join_proof};
-use inkboard_session::proto::{AssetChunk, Hello, Message, PROTO_VERSION, ParticipantId, Presence, RefuseReason, RejectReason, Role, Submit};
+use inkboard_session::proto::{AssetChunk, Hello, Message, PROTO_VERSION, ParticipantId, Presence, RefuseReason, RejectReason, Role, Submit, UploadStatus};
 use inkboard_session::sim::{NetConfig, SimConn, SimNet, SimTransport};
 use inkboard_session::transport::{Connection, Transport};
 use inkboard_session::{Client, ClientConfig, ClientEvent, JsonCodec, WireOp};
@@ -446,6 +446,78 @@ fn quota_of_uploaded_images_per_guest() {
         let quota = raw.received().iter().any(|m| matches!(m, Message::Rejected { reason: RejectReason::Quota, .. }));
         assert_eq!(quota, i == 1, "the second 2 000-byte image goes over 3 000 bytes");
     }
+}
+
+/// Sends a whole image as a hand-made guest and returns what the host answered.
+fn upload_as_raw(w: &mut World, raw: &mut Raw, data: &[u8]) -> Vec<Message> {
+    for c in chunks(data, &hash_hex(data), 1_024) {
+        raw.send(&Message::AssetChunk(c));
+    }
+    w.rounds(3);
+    raw.received()
+}
+
+fn refusal(answers: &[Message]) -> Option<String> {
+    answers.iter().find_map(|m| match m {
+        Message::AssetAck { status: UploadStatus::Refused { reason: RejectReason::Invalid { detail } }, .. } => Some(detail.clone()),
+        _ => None,
+    })
+}
+
+fn stored(answers: &[Message]) -> bool {
+    answers.iter().any(|m| matches!(m, Message::AssetAck { status: UploadStatus::Stored, .. }))
+}
+
+fn gray_png(w: u32, h: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    image::GrayImage::new(w, h).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+    out
+}
+
+#[test]
+fn the_host_refuses_images_that_could_crash_or_freeze_everybody() {
+    let mut w = World::new(12, NetConfig::ideal(), |c| c.max_strikes = 100);
+    let ticket = w.ticket(Role::Edit);
+    let mut raw = Raw::new(&w.net, "evil", &ticket);
+    raw.hello(Role::Edit);
+    w.rounds(3);
+    w.admit_all(Role::Edit);
+    w.rounds(3);
+    raw.received();
+    // S-03: too wide, too tall, and a tiny file declaring 60 000 x 60 000 pixels: refused from the header, nothing is decoded
+    let mut ihdr = b"IHDR".to_vec();
+    ihdr.extend_from_slice(&60_000u32.to_be_bytes());
+    ihdr.extend_from_slice(&60_000u32.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 0, 0, 0, 0]);
+    let mut crc = 0xFFFF_FFFFu32;
+    for b in &ihdr {
+        crc ^= u32::from(*b);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    let mut bomb = b"\x89PNG\r\n\x1a\n\0\0\0\r".to_vec();
+    bomb.extend_from_slice(&ihdr);
+    bomb.extend_from_slice(&(!crc).to_be_bytes());
+    for (what, png) in [("20000x1", gray_png(20_000, 1)), ("1x20000", gray_png(1, 20_000)), ("bomb", bomb)] {
+        let answers = upload_as_raw(&mut w, &mut raw, &png);
+        assert!(refusal(&answers).is_some_and(|d| d.contains("dimensions out of bounds")), "{what}: {answers:?}");
+        assert!(!stored(&answers), "{what}");
+    }
+    // an ordinary image is still welcome
+    assert!(stored(&upload_as_raw(&mut w, &mut raw, &gray_png(64, 48))));
+    // S-02: a filter, a pattern, a link to a local file: refused; a plain drawing is stored
+    let svg = |inner: &str| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">{inner}</svg>"#).into_bytes();
+    for inner in [
+        r##"<filter id="f"><feGaussianBlur stdDeviation="300"/></filter><rect width="9" height="9" filter="url(#f)"/>"##,
+        r##"<pattern id="p" width="2" height="2"><rect width="1" height="1"/></pattern><rect width="9" height="9" fill="url(#p)"/>"##,
+        r##"<image href="C:/Users/x/secret.png" width="9" height="9"/>"##,
+    ] {
+        let answers = upload_as_raw(&mut w, &mut raw, &svg(inner));
+        assert!(refusal(&answers).is_some_and(|d| d.contains("not allowed")), "{inner}: {answers:?}");
+    }
+    assert!(stored(&upload_as_raw(&mut w, &mut raw, &svg(r##"<circle cx="5" cy="5" r="4" fill="#f00"/>"##))));
+    assert_eq!(w.host.members().len(), 1, "warnings, not an exclusion");
 }
 
 /* ------------------------------------------------------------- images */
