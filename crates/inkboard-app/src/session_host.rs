@@ -207,7 +207,7 @@ pub fn unique_name<'a>(name: &str, taken: impl IntoIterator<Item = &'a str>) -> 
 }
 
 fn name_path() -> std::path::PathBuf {
-    inkboard_mcp::live::data_dir().join("display_name")
+    crate::platform::data_dir().join("display_name")
 }
 
 /// The host's name from the data folder (`display_name`, like `language`), when the user chose one.

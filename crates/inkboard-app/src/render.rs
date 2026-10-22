@@ -238,7 +238,7 @@ impl TextureCache {
             ctx.request_repaint();
             return self.map.get(id).and_then(|l| l.iter().min_by_key(|c| c.level.abs_diff(level))).map(|c| c.tex.clone());
         }
-        let t0 = std::time::Instant::now();
+        let t0 = crate::platform::Instant::now();
         let max_side = ctx.input(|i| i.max_texture_side);
         let img = if !is_svg {
             decode_asset_within(asset, max_side)

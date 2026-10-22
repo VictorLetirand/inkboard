@@ -3,6 +3,7 @@
 use crate::fonts::{self, EguiMeasurer};
 use crate::i18n::{t, tr};
 use crate::keymap::{Action, Keymap};
+use crate::platform::{self, Incoming, Instant};
 use crate::render::TextureCache;
 use crate::tools::{Drag, Editing, Tool};
 use crate::ui;
@@ -10,7 +11,7 @@ use eframe::egui::{self, Key, Modifiers};
 use inkboard_core::editor::Order;
 use inkboard_core::*;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub enum Dialog {
     Mermaid {
@@ -94,7 +95,7 @@ pub struct App {
     /// Local server of `inkboard-mcp` live mode (absent in tests and screenshots).
     pub live: Option<crate::live::LiveServer>,
     /// Change reference for the `board_changes` tool (what the user changed since the agent last looked).
-    pub tracker: Option<inkboard_mcp::tools::Snapshot>,
+    pub tracker: Option<crate::live::Tracker>,
     /// Cursor, halos and setting of the MCP agent's presence (cosmetic only).
     pub agent: crate::presence::AgentPresence,
     /// Shared session (host side): off until the user clicks "Share".
@@ -178,7 +179,7 @@ pub struct App {
 }
 
 fn autosave_path() -> PathBuf {
-    inkboard_mcp::live::data_dir().join("autosave.inkboard.json")
+    platform::data_dir().join("autosave.inkboard.json")
 }
 
 impl App {
@@ -210,7 +211,7 @@ impl App {
             icon_bench: None,
             keymap: Keymap::default(),
             pen_force: None,
-            system_image: crate::clipboard::system_image,
+            system_image: platform::system_image,
             eraser_probe: inkboard_pen::eraser_active,
             pen_test: None,
             live: None,
@@ -275,7 +276,7 @@ impl App {
             mirror: Default::default(),
             join: Default::default(),
         };
-        if restore {
+        if restore && platform::PERSISTS {
             let kp = autosave_path().with_file_name("keymap.json");
             match std::fs::read(&kp) {
                 Ok(bytes) => match Keymap::decode_text(&bytes).and_then(|text| Keymap::from_json(&text)) {
@@ -295,7 +296,7 @@ impl App {
         match open {
             // fonts only exist after the first frame: opening is deferred
             Some(p) => app.pending_open = Some(p),
-            None if restore && app.screenshot.is_none() => {
+            None if restore && platform::PERSISTS && app.screenshot.is_none() => {
                 let a = autosave_path();
                 if a.exists() && inkboard_core::serial::load(&a).map(|d| app.ed.reset(d)).is_ok() {
                     app.toast(&t("Previous board restored"));
@@ -406,19 +407,31 @@ impl App {
             Ok(c) => c,
             Err(e) => return self.toast(&tr!("Cannot read file: {}", e)),
         };
-        match crate::library::import(name, &content, &self.measurer) {
+        self.open_text(name, &content, Some(path));
+    }
+
+    /// Opens a file the browser handed over: a name and bytes, no path on disk.
+    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) {
+        match std::str::from_utf8(bytes) {
+            Ok(content) => self.open_text(name, content, None),
+            Err(e) => self.toast(&tr!("Cannot read file: {}", e)),
+        }
+    }
+
+    fn open_text(&mut self, name: &str, content: &str, path: Option<&Path>) {
+        match crate::library::import(name, content, &self.measurer) {
             Ok(imp) => {
-                let native = inkboard_formats::detect(name, &content) == Some(inkboard_formats::Format::Native);
+                let native = inkboard_formats::detect(name, content) == Some(inkboard_formats::Format::Native);
                 let mut doc = imp.doc;
                 if !native {
-                    doc.name = path.file_stem().and_then(|n| n.to_str()).unwrap_or("Imported").to_owned();
+                    doc.name = Path::new(name).file_stem().and_then(|n| n.to_str()).unwrap_or("Imported").to_owned();
                 }
                 self.ed.reset(doc);
                 self.sel.clear();
                 self.textures.clear();
                 self.fit_pending = true;
-                self.path = native.then(|| path.to_path_buf());
-                self.disk_mtime = crate::watch::mtime(path);
+                self.path = path.filter(|_| native).map(Path::to_path_buf);
+                self.disk_mtime = path.and_then(crate::watch::mtime);
                 self.saved_rev = self.ed.revision();
                 let note = imp.report.summary();
                 self.toast(&if note.is_empty() { tr!("\"{}\" opened", name) } else { tr!("\"{}\" opened — {}", name, note) });
@@ -427,12 +440,9 @@ impl App {
         }
     }
 
+    /// On the desktop the chosen file is opened at once; in a browser it arrives later (see `App::poll_platform`).
     pub fn open_dialog(&mut self) {
-        if let Some(p) = rfd::FileDialog::new()
-            .add_filter(t("All boards"), &["inkboard", "json", "drawio", "excalidraw", "canvas", "mmd", "mermaid", "xml"])
-            .add_filter("Inkboard", &["inkboard", "json"])
-            .pick_file()
-        {
+        if let Some(p) = platform::pick_board() {
             self.open_path(&p);
         }
     }
@@ -446,10 +456,26 @@ impl App {
 
     pub fn save_as(&mut self) {
         let name = crate::names::file_name(&self.ed.doc.name, inkboard_core::serial::NATIVE_EXT);
-        if let Some(p) = rfd::FileDialog::new().add_filter("Inkboard", &[inkboard_core::serial::NATIVE_EXT]).set_file_name(&name).save_file() {
+        if platform::DOWNLOADS {
+            return self.download_board(&name);
+        }
+        if let Some(p) = platform::pick_save_path(&name, "Inkboard", &[inkboard_core::serial::NATIVE_EXT]) {
             // a name typed with an older native extension (.inkboard.json, .tableau.json) is kept as typed
             let p = if inkboard_core::serial::is_native_name(&p.to_string_lossy()) { p } else { p.with_extension(inkboard_core::serial::NATIVE_EXT) };
             self.save_to(&p);
+        }
+    }
+
+    /// Browser: the board leaves as a downloaded file (there is no path to write to).
+    fn download_board(&mut self, name: &str) {
+        self.ed.doc.prune_assets();
+        let json = inkboard_core::serial::to_json(&self.ed.doc, false);
+        match platform::download(name, "application/json", json.as_bytes()) {
+            Ok(()) => {
+                self.saved_rev = self.ed.revision();
+                self.toast(&tr!("Downloaded: {}", name));
+            }
+            Err(e) => self.toast(&tr!("Cannot save: {}", e)),
         }
     }
 
@@ -486,13 +512,26 @@ impl App {
         };
         let Some(text) = text else { return self.toast(&t("Nothing to export")) };
         let name = crate::names::file_name(&self.ed.doc.name, ext);
-        if let Some(p) = rfd::FileDialog::new().set_file_name(&name).add_filter(ext, &[ext]).save_file() {
-            let bytes: Result<Vec<u8>, String> = match ext {
+        let to_bytes = |text: String| -> Result<Vec<u8>, String> {
+            match ext {
                 "png" => inkboard_formats::raster::svg_to_png(&text, 2.0).map_err(|e| e.to_string()),
                 "pdf" => inkboard_formats::raster::svg_to_pdf(&text).map_err(|e| e.to_string()),
                 _ => Ok(text.into_bytes()),
+            }
+        };
+        if platform::DOWNLOADS {
+            let mime = match ext {
+                "png" => "image/png",
+                "pdf" => "application/pdf",
+                "svg" => "image/svg+xml",
+                _ => "application/octet-stream",
             };
-            match bytes.and_then(|b| std::fs::write(&p, b).map_err(|e| e.to_string())) {
+            match to_bytes(text).and_then(|b| platform::download(&name, mime, &b)) {
+                Ok(()) => self.toast(&tr!("Downloaded: {}", name)),
+                Err(e) => self.toast(&tr!("Cannot export: {}", e)),
+            }
+        } else if let Some(p) = platform::pick_save_path(&name, ext, &[ext]) {
+            match to_bytes(text).and_then(|b| std::fs::write(&p, b).map_err(|e| e.to_string())) {
                 Ok(()) => self.toast(&tr!("Exported: {}", p.display())),
                 Err(e) => self.toast(&tr!("Cannot export: {}", e)),
             }
@@ -664,7 +703,7 @@ impl App {
         } else {
             self.tool = self.prev_tool;
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+        platform::set_fullscreen(ctx, on);
     }
 
     /// Presentation-mode keys: arrows / space / page keys to navigate, Escape or F5 to quit.
@@ -699,7 +738,17 @@ impl App {
     /// Image files dropped on the window from the file manager: inserted at the center of the view (other files are refused with a message).
     fn dropped_files(&mut self, ctx: &egui::Context) {
         let files: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
-        if files.is_empty() || self.presenting || self.dialog.is_some() {
+        // a browser gives no path, only the name and the content of the file
+        let blobs: Vec<(Option<String>, Vec<u8>)> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter(|f| f.path.is_none() && crate::tools::is_image_file(Path::new(&f.name)))
+                .filter_map(|f| Some((Path::new(&f.name).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase), f.bytes.as_ref()?.to_vec())))
+                .collect()
+        });
+        let other_blobs = ctx.input(|i| i.raw.dropped_files.iter().any(|f| f.path.is_none() && !crate::tools::is_image_file(Path::new(&f.name))));
+        if (files.is_empty() && blobs.is_empty() && !other_blobs) || self.presenting || self.dialog.is_some() {
             return;
         }
         if self.view_only() {
@@ -712,6 +761,33 @@ impl App {
         }
         let at = self.view_center();
         self.insert_image_files(&images, at);
+        if other_blobs {
+            self.toast(&t("Only images can be dropped here"));
+        }
+        self.insert_image_bytes(blobs, at);
+    }
+
+    /// Takes what the browser delivered since the last frame (a picked board or images, a pasted image); empty on the desktop.
+    fn poll_platform(&mut self) {
+        for incoming in platform::poll() {
+            if self.view_only() && !matches!(incoming, Incoming::Board { .. }) {
+                self.toast(&t("You have read-only access: this change was refused."));
+                continue;
+            }
+            match incoming {
+                Incoming::Board { name, bytes } => self.open_bytes(&name, &bytes),
+                Incoming::Images(items) => {
+                    let at = self.view_center();
+                    self.insert_image_bytes(items, at);
+                }
+                Incoming::PastedImage((w, h, rgba)) => {
+                    // the key release that follows must not paste the board's own clipboard as well
+                    self.last_paste_at = Some(Instant::now());
+                    let at = self.view_center();
+                    self.insert_rgba(w, h, &rgba, at);
+                }
+            }
+        }
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -843,7 +919,7 @@ impl App {
 
     fn autosave(&mut self) {
         // the mirror of somebody else's board is never the user's autosave
-        if self.guest_active() {
+        if !platform::PERSISTS || self.guest_active() {
             return;
         }
         if self.dirty() && self.last_autosave.elapsed() > Duration::from_secs(10) {
@@ -929,7 +1005,8 @@ impl App {
                 self.ed.set_background(bg);
             }
             if let Some(spec) = demo.split('|').find_map(|t| t.strip_prefix("iconboard="))
-                && let Ok(lib) = inkboard_icons::Library::open(crate::library::PACK)
+                && let Some(pack) = platform::icon_pack()
+                && let Ok(lib) = inkboard_icons::Library::open(pack)
             {
                 // e.g. `--ui-demo "iconboard=3000"`: a board of that many icons, fitted in the window
                 let n: usize = spec.parse().unwrap_or(500);
@@ -1024,13 +1101,26 @@ impl App {
     }
 }
 
-impl eframe::App for App {
+impl App {
     /// Closing the application ends the shared session cleanly: guests are told, the network threads and sockets are released.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn shutdown(&mut self) {
         crate::share_ui::stop(self);
         self.leave_guest();
         // the sockets close on threads of their own (no freeze); the last `Bye` gets a short chance to leave before the process ends
         crate::session_net::wait_background_closes(std::time::Duration::from_millis(1500));
+    }
+}
+
+impl eframe::App for App {
+    // eframe passes the OpenGL context to `on_exit` only when its `glow` feature is on (not in a `web-wgpu` build)
+    #[cfg(not(all(target_arch = "wasm32", feature = "web-wgpu", not(feature = "web-glow"))))]
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.shutdown();
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "web-wgpu", not(feature = "web-glow")))]
+    fn on_exit(&mut self) {
+        self.shutdown();
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1044,6 +1134,7 @@ impl eframe::App for App {
             crate::theme::apply(ctx, dark);
             self.ui_dark = dark;
         }
+        self.poll_platform();
         self.apply_present_request(ctx);
         self.guest_frame(ctx);
         if self.guest.is_none() {
@@ -1073,7 +1164,7 @@ impl eframe::App for App {
         ui::toast(self, ctx);
         let title = self.title();
         if title != self.last_title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            platform::set_title(ctx, &title);
             self.last_title = title;
         }
         self.autosave();

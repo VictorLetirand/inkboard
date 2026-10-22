@@ -41,7 +41,7 @@ pub enum RelayVerdict {
 /// Looks at the relay hints of a link before anything connects. `configured`: the relays the user configured (host names or URLs).
 /// The hints that are plain socket addresses are direct addresses of the host, not relays.
 pub fn judge_relays(ticket: &Ticket, configured: &[String]) -> RelayVerdict {
-    use inkboard_net::config::{check_relay_url, is_known_relay};
+    use crate::platform::{check_relay_url, is_known_relay};
     let clean = |s: &str| s.chars().filter(char::is_ascii_graphic).take(80).collect::<String>();
     let mut unknown = None;
     for hint in &ticket.relays {
@@ -108,7 +108,7 @@ impl App {
 
     /// Folder of the `relays` file, next to `display_name`.
     fn relays_dir(&self) -> std::path::PathBuf {
-        self.join.name_dir.clone().unwrap_or_else(inkboard_mcp::live::data_dir)
+        self.join.name_dir.clone().unwrap_or_else(crate::platform::data_dir)
     }
 
     fn remember_name(&self, name: &str) {

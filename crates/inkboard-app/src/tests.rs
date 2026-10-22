@@ -1721,7 +1721,7 @@ fn svg_images_are_rasterized_at_the_size_they_are_shown() {
 fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
     use crate::render::TextureCache;
     let ctx = egui::Context::default();
-    let lib = inkboard_icons::Library::open(crate::library::PACK).unwrap();
+    let lib = inkboard_icons::Library::open(inkboard_icons::PACK).unwrap();
     let doc = crate::bench_icons::document(&lib, 300, 300);
     let assets: Vec<(Id, Asset)> = doc.assets.iter().map(|(id, a)| (id.clone(), a.clone())).collect();
     assert!(assets.len() > 250, "{} distinct assets", assets.len());

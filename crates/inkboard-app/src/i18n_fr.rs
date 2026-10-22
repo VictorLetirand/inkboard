@@ -73,6 +73,8 @@ pub const FR: &[(&str, &str)] = &[
         "Impossible de joindre le service de connexion. Un pare-feu ou une passerelle de sécurité ({}) le bloque.",
     ),
     ("Cannot read file: {}", "Lecture impossible : {}"),
+    ("Downloaded: {}", "Téléchargé : {}"),
+    ("Loading the icon library…", "Chargement de la bibliothèque d'icônes…"),
     ("Cannot save: {}", "Enregistrement impossible : {}"),
     ("Cell row {} · column {}", "Cellule ligne {} · colonne {}"),
     ("Center horizontally", "Centrer horizontalement"),

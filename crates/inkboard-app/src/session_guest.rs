@@ -13,6 +13,7 @@
 
 use crate::app::App;
 use crate::i18n::{t, tr};
+use crate::platform::{Instant, check_relay_url, is_known_relay};
 use crate::presence::{self, RemotePerson};
 use crate::session_host::{check_guest_upload, check_image_bounds, image_assets, is_hash, sniff_mime};
 use crate::tools::{Drag, Tool};
@@ -20,7 +21,6 @@ use eframe::egui::{self, Color32};
 use inkboard_core::geom::Pt;
 use inkboard_core::history::Op;
 use inkboard_core::model::{Asset, AssetId, Document, Id, ImageObj, Kind, Object};
-use inkboard_net::config::{check_relay_url, is_known_relay};
 use inkboard_session::assets::{AssetAssembler, hash_hex};
 use inkboard_session::crypto::{Entropy, FrameCipher, OsEntropy, SecureChannel, Side, Ticket, join_proof};
 use inkboard_session::limits::{Limits, RateLimiter};
@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Public relay of the default configuration (used for the diagnosis when the link carries no relay hint).
 pub const DEFAULT_RELAY_URL: &str = "https://euc1-1.relay.n0.iroh.link./";
@@ -136,11 +136,11 @@ pub fn save_name_to(dir: &std::path::Path, name: &str) {
 }
 
 pub fn load_name() -> Option<String> {
-    load_name_from(&inkboard_mcp::live::data_dir())
+    load_name_from(&crate::platform::data_dir())
 }
 
 pub fn save_name(name: &str) {
-    save_name_to(&inkboard_mcp::live::data_dir(), name);
+    save_name_to(&crate::platform::data_dir(), name);
 }
 
 /* ------------------------------------------------------------------ invitation link */

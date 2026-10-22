@@ -2,6 +2,8 @@
 
 // release builds on Windows are GUI programs: no console window behind the application
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+// the web build does not start the desktop-only code (command line, bench modes, host side of the sessions): it is compiled, not used
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
 mod app;
 mod bench_icons;
@@ -15,21 +17,33 @@ mod insert;
 mod join_ui;
 mod keymap;
 mod library;
+#[cfg_attr(not(target_arch = "wasm32"), path = "live.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "live_web.rs")]
 mod live;
 mod names;
 mod panel;
 mod pen_test;
+mod platform;
 mod presence;
 mod render;
 mod rich_edit;
 mod session_guest;
+// the guest side uses a few checks of the host side: it stays compiled on the web, but nothing starts it there
 mod session_host;
+#[cfg_attr(not(target_arch = "wasm32"), path = "session_net.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "session_net_web.rs")]
 mod session_net;
+#[cfg_attr(not(target_arch = "wasm32"), path = "share_ui.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "share_ui_web.rs")]
 mod share_ui;
 mod theme;
 mod tools;
 mod ui;
+#[cfg_attr(not(target_arch = "wasm32"), path = "watch.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "watch_web.rs")]
 mod watch;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -115,17 +129,19 @@ fn parse_args(args: &[String]) -> Launch {
 }
 
 /// Shows an error to the user (a message box: release builds have no console) and prints it.
+#[cfg(not(target_arch = "wasm32"))]
 fn report(title: &str, message: &str) {
     eprintln!("{title}: {message}");
     rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title(title).set_description(message).show();
 }
 
 /// Writes unexpected failures to `crash.log` in the data folder and tells the user, instead of vanishing silently.
+#[cfg(not(target_arch = "wasm32"))]
 fn install_panic_hook() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default(info);
-        let dir = inkboard_mcp::live::data_dir();
+        let dir = platform::data_dir();
         let _ = std::fs::create_dir_all(&dir);
         let log = dir.join("crash.log");
         let text = format!(
@@ -147,6 +163,12 @@ Your last saved file is intact.",
     }));
 }
 
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    web::start();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     let l = parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
     if l.bad_link {
@@ -183,6 +205,7 @@ Updating your graphics driver usually fixes this."
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
     let options = eframe::NativeOptions {
         renderer,
@@ -218,7 +241,7 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
                 a.join.factory = Some(session_net::guest_factory());
             }
             if let Some((n, d)) = l.bench_icons
-                && let Ok(lib) = inkboard_icons::Library::open(library::PACK)
+                && let Ok(lib) = inkboard_icons::Library::open(inkboard_icons::PACK)
             {
                 a.ed = inkboard_core::Editor::new(bench_icons::document(&lib, n, d));
                 a.icon_bench = Some(bench_icons::IconBench::new(n, d));
