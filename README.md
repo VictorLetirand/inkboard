@@ -56,7 +56,7 @@ The installers also provide the `ink` command-line tool and the `inkboard-mcp` s
 
 ### Build from source
 
-You need [Rust](https://rustup.rs) 1.90 or newer.
+You need [Rust](https://rustup.rs) 1.91 or newer.
 
 ```bash
 git clone https://github.com/VictorLetirand/inkboard.git

@@ -23,6 +23,39 @@ pub enum Error {
     Entropy,
     #[error("connection closed")]
     Closed,
+    /// A real transport failed; `cause` lets the interface choose its message, `detail` is for the diagnostic.
+    #[error("{cause}: {detail}")]
+    Network { cause: NetCause, detail: String },
+}
+
+/// Why a real network operation failed (see [`Error::Network`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetCause {
+    /// The relay service cannot be reached (firewall, security gateway, no Internet).
+    RelayUnreachable,
+    /// The host cannot be reached (offline, wrong address, blocked).
+    HostUnreachable,
+    /// An established connection stayed silent for longer than the idle timeout.
+    TimedOut,
+    /// The host actively refused the connection.
+    Refused,
+    /// The outgoing queue is full: the peer or the network is too slow.
+    Congested,
+    /// This machine could not open its network endpoint (no socket, no runtime).
+    Local,
+}
+
+impl std::fmt::Display for NetCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::RelayUnreachable => "cannot reach the connection relay",
+            Self::HostUnreachable => "cannot reach the host",
+            Self::TimedOut => "the connection timed out",
+            Self::Refused => "the host refused the connection",
+            Self::Congested => "the connection is too slow",
+            Self::Local => "the network endpoint of this computer could not start",
+        })
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

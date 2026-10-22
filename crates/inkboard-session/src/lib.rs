@@ -22,7 +22,7 @@ pub mod wire;
 
 pub use client::{Client, ClientConfig, ClientEvent, Phase};
 pub use codec::{Codec, JsonCodec};
-pub use error::{Error, Result};
+pub use error::{Error, NetCause, Result};
 pub use limits::{Limits, Violation};
 pub use proto::{Message, PROTO_VERSION, ParticipantId, Role};
 pub use sequencer::Sequencer;
