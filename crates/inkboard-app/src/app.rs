@@ -97,6 +97,8 @@ pub struct App {
     pub tracker: Option<inkboard_mcp::tools::Snapshot>,
     /// Cursor, halos and setting of the MCP agent's presence (cosmetic only).
     pub agent: crate::presence::AgentPresence,
+    /// Shared session (host side): off until the user clicks "Share".
+    pub share: crate::share_ui::Share,
     /// Modification time of the open file at the last read or write (see `watch.rs`).
     pub disk_mtime: Option<std::time::SystemTime>,
     pub last_watch: Instant,
@@ -204,6 +206,7 @@ impl App {
             live: None,
             tracker: None,
             agent: crate::presence::AgentPresence::new(!restore || crate::presence::load_animate(), screenshot.is_some()),
+            share: crate::share_ui::Share::new(restore),
             disk_mtime: None,
             last_watch: Instant::now(),
             ctx_pos: Pt::ZERO,
@@ -998,6 +1001,7 @@ impl eframe::App for App {
         self.apply_present_request(ctx);
         self.watch_file();
         self.poll_live();
+        crate::share_ui::tick(self, ctx);
         self.shortcuts(ctx);
         self.dropped_files(ctx);
         if self.presenting {
@@ -1007,6 +1011,9 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| crate::tools::canvas(self, ui));
         ui::dialogs(self, ctx);
+        if !self.presenting {
+            crate::share_ui::show(self, ctx);
+        }
         if let Some(r) = self.pen_test.as_mut() {
             r.feed(inkboard_pen::last_sample(), self.pen_force);
             crate::pen_test::panel(r, ctx, self.pen_force);

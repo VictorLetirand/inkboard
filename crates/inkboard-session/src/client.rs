@@ -311,6 +311,7 @@ impl Client {
             | Message::Transient { .. }
             | Message::StrokePoints { .. }
             | Message::Agent(_)
+            | Message::Roster { .. }
             | Message::Follow { .. }
             | Message::Kick { .. }
             | Message::RoleChange { .. }
@@ -318,7 +319,7 @@ impl Client {
                 self.events.push(ClientEvent::Relay(Box::new(m)));
                 Ok(())
             }
-            Message::Hello(_) | Message::Submit(_) | Message::AssetRequest { .. } | Message::Resync { .. } => {
+            Message::Hello(_) | Message::Submit(_) | Message::AssetRequest { .. } | Message::Resync { .. } | Message::Undo | Message::Redo => {
                 Err(Error::Unexpected("a message that only a guest sends"))
             }
         }

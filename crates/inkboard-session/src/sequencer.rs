@@ -108,6 +108,11 @@ impl Sequencer {
         applied
     }
 
+    /// Adds an image to the authoritative document (images do not go through `Applied`: guests fetch them by hash).
+    pub fn insert_asset(&mut self, id: inkboard_core::model::AssetId, asset: inkboard_core::model::Asset) {
+        self.doc.assets.insert(id, asset);
+    }
+
     pub fn snapshot(&self, assets: Vec<crate::proto::AssetInfo>) -> Snapshot {
         Snapshot::new(&self.doc, self.seq, assets)
     }

@@ -72,6 +72,16 @@ pub struct DocMeta {
     pub pages: usize,
 }
 
+/// A person in the session, as listed by the host (the host itself is `ParticipantId::HOST`). The name is chosen by the person but
+/// cleaned and made unique by the host; it is cosmetic, not an identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParticipantInfo {
+    pub id: ParticipantId,
+    pub name: String,
+    pub color: (u8, u8, u8),
+    pub role: Role,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Welcome {
     pub participant: ParticipantId,
@@ -79,6 +89,12 @@ pub struct Welcome {
     pub role: Role,
     pub doc_meta: DocMeta,
     pub host_proto: u32,
+    /// Name of the host, shown as "Session of X".
+    #[serde(default)]
+    pub host_name: String,
+    /// Everybody in the session (the host included) with their names; later changes arrive as `Roster`.
+    #[serde(default)]
+    pub participants: Vec<ParticipantInfo>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +293,13 @@ pub enum Message {
     },
     Presence(Presence),
     Agent(AgentEvent),
+    /// The whole list of participants, sent by the host to everybody when it changes (join, leave, rename, change of role).
+    Roster {
+        participants: Vec<ParticipantInfo>,
+    },
+    /// Guest -> host: undo / redo the guest's own last modification (the host answers with an ordinary `Applied`).
+    Undo,
+    Redo,
     // control
     Follow {
         participant: Option<ParticipantId>,

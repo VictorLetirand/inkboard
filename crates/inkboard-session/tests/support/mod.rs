@@ -156,6 +156,8 @@ impl Host {
                     role,
                     doc_meta: DocMeta { name: doc.name.clone(), seq: self.seqr.seq(), pages: doc.pages.len() },
                     host_proto: inkboard_session::PROTO_VERSION,
+                    host_name: String::new(),
+                    participants: Vec::new(),
                 };
                 self.send(i, &Message::Welcome(welcome));
                 match resumed {

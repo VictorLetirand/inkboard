@@ -20,6 +20,8 @@ mod pen_test;
 mod presence;
 mod render;
 mod rich_edit;
+mod session_host;
+mod share_ui;
 mod theme;
 mod tools;
 mod ui;
@@ -191,6 +193,8 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_session_host;
 #[cfg(test)]
 mod tests_ui;
 #[cfg(test)]

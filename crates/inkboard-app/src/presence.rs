@@ -195,6 +195,15 @@ impl PresenceState {
         end
     }
 
+    /// A remote human moved to `to` (updates arrive about 20 times a second): the cursor glides there briefly and stays active.
+    pub fn follow_to(&mut self, to: Pt, now: Instant) {
+        let from = self.position_at(now).unwrap_or(to);
+        self.legs.clear();
+        self.legs.push(Leg { from, to, start: now, end: now + Duration::from_millis(80) });
+        self.cursor = Some(to);
+        self.last_activity = Some(now);
+    }
+
     /// Applies an agent event. `anchor`: where the cursor first appears (the center of the view).
     pub fn act(&mut self, ev: &AgentEvent, anchor: Pt, now: Instant) {
         self.halos.retain(|h| now.saturating_duration_since(h.start) < HALO_LIFE);
@@ -227,11 +236,13 @@ pub struct AgentPresence {
     pub headless: bool,
     pub state: PresenceState,
     pub outbox: VecDeque<AgentEvent>,
+    /// Remote humans of a shared session who are on the displayed page (set by `share_ui` before each frame), drawn with the agent.
+    pub remote: Vec<PresenceState>,
 }
 
 impl AgentPresence {
     pub fn new(animate: bool, headless: bool) -> Self {
-        Self { animate, headless, state: PresenceState::new(Participant::agent("Claude")), outbox: VecDeque::new() }
+        Self { animate, headless, state: PresenceState::new(Participant::agent("Claude")), outbox: VecDeque::new(), remote: Vec::new() }
     }
 
     /// Records an event (always) and animates it (unless disabled or headless).
@@ -248,7 +259,10 @@ impl AgentPresence {
     pub fn paint(&self, painter: &Painter, cam: &Cam, ctx: &egui::Context) {
         let now = Instant::now();
         draw_presence(painter, cam, &self.state, now);
-        if self.state.is_animating(now) {
+        for r in &self.remote {
+            draw_presence(painter, cam, r, now);
+        }
+        if self.state.is_animating(now) || self.remote.iter().any(|r| r.is_animating(now)) {
             ctx.request_repaint();
         }
     }
