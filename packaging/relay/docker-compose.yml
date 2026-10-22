@@ -1,0 +1,38 @@
+# Example: run your own iroh relay for Inkboard (see docs/RELAY.md).
+#
+# Before starting:
+#   1. point a DNS name (A and/or AAAA record) at this machine;
+#   2. edit relay.toml: `hostname` and `contact`;
+#   3. open TCP 80 and 443 on the machine's firewall.
+#
+#   docker compose up -d
+#   curl --noproxy '*' --fail --show-error https://relay.example.org/healthz
+#
+# The image is the official one published by the iroh project. Keep the tag in step
+# with the iroh version used by your Inkboard build (Inkboard's lockfile: iroh 1.4.1).
+services:
+  iroh-relay:
+    image: n0computer/iroh-relay:v1.4.1
+    # The image's entrypoint is /iroh-relay; we only give the path of the configuration.
+    command: ["--config-path", "/config/relay.toml"]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80/tcp"     # captive-portal / HTTP side (the relay listens on it by default)
+      - "443:443/tcp"   # the relay itself (HTTPS + WebSocket) and the TLS certificate challenge
+      # Only if you set enable_quic_addr_discovery = true in relay.toml:
+      # - "7842:7842/udp"
+    volumes:
+      - ./relay.toml:/config/relay.toml:ro
+      # Certificate cache (Let's Encrypt account and certificate). Not precious: if lost,
+      # the relay asks for a new certificate (mind Let's Encrypt's rate limits).
+      - relay-certs:/var/lib/iroh-relay/certs
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  relay-certs:
