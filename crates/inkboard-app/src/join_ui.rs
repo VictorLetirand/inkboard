@@ -19,6 +19,41 @@ pub struct JoinWindow {
     /// The link came from the system (an `inkboard://` link was opened): it is shown, not typed.
     pub from_system: bool,
     pub error: Option<String>,
+    /// The link names a relay that is neither one of n0 nor a configured one (its domain): the user must confirm before anything connects.
+    pub unknown_relay: Option<String>,
+    /// The user confirmed the unknown relay of this link.
+    pub relay_confirmed: bool,
+}
+
+/// What the relays named by a link mean for the user (see [`judge_relays`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelayVerdict {
+    /// Only direct addresses, relays of n0 or configured relays.
+    Fine,
+    /// A public `https` relay that is not ours (its domain): ask first.
+    Unknown(String),
+    /// A relay address that is never used (not `https`, private/loopback address, odd port, credentials...; its text, cleaned).
+    Refused(String),
+}
+
+/// Looks at the relay hints of a link before anything connects. `configured`: the relays the user configured (host names or URLs).
+/// The hints that are plain socket addresses are direct addresses of the host, not relays.
+pub fn judge_relays(ticket: &Ticket, configured: &[String]) -> RelayVerdict {
+    use inkboard_net::config::{check_relay_url, is_known_relay};
+    let clean = |s: &str| s.chars().filter(char::is_ascii_graphic).take(80).collect::<String>();
+    let mut unknown = None;
+    for hint in &ticket.relays {
+        if hint.parse::<std::net::SocketAddr>().is_ok() || is_known_relay(hint, configured) {
+            continue;
+        }
+        match check_relay_url(hint, false) {
+            Err(_) => return RelayVerdict::Refused(clean(hint)),
+            Ok(url) => {
+                unknown.get_or_insert_with(|| clean(url.host_str().unwrap_or("").trim_end_matches('.')));
+            }
+        }
+    }
+    unknown.map_or(RelayVerdict::Fine, RelayVerdict::Unknown)
 }
 
 /// Everything the application keeps for joining: the window, how to build a session, and the last attempt (to try again).
@@ -29,6 +64,8 @@ pub struct JoinUi {
     pub last: Option<(Ticket, String)>,
     /// Folder of the `display_name` file (the data folder when `None`; tests use a throw-away one).
     pub name_dir: Option<std::path::PathBuf>,
+    /// Relays the user configured (host names or URLs): with the public relays of n0, the only ones a link may name without asking.
+    pub trusted_relays: Vec<String>,
 }
 
 impl std::fmt::Debug for JoinUi {
@@ -63,7 +100,7 @@ impl App {
             None => crate::session_guest::load_name(),
         }
         .unwrap_or_else(|| t("Guest"));
-        self.join.window = Some(JoinWindow { from_system: link.is_some(), link: link.unwrap_or_default(), name, error: None });
+        self.join.window = Some(JoinWindow { from_system: link.is_some(), link: link.unwrap_or_default(), name, ..JoinWindow::default() });
     }
 
     fn remember_name(&self, name: &str) {
@@ -85,6 +122,22 @@ impl App {
                 return;
             }
         };
+        // the relay of a link is chosen by whoever made it: nothing connects to an odd or unknown one without the user's say
+        match judge_relays(&ticket, &self.join.trusted_relays) {
+            RelayVerdict::Refused(text) => {
+                if let Some(win) = self.join.window.as_mut() {
+                    win.error = Some(tr!("This link uses a relay address that is not allowed: {}", text));
+                }
+                return;
+            }
+            RelayVerdict::Unknown(domain) if !w.relay_confirmed => {
+                if let Some(win) = self.join.window.as_mut() {
+                    win.unknown_relay = Some(domain);
+                }
+                return;
+            }
+            _ => {}
+        }
         let name = sanitize_name(&w.name);
         self.remember_name(&name);
         if self.join.factory.is_none() {
@@ -125,6 +178,10 @@ fn modal(title: String) -> egui::Window<'static> {
 fn issue_ui(ui: &mut egui::Ui, issue: &NetIssue, diagnosing: bool) {
     ui.set_max_width(460.0);
     ui.label(RichText::new(issue.headline()).strong().color(ui.visuals().text_color()));
+    if let Some(w) = issue.warning() {
+        ui.add_space(4.0);
+        ui.label(RichText::new(w).strong().color(AMBER));
+    }
     if diagnosing {
         ui.label(RichText::new(t("Checking the connection…")).weak());
     }
@@ -153,8 +210,36 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+/// "This link uses an unknown relay": Cancel / Continue, before anything connects.
+fn unknown_relay_window(app: &mut App, ctx: &egui::Context, mut w: JoinWindow, domain: String) {
+    let (mut go, mut cancel) = (false, false);
+    modal(t("Unknown relay")).show(ctx, |ui| {
+        ui.set_max_width(440.0);
+        ui.label(RichText::new(tr!("This link uses an unknown relay: {}. Continue only if you trust the sender.", domain)).strong().color(AMBER));
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            cancel = ui.button(t("Cancel")).clicked();
+            go = ui.button(t("Continue")).clicked();
+        });
+    });
+    if cancel {
+        return;
+    }
+    if go {
+        w.unknown_relay = None;
+        w.relay_confirmed = true;
+    }
+    app.join.window = Some(w);
+    if go {
+        app.submit_join();
+    }
+}
+
 fn form_window(app: &mut App, ctx: &egui::Context) {
     let Some(mut w) = app.join.window.take() else { return };
+    if let Some(domain) = w.unknown_relay.clone() {
+        return unknown_relay_window(app, ctx, w, domain);
+    }
     let (mut join, mut cancel) = (false, false);
     modal(t("Join a session")).show(ctx, |ui| {
         ui.set_min_width(420.0);
@@ -165,6 +250,7 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
             let r = ui.add(egui::TextEdit::singleline(&mut w.link).desired_width(f32::INFINITY).hint_text("inkboard://join/…"));
             if r.changed() {
                 w.error = None;
+                w.relay_confirmed = false;
             }
         }
         ui.add_space(4.0);

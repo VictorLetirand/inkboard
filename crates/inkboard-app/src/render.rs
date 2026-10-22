@@ -50,21 +50,49 @@ const IMAGE_FLAT_PT: f32 = 9.0;
 /// next frames, so a big board never freezes the interface.
 const RASTER_BUDGET_MS: f64 = 5.0;
 
+/// Texture side assumed when the graphics context is not at hand (previews); the real limit comes from `max_texture_side`.
+const DEFAULT_MAX_TEXTURE_SIDE: usize = 4096;
+/// A bitmap declaring more pixels than this is not decoded at all (its decoded form would exceed the decoder's own 512 MiB allocation limit).
+const MAX_DECODE_PIXELS: u64 = 100_000_000;
+/// A decoded bitmap is reduced to at most this many pixels (a 40 Mpx image already takes 160 MB of texture memory).
+const MAX_TEXTURE_PIXELS: u64 = 40_000_000;
+
 /// Decoded image of an asset (bitmaps; SVGs at the fallback scale, used for previews).
 pub fn decode_asset(asset: &Asset) -> Option<egui::ColorImage> {
+    decode_asset_within(asset, DEFAULT_MAX_TEXTURE_SIDE)
+}
+
+/// Like [`decode_asset`], for a texture whose sides may not exceed `max_side` (the GPU limit: a larger texture aborts the program).
+/// The dimensions are read from the header first: an image that declares too many pixels is never decoded; one that is merely too
+/// wide or too tall (e.g. 20 000 x 1) or too big in memory is reduced, keeping its proportions.
+pub fn decode_asset_within(asset: &Asset, max_side: usize) -> Option<egui::ColorImage> {
+    let max_side = max_side.clamp(1, 1 << 15) as u32;
     if asset.mime == "image/svg+xml" {
-        return rasterize_svg(asset, None);
+        return rasterize_svg(asset, None, max_side);
     }
-    let img = image::load_from_memory(&asset.data).ok()?.to_rgba8();
+    let reader = || image::ImageReader::new(std::io::Cursor::new(&asset.data[..])).with_guessed_format().ok();
+    let (w, h) = reader()?.into_dimensions().ok()?;
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_DECODE_PIXELS {
+        return None;
+    }
+    let mut img = reader()?.decode().ok()?.into_rgba8();
+    let scale = (f64::from(max_side) / f64::from(w))
+        .min(f64::from(max_side) / f64::from(h))
+        .min((MAX_TEXTURE_PIXELS as f64 / (f64::from(w) * f64::from(h))).sqrt())
+        .min(1.0);
+    if scale < 1.0 {
+        let (nw, nh) = (((f64::from(w) * scale) as u32).clamp(1, max_side), ((f64::from(h) * scale) as u32).clamp(1, max_side));
+        img = image::imageops::thumbnail(&img, nw, nh);
+    }
     Some(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()))
 }
 
-/// Rasterizes an SVG asset so that its longest side is `px` pixels (`None`: the fallback scale).
-fn rasterize_svg(asset: &Asset, px: Option<u32>) -> Option<egui::ColorImage> {
+/// Rasterizes an SVG asset so that its longest side is `px` pixels (`None`: the fallback scale, lowered to `max_side` at most).
+fn rasterize_svg(asset: &Asset, px: Option<u32>, max_side: u32) -> Option<egui::ColorImage> {
     let svg = std::str::from_utf8(&asset.data).ok()?;
     let r = match px {
-        Some(px) => inkboard_formats::raster::svg_to_raster_fit(svg, px, false),
-        None => inkboard_formats::raster::svg_to_raster(svg, SVG_FALLBACK_SCALE, false),
+        Some(px) => inkboard_formats::raster::svg_to_raster_fit(svg, px.min(max_side), false),
+        None => inkboard_formats::raster::svg_to_raster_max_side(svg, SVG_FALLBACK_SCALE, max_side, false),
     }
     .ok()?;
     Some(egui::ColorImage::from_rgba_premultiplied([r.width as usize, r.height as usize], &r.rgba_premultiplied))
@@ -211,12 +239,13 @@ impl TextureCache {
             return self.map.get(id).and_then(|l| l.iter().min_by_key(|c| c.level.abs_diff(level))).map(|c| c.tex.clone());
         }
         let t0 = std::time::Instant::now();
+        let max_side = ctx.input(|i| i.max_texture_side);
         let img = if !is_svg {
-            decode_asset(asset)
+            decode_asset_within(asset, max_side)
         } else if in_atlas {
-            rasterize_svg(asset, Some(ATLAS_CELL as u32 - 2))
+            rasterize_svg(asset, Some(ATLAS_CELL as u32 - 2), max_side as u32)
         } else {
-            rasterize_svg(asset, Some(level))
+            rasterize_svg(asset, Some(level), max_side as u32)
         };
         if is_svg {
             let ms = t0.elapsed().as_secs_f64() * 1000.0;

@@ -15,8 +15,9 @@
 use crate::join_ui::SessionFactory;
 use crate::session_guest::{Clock, ConnectError, ConnectErrorKind, Diagnosis, GuestConfig, GuestLink, GuestSession, RelayDiagnoser};
 use crate::session_host::{HostAddress, HostTransport, SessionNet};
+use inkboard_net::diagnose::{DiagnoseOptions, diagnose_relay_with};
 use inkboard_net::ticket::MAX_HINTS;
-use inkboard_net::{GatewayKind, IrohConn, IrohTransport, NetConfig, diagnose_relay};
+use inkboard_net::{GatewayKind, IrohConn, IrohTransport, NetConfig};
 use inkboard_session::crypto::{OsEntropy, Ticket};
 use inkboard_session::error::{Error, NetCause, Result};
 use inkboard_session::transport::{Connection, Transport};
@@ -228,11 +229,15 @@ impl Connection for Dialing {
 /// "answers normally" can be told apart.
 pub struct NetDiagnoser {
     pub timeout: Duration,
+    /// Relays configured by the user (host names or URLs): besides the relays of n0, the only ones that may be on a private address.
+    pub trusted: Vec<String>,
+    /// Test mode: diagnose loopback / plain-HTTP addresses too.
+    pub allow_private: bool,
 }
 
 impl RelayDiagnoser for NetDiagnoser {
     fn diagnose(&self, relay_url: &str) -> Diagnosis {
-        let d = diagnose_relay(relay_url, self.timeout);
+        let d = diagnose_relay_with(relay_url, self.timeout, &DiagnoseOptions { trusted: self.trusted.clone(), allow_private: self.allow_private });
         Diagnosis {
             reachable: d.reachable_tcp,
             http_status: d.http_status,
@@ -257,7 +262,7 @@ impl GuestNet {
         Self {
             net: NetConfig { connect_timeout: GUEST_CONNECT, ..NetConfig::default() },
             session: GuestConfig::default(),
-            diagnoser: Arc::new(NetDiagnoser { timeout: DIAGNOSE }),
+            diagnoser: Arc::new(NetDiagnoser { timeout: DIAGNOSE, trusted: Vec::new(), allow_private: false }),
         }
     }
 

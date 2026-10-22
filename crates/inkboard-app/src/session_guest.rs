@@ -14,12 +14,13 @@
 use crate::app::App;
 use crate::i18n::{t, tr};
 use crate::presence::{self, RemotePerson};
-use crate::session_host::{check_image_bounds, image_assets, is_hash, sniff_mime};
+use crate::session_host::{check_guest_upload, check_image_bounds, image_assets, is_hash, sniff_mime};
 use crate::tools::{Drag, Tool};
 use eframe::egui::{self, Color32};
 use inkboard_core::geom::Pt;
 use inkboard_core::history::Op;
 use inkboard_core::model::{Asset, AssetId, Document, Id, ImageObj, Kind, Object};
+use inkboard_net::config::{check_relay_url, is_known_relay};
 use inkboard_session::assets::{AssetAssembler, hash_hex};
 use inkboard_session::crypto::{Entropy, FrameCipher, OsEntropy, SecureChannel, Side, Ticket, join_proof};
 use inkboard_session::limits::{Limits, RateLimiter};
@@ -297,6 +298,9 @@ pub struct NetIssue {
     /// What the transport said.
     pub detail: String,
     pub diagnosis: Option<Diagnosis>,
+    /// The relay comes from the link and is neither one of n0 nor a configured one: it is the sender's, not ours. Nothing is then
+    /// suggested about it (no "open this address", no "ask IT to allow this domain").
+    pub unknown_relay: bool,
 }
 
 /// Domain name of a relay address (`https://euc1-1.relay.n0.iroh.link./` gives `euc1-1.relay.n0.iroh.link`).
@@ -325,7 +329,14 @@ pub fn classify_failure(kind: ConnectErrorKind, detail: &str, relay_url: &str, d
     } else {
         NetClass::Unreachable
     };
-    NetIssue { class, domain: relay_domain(relay_url), relay_url: relay_url.to_owned(), detail: detail.to_owned(), diagnosis: diagnosis.cloned() }
+    NetIssue {
+        class,
+        domain: relay_domain(relay_url),
+        relay_url: relay_url.to_owned(),
+        detail: detail.to_owned(),
+        diagnosis: diagnosis.cloned(),
+        unknown_relay: false,
+    }
 }
 
 impl NetIssue {
@@ -349,12 +360,19 @@ impl NetIssue {
     pub fn tips(&self) -> Vec<String> {
         match self.class {
             NetClass::Offline | NetClass::HostUnreachable => Vec::new(),
+            // a domain chosen by the author of the link: never advise to open it or to have it allowed
+            _ if self.unknown_relay => vec![t("Try another network, for example your phone's connection sharing.")],
             _ => vec![
                 t("Try another network, for example your phone's connection sharing."),
                 tr!("Open the address of the service in your browser (https://{}) and accept the warning if there is one, then try again.", self.domain),
                 tr!("Ask your IT department to allow this domain: {}", self.domain),
             ],
         }
+    }
+
+    /// Shown with the failure when the link uses a relay that is not ours (see [`NetIssue::unknown_relay`]).
+    pub fn warning(&self) -> Option<String> {
+        self.unknown_relay.then(|| tr!("This link uses an unknown relay: {}. Avoid opening it unless you trust the sender.", self.domain))
     }
 
     /// Plain text to paste in a message to the IT department or to support (English on purpose).
@@ -412,6 +430,9 @@ pub struct GuestConfig {
     pub give_up_ms: u64,
     /// Connection service to diagnose when the link carries no relay hint.
     pub relay_url: String,
+    /// Relays configured by the user (host names or URLs). With the public relays of n0 they are the *known* relays: a link that
+    /// names any other relay must be confirmed before joining, and a failure on it gives no advice about that domain.
+    pub trusted_relays: Vec<String>,
 }
 
 impl Default for GuestConfig {
@@ -425,6 +446,7 @@ impl Default for GuestConfig {
             connect_timeout_ms: 20_000,
             give_up_ms: 15 * 60_000,
             relay_url: DEFAULT_RELAY_URL.to_owned(),
+            trusted_relays: Vec::new(),
         }
     }
 }
@@ -469,6 +491,8 @@ pub enum Notice {
     },
     /// An image cannot be read (or sent): the modification was cancelled, or a received image is replaced by a marker.
     ImageUnreadable,
+    /// A vector image uses features the host would refuse in a shared session (filter, mask, external link...): the modification was cancelled.
+    ImageNotAllowed,
     /// The host refused an image being uploaded (quota, size, content): the modification was cancelled.
     ImageRefused(RejectReason),
 }
@@ -498,6 +522,7 @@ struct PendingDiagnosis {
     kind: ConnectErrorKind,
     detail: String,
     relay_url: String,
+    unknown_relay: bool,
 }
 
 pub struct GuestSession {
@@ -768,6 +793,9 @@ impl GuestSession {
             if check_image_bounds(&asset.data, mime).is_err() {
                 return Err(Notice::ImageUnreadable);
             }
+            if check_guest_upload(&asset.data, mime).is_err() {
+                return Err(Notice::ImageNotAllowed);
+            }
             let planned: u64 = fresh.iter().map(|(_, a)| a.data.len() as u64).sum();
             if self.uploaded_bytes + planned + size > limits.guest_asset_quota_bytes {
                 return Err(Notice::Rejected(RejectReason::Quota));
@@ -999,9 +1027,16 @@ impl GuestSession {
         self.flush();
     }
 
-    /// The relay of the link to diagnose (the hints also hold direct addresses, which are not a connection service).
-    fn relay_url(&self) -> String {
-        self.ticket.relays.iter().find(|h| h.starts_with("http://") || h.starts_with("https://")).cloned().unwrap_or_else(|| self.cfg.relay_url.clone())
+    /// The relay of the link to diagnose (the hints also hold direct addresses, which are not a connection service), and whether it
+    /// is unknown. A relay address of the link that is not acceptable (not https, private address...) is never contacted, not even
+    /// to diagnose: the configured one is looked at instead.
+    fn relay_target(&self) -> (String, bool) {
+        let hint = self.ticket.relays.iter().find(|h| h.starts_with("http://") || h.starts_with("https://"));
+        match hint {
+            Some(h) if is_known_relay(h, &self.cfg.trusted_relays) => (h.clone(), false),
+            Some(h) if check_relay_url(h, false).is_ok() => (h.clone(), true),
+            _ => (self.cfg.relay_url.clone(), false),
+        }
     }
 
     fn try_connect(&mut self, now: u64) {
@@ -1033,15 +1068,15 @@ impl GuestSession {
             c.close();
         }
         self.conn = None;
-        let url = self.relay_url();
-        self.stage = Stage::Failed(classify_failure(kind, detail, &url, None));
+        let (url, unknown_relay) = self.relay_target();
+        self.stage = Stage::Failed(NetIssue { unknown_relay, ..classify_failure(kind, detail, &url, None) });
         if kind != ConnectErrorKind::NoNetwork {
             let (tx, rx) = channel();
             let (d, u) = (Arc::clone(&self.diagnoser), url.clone());
             std::thread::spawn(move || {
                 let _ = tx.send(d.diagnose(&u));
             });
-            self.diagnosis = Some(PendingDiagnosis { rx, kind, detail: detail.to_owned(), relay_url: url });
+            self.diagnosis = Some(PendingDiagnosis { rx, kind, detail: detail.to_owned(), relay_url: url, unknown_relay });
         }
     }
 
@@ -1055,7 +1090,7 @@ impl GuestSession {
         if let Some(p) = self.diagnosis.take()
             && matches!(self.stage, Stage::Failed(_))
         {
-            self.stage = Stage::Failed(classify_failure(p.kind, &p.detail, &p.relay_url, found.as_ref()));
+            self.stage = Stage::Failed(NetIssue { unknown_relay: p.unknown_relay, ..classify_failure(p.kind, &p.detail, &p.relay_url, found.as_ref()) });
         }
     }
 
@@ -1587,6 +1622,9 @@ impl App {
             Notice::RoleChanged(Role::View) => t("The host changed your access to read-only."),
             Notice::ImageTooLarge { max, .. } => tr!("Image too large ({} MB maximum): this change was cancelled.", max >> 20),
             Notice::ImageUnreadable => t("Unreadable image"),
+            Notice::ImageNotAllowed => {
+                t("This vector image uses features that are not allowed in a shared session (filter, mask, link...): this change was cancelled.")
+            }
             Notice::ImageRefused(RejectReason::Quota) => t("Upload quota exceeded: this change was refused."),
             Notice::ImageRefused(_) => t("The host refused this image: this change was cancelled."),
         };

@@ -906,6 +906,118 @@ fn capture_lot_d_screenshots() {
     capture(&mut w.t, "lot-d-enterprise-error.png");
 }
 
+/* ------------------------------------------------------------------ relay of the link (S-06, S-07) */
+
+fn link_with_relays(w: &World, relays: &[&str]) -> String {
+    let relays: Vec<String> = relays.iter().map(|r| (*r).to_owned()).collect();
+    join_url(&w.host.keys.ticket(Role::Edit, HOST_ID, &relays).unwrap())
+}
+
+#[test]
+fn a_link_with_an_unknown_relay_asks_before_connecting() {
+    use egui_kittest::kittest::Queryable;
+    let mut w = World::new(100);
+    let link = link_with_relays(&w, &["https://relay.evil.example/"]);
+    w.app().open_join_window(Some(link));
+    w.app().submit_join();
+    assert!(w.app().guest.is_none(), "nothing connects before the user confirms");
+    assert_eq!(w.app().join.window.as_ref().unwrap().unknown_relay.as_deref(), Some("relay.evil.example"));
+    w.t.h.step();
+    w.t.h.step();
+    w.t.h.step();
+    assert!(w.t.h.query_by_label_contains("This link uses an unknown relay: relay.evil.example").is_some());
+    assert!(w.t.h.query_by_label("Cancel").is_some() && w.t.h.query_by_label("Continue").is_some());
+    // Cancel: the window closes and nothing was started
+    w.t.h.get_by_label("Cancel").click();
+    w.t.h.step();
+    w.t.h.step();
+    assert!(w.app().join.window.is_none(), "window {:?}", w.app().join.window);
+    assert!(w.app().guest.is_none());
+    // Continue: the session starts
+    let link = link_with_relays(&w, &["https://relay.evil.example/"]);
+    w.app().open_join_window(Some(link));
+    w.app().submit_join();
+    w.t.h.step();
+    w.t.h.get_by_label("Continue").click();
+    w.t.h.step();
+    w.t.h.step();
+    assert!(w.app().guest.is_some(), "confirmed: the session starts");
+}
+
+#[test]
+fn relays_that_are_refused_outright_never_reach_the_network() {
+    let mut w = World::new(101);
+    for relay in [
+        "http://127.0.0.1:3340/",
+        "https://10.0.0.1/",
+        "https://192.168.1.1:8443/",
+        "file:///etc/passwd",
+        "https://relay.example.org:22/",
+        "http://relay.example.org/",
+    ] {
+        let link = link_with_relays(&w, &[relay]);
+        w.app().open_join_window(Some(link));
+        w.app().submit_join();
+        assert!(w.app().guest.is_none(), "{relay}");
+        let win = w.app().join.window.as_ref().unwrap();
+        assert!(win.error.is_some() && win.unknown_relay.is_none(), "{relay}: refused, not offered");
+    }
+}
+
+#[test]
+fn n0_relays_direct_addresses_and_configured_relays_join_without_asking() {
+    let mut w = World::new(102);
+    let n0 = inkboard_net::default_relay_urls().remove(0);
+    let link = link_with_relays(&w, &[&n0, "127.0.0.1:4000"]);
+    w.app().open_join_window(Some(link));
+    w.app().submit_join();
+    assert!(w.app().guest.is_some(), "a relay of n0 needs no confirmation");
+    w.app().leave_guest();
+    w.app().join.trusted_relays = vec!["https://relay.mycorp.example/".to_owned()];
+    let link = link_with_relays(&w, &["https://relay.mycorp.example/"]);
+    w.app().open_join_window(Some(link));
+    w.app().submit_join();
+    assert!(w.app().guest.is_some(), "a configured relay needs no confirmation");
+}
+
+#[test]
+fn a_failure_on_an_unknown_relay_gives_no_advice_about_its_domain() {
+    set_for_thread(Some(Lang::En));
+    let mut g = GuestSession::new(
+        Box::new(FailingLink(ConnectErrorKind::TimedOut)),
+        Arc::new(FakeDiagnoser(zscaler())),
+        w_ticket_with(&["https://relay.evil.example/"]),
+        "Bob",
+        Box::new(SeededEntropy::new(1)),
+        Clock::Virtual(Arc::new(AtomicU64::new(0))),
+        GuestConfig::default(),
+    );
+    for _ in 0..10_000 {
+        g.poll();
+        if matches!(g.state(), GuestState::Failed(_)) && !g.is_diagnosing() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let GuestState::Failed(issue) = g.state() else { panic!("failed") };
+    assert!(issue.unknown_relay);
+    let shown: String = issue.tips().join(" ") + &issue.headline() + &issue.warning().unwrap();
+    assert!(issue.warning().unwrap().contains("unknown relay: relay.evil.example"));
+    for forbidden in ["browser", "accept the warning", "IT department", "allow this domain", "https://relay.evil.example"] {
+        assert!(!shown.contains(forbidden), "advice about an unknown domain: {forbidden}");
+    }
+    // a known relay keeps the three suggestions
+    let known = classify_failure(ConnectErrorKind::TimedOut, "", DEFAULT_RELAY_URL, Some(&zscaler()));
+    assert!(!known.unknown_relay && known.tips().len() == 3 && known.warning().is_none());
+    set_for_thread(None);
+}
+
+fn w_ticket_with(relays: &[&str]) -> Ticket {
+    let keys = HostKeys::generate(&mut SeededEntropy::new(8)).unwrap();
+    let relays: Vec<String> = relays.iter().map(|r| (*r).to_owned()).collect();
+    keys.ticket(Role::Edit, HOST_ID, &relays).unwrap()
+}
+
 /* ------------------------------------------------------------------ images of a session (lot G) */
 
 #[path = "tests_session_images.rs"]

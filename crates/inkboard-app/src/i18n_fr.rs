@@ -46,6 +46,17 @@ pub const FR: &[(&str, &str)] = &[
     ("Can edit", "Peut modifier"),
     ("Can view", "Lecture seule"),
     ("Cancel", "Annuler"),
+    ("Continue", "Continuer"),
+    ("Unknown relay", "Relais inconnu"),
+    (
+        "This link uses an unknown relay: {}. Continue only if you trust the sender.",
+        "Ce lien utilise un relais inconnu : {}. Continuer seulement si vous faites confiance à l'expéditeur.",
+    ),
+    (
+        "This link uses an unknown relay: {}. Avoid opening it unless you trust the sender.",
+        "Ce lien utilise un relais inconnu : {}. Évitez de l'ouvrir si vous ne faites pas confiance à l'expéditeur.",
+    ),
+    ("This link uses a relay address that is not allowed: {}", "Ce lien utilise une adresse de relais interdite : {}"),
     ("Cannot copy", "Copie impossible"),
     ("Cannot copy: {}", "Copie impossible : {}"),
     ("Cannot export: {}", "Export impossible : {}"),
@@ -373,6 +384,10 @@ pub const FR: &[(&str, &str)] = &[
     ("Unlock", "Déverrouiller"),
     ("Unlock the selection", "Déverrouiller la sélection"),
     ("Unreadable image", "Image illisible"),
+    (
+        "This vector image uses features that are not allowed in a shared session (filter, mask, link...): this change was cancelled.",
+        "Cette image vectorielle utilise des fonctions interdites en session partagée (filtre, masque, lien…) : cette modification a été annulée.",
+    ),
     ("Only images can be dropped here", "Seules les images peuvent être déposées ici"),
     ("Unsaved", "Non enregistré"),
     ("Unsaved changes", "Modifications non enregistrées"),
