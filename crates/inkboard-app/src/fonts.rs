@@ -11,7 +11,7 @@ use inkboard_fonts::{HAND, MONO, MONO_BOLD, SANS, SANS_BOLD, SERIF, SERIF_BOLD};
 pub const ALWAYS_EMBEDDED: bool = cfg!(target_arch = "wasm32");
 
 fn pref_path() -> std::path::PathBuf {
-    inkboard_mcp::live::data_dir().join("embedded_fonts")
+    crate::platform::data_dir().join("embedded_fonts")
 }
 
 /// Setting "Use built-in fonts" (data folder, like `language`); off by default.

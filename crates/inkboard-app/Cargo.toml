@@ -16,6 +16,7 @@ web-glow = ["eframe/glow"]
 web-wgpu = ["eframe/wgpu", "dep:wgpu"]
 
 [dependencies]
+inkboard-fonts = { path = "../inkboard-fonts" }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 rfd = "0.17.2"
 serde_json = "1.0.154"
@@ -33,7 +34,6 @@ eframe = { version = "0.33.3", features = ["wgpu"] }
 raw-window-handle = "0.6.2"
 inkboard-mcp = { path = "../inkboard-mcp" }
 inkboard-net = { path = "../inkboard-net" }
-inkboard-fonts = { path = "../inkboard-fonts" }
 sys-locale = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

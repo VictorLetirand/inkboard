@@ -4,13 +4,15 @@
 use crate::app::App;
 use eframe::egui;
 
-/// Nothing to hold: there is no host side in a browser.
+/// There is no host side in a browser: `host` is always `None` (it only keeps `App` code shared with the native build compiling).
 #[derive(Debug, Default)]
-pub struct Share;
+pub struct Share {
+    pub host: Option<()>,
+}
 
 impl Share {
     pub fn new(_load: bool) -> Self {
-        Self
+        Self::default()
     }
 }
 
