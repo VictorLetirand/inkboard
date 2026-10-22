@@ -104,7 +104,7 @@ const UPLOAD_POOL: usize = 32;
 const UPLOAD_POOL_BYTES: usize = 64 << 20;
 /// Bytes of image pieces waiting to be sent to one guest.
 const MAX_QUEUED_ASSET_BYTES: usize = 32 << 20;
-pub const MAX_NAME_CHARS: usize = 40;
+pub const MAX_NAME_CHARS: usize = crate::names::NAME_MAX;
 
 #[derive(Clone, Debug)]
 pub struct HostConfig {
@@ -165,16 +165,10 @@ impl Default for HostConfig {
 
 /* ---------------------------------------------------------------------------------------------------------- display names */
 
-/// Cleans a name typed by a person: control characters removed, white space squeezed, 1 to 40 characters (`fallback` when nothing
-/// is left). The name is cosmetic, not an identity.
+/// Cleans a name typed by a person or sent by a guest (`names::clean_name`, shared with the guest side): 1 to 40 visible characters,
+/// `fallback` when nothing visible is left. The name is cosmetic, not an identity.
 pub fn sanitize_name(raw: &str, fallback: &str) -> String {
-    // tabs and line breaks become spaces; other control characters and invisible direction marks (which could fake another name) go
-    let invisible = |c: char| matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}');
-    let cleaned: String = raw.chars().filter(|c| c.is_whitespace() || !(c.is_control() || invisible(*c))).collect();
-    let squeezed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    let name: String = squeezed.chars().take(MAX_NAME_CHARS).collect();
-    let name = name.trim_end().to_owned();
-    if name.is_empty() { fallback.to_owned() } else { name }
+    crate::names::clean_name(raw).unwrap_or_else(|| fallback.to_owned())
 }
 
 /// Makes `name` different from every name in `taken` (case-insensitive): "Anna", "Anna (2)", "Anna (3)"... within 40 characters.
@@ -500,6 +494,8 @@ pub struct PendingView {
     pub name: String,
     /// What the link they used allows: a read-only link cannot be turned into edit access.
     pub key_role: Role,
+    /// Start of the guest's transport identity: lets the host tell two "Anna" apart in the consent window.
+    pub short_id: String,
 }
 
 /// A participant as the interface shows it.
@@ -677,7 +673,10 @@ impl SessionHost {
     }
 
     pub fn pending(&self) -> Vec<PendingView> {
-        self.requests.iter().map(|r| PendingView { request: r.id, name: r.name.clone(), key_role: r.key_role }).collect()
+        self.requests
+            .iter()
+            .map(|r| PendingView { request: r.id, name: r.name.clone(), key_role: r.key_role, short_id: r.peer.chars().take(8).collect() })
+            .collect()
     }
 
     pub fn members(&self) -> Vec<MemberView> {

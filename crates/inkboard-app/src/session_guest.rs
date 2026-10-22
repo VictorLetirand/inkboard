@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 /// Public relay of the default configuration (used for the diagnosis when the link carries no relay hint).
 pub const DEFAULT_RELAY_URL: &str = "https://euc1-1.relay.n0.iroh.link./";
 /// Longest display name, in characters.
-pub const NAME_MAX: usize = 40;
+pub const NAME_MAX: usize = crate::names::NAME_MAX;
 /// Longest invitation link accepted (a real ticket is under 3 000 characters): anything longer is refused without decoding.
 const MAX_LINK_CHARS: usize = 4096;
 /// Largest frame a guest accepts from the host, and largest image it assembles.
@@ -105,23 +105,7 @@ const MAX_TRANSIENTS_PER_TICK: usize = 1;
 /// Cleans a display name: control and invisible direction characters removed, runs of spaces collapsed, at most [`NAME_MAX`]
 /// characters; "Guest" when nothing is left.
 pub fn sanitize_name(raw: &str) -> String {
-    let invisible = |c: char| matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}');
-    let mut out = String::new();
-    let mut space = false;
-    for c in raw.chars().filter(|c| !c.is_control() && !invisible(*c)) {
-        if c.is_whitespace() {
-            space = !out.is_empty();
-        } else {
-            if space {
-                out.push(' ');
-                space = false;
-            }
-            out.push(c);
-        }
-    }
-    let cut: String = out.chars().take(NAME_MAX).collect();
-    let cut = cut.trim_end().to_owned();
-    if cut.is_empty() { t("Guest") } else { cut }
+    crate::names::clean_name(raw).unwrap_or_else(|| t("Guest"))
 }
 
 fn name_path(dir: &std::path::Path) -> std::path::PathBuf {
