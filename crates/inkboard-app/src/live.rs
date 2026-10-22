@@ -4,6 +4,7 @@
 //! one tool call = one undo step (Ctrl+Z). Protocol: see `inkboard_mcp::live`.
 
 use crate::app::App;
+use crate::i18n::t;
 use inkboard_core::Id;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -112,6 +113,23 @@ fn serve(stream: TcpStream, tx: &mpsc::Sender<Request>, ctx: &eframe::egui::Cont
     respond(&stream, &out);
 }
 
+/// Answer to the agent when the host's confirmation would be needed (a refusal: the host decides outside the agent's reach).
+const REFUSED_SHARED: &str = "Refused: this board is shared and a guest can edit it. Guests' text is untrusted, so the agent may not put a local file on the board \
+    (add_image with source or data_base64) nor export to a file until the host has stopped sharing or set every guest to read-only. Tell the user.";
+
+/// Does the call read a local file into the board (`add_image` with `source`, or with the bytes of a file in `data_base64`: the MCP
+/// process turns `source` into `data_base64` before forwarding) or write the board to a file (`export`)? Looks inside `batch` too.
+fn touches_local_files(tool: &str, args: &Value) -> bool {
+    match tool {
+        "export" => true,
+        "add_image" => args.get("source").is_some() || args.get("data_base64").is_some(),
+        "batch" => args.get("operations").and_then(Value::as_array).is_some_and(|ops| {
+            ops.iter().any(|op| op.get("tool").and_then(Value::as_str).is_some_and(|name| touches_local_files(name, op.get("args").unwrap_or(&Value::Null))))
+        }),
+        _ => false,
+    }
+}
+
 fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(x), Ok(y)) => x == y,
@@ -157,7 +175,16 @@ impl App {
         self.agent.state.selection = page.objects.get(1).map(|o| page.bounds(o)).into_iter().collect();
     }
 
-    fn run_live(&mut self, tool: &str, args: &Value) -> Reply {
+    /// A running session has at least one guest who can edit (S-14: what guests write is untrusted text the agent may read).
+    fn shared_with_editors(&self) -> bool {
+        self.share.host.as_ref().is_some_and(|h| h.is_running() && h.members().iter().any(|m| m.role == inkboard_session::proto::Role::Edit))
+    }
+
+    pub(crate) fn run_live(&mut self, tool: &str, args: &Value) -> Reply {
+        if touches_local_files(tool, args) && self.shared_with_editors() {
+            self.toast(&t("The agent was refused a file access: guests can edit this board"));
+            return Reply::Err(REFUSED_SHARED.into());
+        }
         if tool == "__status" {
             // polled by inkboard-mcp for resource notifications: changes when the board or the selection changes
             return Reply::Ok(json!({

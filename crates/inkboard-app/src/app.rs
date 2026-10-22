@@ -422,7 +422,7 @@ impl App {
     }
 
     pub fn save_as(&mut self) {
-        let name = format!("{}.{}", self.ed.doc.name, inkboard_core::serial::NATIVE_EXT);
+        let name = crate::names::file_name(&self.ed.doc.name, inkboard_core::serial::NATIVE_EXT);
         if let Some(p) = rfd::FileDialog::new().add_filter("Inkboard", &[inkboard_core::serial::NATIVE_EXT]).set_file_name(&name).save_file() {
             // a name typed with an older native extension (.inkboard.json, .tableau.json) is kept as typed
             let p = if inkboard_core::serial::is_native_name(&p.to_string_lossy()) { p } else { p.with_extension(inkboard_core::serial::NATIVE_EXT) };
@@ -462,7 +462,7 @@ impl App {
             _ => None,
         };
         let Some(text) = text else { return self.toast(&t("Nothing to export")) };
-        let name = format!("{}.{ext}", self.ed.doc.name);
+        let name = crate::names::file_name(&self.ed.doc.name, ext);
         if let Some(p) = rfd::FileDialog::new().set_file_name(&name).add_filter(ext, &[ext]).save_file() {
             let bytes: Result<Vec<u8>, String> = match ext {
                 "png" => inkboard_formats::raster::svg_to_png(&text, 2.0).map_err(|e| e.to_string()),

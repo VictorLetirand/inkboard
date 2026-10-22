@@ -5,6 +5,7 @@ use crate::presence::{Action, AgentEvent, Target};
 use crate::session_host::{HostAddress, HostConfig, HostEvent, HostTransport, SessionHost, SessionNet, diff_documents, sanitize_name, unique_name};
 use crate::tests::T;
 use eframe::egui::{Key, Modifiers};
+use egui_kittest::kittest::Queryable;
 use inkboard_core::geom::{Frame, Rect};
 use inkboard_core::model::{Document, Id, ImageObj, Kind, Object};
 use inkboard_core::style::Style;
@@ -1014,4 +1015,133 @@ fn the_share_window_and_the_participant_list() {
         let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../context/mcp-remote/lot-c-share.png");
         image.save(out).unwrap();
     }
+}
+
+/* ------------------------------------------- security review SF3 (S-14, S-15, S-18) */
+
+fn host_link(t: &mut T, role: Role, relays_only: bool) -> String {
+    let app = t.app();
+    let addr = crate::share_ui::published_address(app.share.addr.as_ref().unwrap(), relays_only);
+    app.share.host.as_ref().unwrap().link(role, &addr).unwrap()
+}
+
+#[test]
+fn the_share_window_hides_the_links_until_show_is_clicked_and_copy_keeps_the_full_link() {
+    let (mut t, _net) = shared_app();
+    let edit = host_link(&mut t, Role::Edit, false);
+    t.app().share.open = true;
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert!(!t.app().share.links_shown, "hidden by default");
+    assert_eq!(t.h.query_all_by_value(edit.as_str()).count(), 0, "the link is not in the window");
+    assert_eq!(t.h.query_all_by_label_contains("inkboard://").count(), 0);
+    assert_eq!(t.h.query_all_by_label("Copy").count(), 2, "one Copy button per link");
+    t.h.get_by_label("Show").click();
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert!(t.h.query_all_by_value(edit.as_str()).count() > 0, "shown once asked");
+    t.h.get_by_label("Hide").click();
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert_eq!(t.h.query_all_by_value(edit.as_str()).count(), 0, "hidden again");
+}
+
+#[test]
+fn relays_only_leaves_the_direct_addresses_out_of_the_links() {
+    let addr =
+        HostAddress { host: "h".to_owned(), relays: vec!["https://relay.example/".to_owned(), "192.168.1.20:5000".to_owned(), "[fe80::1]:7".to_owned()] };
+    assert_eq!(crate::share_ui::published_address(&addr, false), addr);
+    assert_eq!(crate::share_ui::published_address(&addr, true).relays, ["https://relay.example/"]);
+    // and the window gives out that address
+    let (mut t, _net) = shared_app();
+    t.app().share.addr = Some(addr);
+    t.app().share.relays_only = true;
+    t.app().share.open = true;
+    for _ in 0..3 {
+        t.h.step();
+    }
+    t.h.get_by_label("Show").click();
+    for _ in 0..3 {
+        t.h.step();
+    }
+    let url = host_link(&mut t, Role::Edit, true);
+    assert_eq!(Link::parse(&url).unwrap().ticket.relays, ["https://relay.example/"]);
+    assert!(t.h.query_all_by_value(url.as_str()).count() > 0, "the window shows the link without direct addresses");
+    let full = host_link(&mut t, Role::Edit, false);
+    assert_eq!(t.h.query_all_by_value(full.as_str()).count(), 0);
+}
+
+#[test]
+fn the_consent_window_shows_the_kind_of_link_and_a_short_guest_id() {
+    let (mut t, net) = shared_app();
+    let (view, edit) = (app_ticket(&mut t, Role::View), app_ticket(&mut t, Role::Edit));
+    let mut a = G::new(&net, "Samir", &view, 31);
+    let mut b = G::new(&net, "Lea", &edit, 32);
+    a.connect(0);
+    b.connect(0);
+    steps(&mut t, &mut [&mut a, &mut b], 5);
+    let pending = t.app().share.host.as_ref().unwrap().pending();
+    assert_eq!(pending.len(), 2);
+    for p in pending {
+        assert!(!p.short_id.is_empty());
+        let kind = if p.key_role == Role::View { "Read-only link" } else { "Edit link" };
+        t.h.get_by_label(&format!("Link used: {kind} (guest ID {})", p.short_id));
+    }
+}
+
+fn refused(r: &crate::live::Reply) -> bool {
+    matches!(r, crate::live::Reply::Err(e) if e.starts_with("Refused"))
+}
+
+#[test]
+fn the_agent_needs_the_host_to_read_a_file_or_export_while_a_guest_can_edit() {
+    use serde_json::json;
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    let out = std::env::temp_dir().join(format!("inkboard-sf3-{}.svg", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    let add = json!({"data_base64": PNG});
+    let export = json!({"output": out.display().to_string()});
+    let batch = json!({"operations": [{"tool": "add_shape", "args": {"geom": "rect"}}, {"tool": "add_image", "args": {"data_base64": PNG}}]});
+
+    // no session: nothing changes
+    let mut t = T::new();
+    t.app().ed.insert(boxed("a", 10.0));
+    assert!(matches!(t.app().run_live("add_image", &add), crate::live::Reply::Ok(_)));
+    assert!(matches!(t.app().run_live("export", &export), crate::live::Reply::Ok(_)));
+    assert!(out.exists());
+    std::fs::remove_file(&out).unwrap();
+
+    // a session with nobody, then with a reader: still allowed
+    let (mut t, net) = shared_app();
+    t.app().ed.insert(boxed("a", 10.0));
+    assert!(matches!(t.app().run_live("add_image", &add), crate::live::Reply::Ok(_)), "a session without guests");
+    let mut reader = G::new(&net, "Samir", &app_ticket(&mut t, Role::View), 41);
+    reader.connect(0);
+    steps(&mut t, &mut [&mut reader], 5);
+    let req = t.app().share.host.as_ref().unwrap().pending()[0].request;
+    t.app().share.host.as_mut().unwrap().accept(req, Role::View);
+    steps(&mut t, &mut [&mut reader], 5);
+    assert_eq!(t.app().share.host.as_ref().unwrap().members().len(), 1);
+    assert!(matches!(t.app().run_live("export", &export), crate::live::Reply::Ok(_)), "a reader cannot write to the board");
+    std::fs::remove_file(&out).unwrap();
+
+    // an editor joins: file access is refused (and the board and the disk stay as they are)
+    let mut editor = G::new(&net, "Lea", &app_ticket(&mut t, Role::Edit), 42);
+    editor.connect(0);
+    steps(&mut t, &mut [&mut reader, &mut editor], 5);
+    let req = t.app().share.host.as_ref().unwrap().pending()[0].request;
+    t.app().share.host.as_mut().unwrap().accept(req, Role::Edit);
+    steps(&mut t, &mut [&mut reader, &mut editor], 5);
+    assert_eq!(t.app().share.host.as_ref().unwrap().members().len(), 2);
+    let before = t.app().ed.page().objects.len();
+    assert!(refused(&t.app().run_live("add_image", &add)));
+    assert!(refused(&t.app().run_live("add_image", &json!({"source": "C:/secret.png"}))));
+    assert!(refused(&t.app().run_live("export", &export)));
+    assert!(refused(&t.app().run_live("batch", &batch)));
+    assert_eq!((t.app().ed.page().objects.len(), out.exists()), (before, false));
+    // the rest of the agent's work is not affected
+    assert!(matches!(t.app().run_live("add_shape", &json!({"geom": "rect"})), crate::live::Reply::Ok(_)));
 }
