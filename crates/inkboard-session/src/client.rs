@@ -6,9 +6,12 @@
 //! (`now`, in milliseconds, any monotonic origin), and sends what [`Client::take_outbox`] returns.
 
 use crate::error::{Error, Result};
+use crate::limits::{Limits, Violation, check_id, check_manifest, check_message, check_name, check_ops, check_pages, check_snapshot_shape};
 use crate::proto::{
-    Applied, ByeReason, Hello, Message, PROTO_VERSION, ParticipantId, RefuseReason, RejectReason, Resume, Role, Seq, Snapshot, Submit, Welcome, check_proto,
+    Applied, ByeReason, Hello, Message, PROTO_VERSION, ParticipantId, RefuseReason, RejectReason, Resume, Role, Seq, Snapshot, SnapshotPart, Submit, Welcome,
+    check_proto,
 };
+use crate::snapshot::{MAX_PARTS, SnapshotAssembler};
 use crate::wire::{WireOp, apply_wire_all, rollback};
 use inkboard_core::history::Op;
 use inkboard_core::model::{Document, Id};
@@ -67,6 +70,18 @@ pub enum ClientEvent {
     Relay(Box<Message>),
 }
 
+/// Bounds of one part of a snapshot (the document as a whole is checked when the last part arrives).
+fn check_part(l: &Limits, p: &SnapshotPart) -> std::result::Result<(), Violation> {
+    if p.part as usize >= MAX_PARTS {
+        return Err(Violation::TooMany { what: "snapshot parts", count: p.part as usize, max: MAX_PARTS });
+    }
+    check_pages(l, &p.pages)?;
+    match &p.head {
+        Some(h) => check_name(l, &h.name).and_then(|()| check_manifest(l, &h.assets)),
+        None => Ok(()),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Pending {
     client_seq: u64,
@@ -91,7 +106,12 @@ pub struct Client {
     last_seq: Seq,
     next_client_seq: u64,
     pending: Vec<Pending>,
-    future: BTreeMap<Seq, Applied>,
+    /// `Applied` that arrived ahead of their turn, with the bytes they weigh (0 for one that is next in line: it never waits).
+    future: BTreeMap<Seq, (Applied, usize)>,
+    /// Bounds for everything the host says (see `Limits::host_trust`).
+    limits: Limits,
+    /// Parts of a snapshot being received.
+    assembling: Option<SnapshotAssembler>,
     gap_since: Option<u64>,
     last_sync: u64,
     hello_sent_at: u64,
@@ -100,7 +120,11 @@ pub struct Client {
 }
 
 impl Client {
-    const MAX_FUTURE: usize = 10_000;
+    /// Modifications kept while waiting for an earlier one (the host keeps 1 000 to catch guests up: beyond that a snapshot is needed).
+    const MAX_FUTURE: usize = 1_000;
+    const MAX_FUTURE_BYTES: usize = 32 << 20;
+    /// Objects of a snapshot (the host's own ceiling is lower by default).
+    const MAX_SNAPSHOT_OBJECTS: usize = 200_000;
 
     pub fn new(cfg: ClientConfig) -> Self {
         let role = cfg.role_requested;
@@ -116,6 +140,8 @@ impl Client {
             next_client_seq: 1,
             pending: Vec::new(),
             future: BTreeMap::new(),
+            limits: Limits::host_trust(),
+            assembling: None,
             gap_since: None,
             last_sync: 0,
             hello_sent_at: 0,
@@ -164,6 +190,7 @@ impl Client {
             return;
         }
         self.phase = Phase::Joining;
+        self.assembling = None;
         self.send_hello(now);
     }
 
@@ -182,6 +209,7 @@ impl Client {
 
     /// The transport dropped. Modifications are still accepted and queued.
     pub fn connection_lost(&mut self) {
+        self.assembling = None;
         if matches!(self.phase, Phase::Joining | Phase::Live) {
             self.phase = Phase::Disconnected;
         }
@@ -272,15 +300,34 @@ impl Client {
                 Ok(())
             }
             Message::Snapshot(s) => {
+                let l = &self.limits;
+                let checked = check_name(l, &s.name)
+                    .and_then(|()| check_pages(l, &s.pages))
+                    .and_then(|_| check_snapshot_shape(l, &s.pages, Self::MAX_SNAPSHOT_OBJECTS))
+                    .and_then(|()| check_manifest(l, &s.assets));
+                self.accept_from_host(checked)?;
                 self.on_snapshot(s, now);
                 Ok(())
             }
+            Message::SnapshotPart(p) => self.on_snapshot_part(p, now),
             Message::Applied(a) => {
                 if a.seq > self.last_seq {
-                    if self.future.len() >= Self::MAX_FUTURE {
-                        self.future.clear();
+                    let l = &self.limits;
+                    let checked = check_ops(l, &a.ops).and_then(|()| {
+                        (a.superseded.len() <= l.max_ids_per_message)
+                            .then_some(())
+                            .ok_or(Violation::TooMany { what: "identifiers", count: a.superseded.len(), max: l.max_ids_per_message })?;
+                        a.superseded.iter().try_for_each(|id| check_id(l, id))
+                    });
+                    self.accept_from_host(checked)?;
+                    // one that is next in line never waits; the others are bounded in number and in bytes
+                    let held = a.seq > self.last_seq + 1;
+                    let bytes = if held { serde_json::to_vec(&a).map_or(0, |b| b.len()) } else { 0 };
+                    let waiting: usize = self.future.values().map(|e| e.1).sum();
+                    if held && (self.future.len() >= Self::MAX_FUTURE || waiting + bytes > Self::MAX_FUTURE_BYTES) {
+                        self.future.clear(); // a gap this wide is closed by a snapshot, which `Resync` brings
                     }
-                    self.future.insert(a.seq, a);
+                    self.future.insert(a.seq, (a, bytes));
                     self.rebase(now, |_| {});
                 }
                 Ok(())
@@ -328,7 +375,10 @@ impl Client {
             | Message::RoleChange { .. }
             | Message::AssetChunk(_)
             | Message::AssetAck { .. }) => {
-                self.events.push(ClientEvent::Relay(Box::new(m)));
+                // a display-only message that does not pass the bounds is dropped (it never touches the board)
+                if check_message(&self.limits, &m).is_ok() {
+                    self.events.push(ClientEvent::Relay(Box::new(m)));
+                }
                 Ok(())
             }
             Message::Hello(_) | Message::Submit(_) | Message::AssetRequest { .. } | Message::Resync { .. } | Message::Undo | Message::Redo => {
@@ -373,6 +423,38 @@ impl Client {
         Ok(())
     }
 
+    /// What the host sent went over the bounds: it is not trusted any more, the client closes and the document stays as it was.
+    fn accept_from_host(&mut self, checked: std::result::Result<(), Violation>) -> Result<()> {
+        checked.map_err(|v| {
+            self.phase = Phase::Closed;
+            self.events.push(ClientEvent::Closed(ByeReason::ProtocolError { detail: v.to_string() }));
+            Error::Invalid(v)
+        })
+    }
+
+    fn on_snapshot_part(&mut self, p: SnapshotPart, now: u64) -> Result<()> {
+        let checked = check_part(&self.limits, &p);
+        self.accept_from_host(checked)?;
+        if self.have_snapshot && p.seq <= self.last_seq {
+            return Ok(()); // stale or repeated
+        }
+        let mut asm = match self.assembling.take() {
+            Some(a) if a.seq() == p.seq => a,
+            Some(a) if a.seq() > p.seq => {
+                self.assembling = Some(a); // a straggler of an older snapshot
+                return Ok(());
+            }
+            _ => SnapshotAssembler::new(p.seq),
+        };
+        match asm.add(p, &self.limits, Self::MAX_SNAPSHOT_OBJECTS) {
+            Ok(Some(s)) => self.on_snapshot(s, now),
+            Ok(None) => self.assembling = Some(asm),
+            Err(Error::Invalid(v)) => return self.accept_from_host(Err(v)),
+            Err(e) => return Err(e),
+        }
+        Ok(())
+    }
+
     fn on_snapshot(&mut self, s: Snapshot, now: u64) {
         if self.have_snapshot && s.seq <= self.last_seq {
             return; // stale or repeated
@@ -396,7 +478,7 @@ impl Client {
         change(self);
         if self.have_snapshot {
             self.future = self.future.split_off(&(self.last_seq + 1));
-            while let Some(a) = self.future.remove(&(self.last_seq + 1)) {
+            while let Some((a, _)) = self.future.remove(&(self.last_seq + 1)) {
                 for op in &a.ops {
                     crate::wire::apply_wire(&mut self.doc, op);
                 }

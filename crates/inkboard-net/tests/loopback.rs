@@ -134,6 +134,31 @@ fn an_oversized_frame_is_refused_before_sending() {
 }
 
 #[test]
+fn a_peer_that_does_not_read_cannot_make_the_sender_queue_without_bound() {
+    let (mut host, keys) = host();
+    let ticket = host.ticket(&keys, Role::Edit).unwrap();
+    let mut guest = IrohTransport::guest(cfg()).unwrap();
+    let mut g = guest.connect_ticket(&ticket).unwrap();
+    g.send(b"hello").unwrap();
+    let mut h = accept(&mut host); // the host takes the connection but never reads it again
+    assert_eq!(recv(&mut h), b"hello");
+    // 1 MiB frames: far more than the byte limit, far fewer than the 1 024 frames the queue used to hold
+    let frame = vec![0u8; 1 << 20];
+    let mut congested = false;
+    for _ in 0..600 {
+        match g.send(&frame) {
+            Ok(()) => std::thread::sleep(Duration::from_millis(2)),
+            Err(Error::Network { cause: NetCause::Congested, .. }) => {
+                congested = true;
+                break;
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+    assert!(congested, "the sender is told once too many bytes are waiting");
+}
+
+#[test]
 fn a_secure_channel_runs_over_the_transport() {
     let (mut host, keys) = host();
     for role in [Role::Edit, Role::View] {

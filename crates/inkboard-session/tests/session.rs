@@ -204,7 +204,7 @@ fn a_reader_is_refused_by_the_host_even_when_it_claims_to_edit() {
     let mut w = World::new(7, 0, NetConfig::ideal(), 1000);
     let key = w.host.ticket(Role::View).key;
     let mut raw = Raw::new(&w.net, "reader", &key);
-    raw.send(&hello("reader", &key, Role::Edit, 1)); // claims Edit with the read-only key
+    raw.send(&hello("reader", &key, Role::Edit, inkboard_session::PROTO_VERSION)); // claims Edit with the read-only key
     w.rounds(3, 10);
     let msgs = raw.received();
     let granted = msgs.iter().find_map(|m| if let Message::Welcome(Welcome { role, .. }) = m { Some(*role) } else { None });
@@ -222,14 +222,14 @@ fn a_wrong_key_gets_nothing_and_a_wrong_proof_is_refused() {
     let mut w = World::new(8, 0, NetConfig::ideal(), 1000);
     let wrong = SessionKey::generate(&mut SeededEntropy::new(99)).unwrap();
     let mut raw = Raw::new(&w.net, "intruder", &wrong);
-    raw.send(&hello("intruder", &wrong, Role::Edit, 1));
+    raw.send(&hello("intruder", &wrong, Role::Edit, inkboard_session::PROTO_VERSION));
     w.rounds(3, 10);
     assert!(raw.received().is_empty(), "nothing is answered to a peer that does not hold a session key");
     assert_eq!(w.host.dropped_frames, 1);
 
     let key = w.host.ticket(Role::Edit).key;
     let mut raw = Raw::new(&w.net, "liar", &key);
-    raw.send(&hello("someone else", &key, Role::Edit, 1).clone_with_name("liar"));
+    raw.send(&hello("someone else", &key, Role::Edit, inkboard_session::PROTO_VERSION).clone_with_name("liar"));
     w.rounds(3, 10);
     assert!(raw.received().iter().any(|m| matches!(m, Message::Refused { .. })));
 }
