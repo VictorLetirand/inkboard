@@ -13,7 +13,7 @@
 
 use crate::app::App;
 use crate::i18n::{t, tr};
-use crate::presence::{self, RemotePerson, RemoteStroke};
+use crate::presence::{self, RemotePerson};
 use crate::tools::{Drag, Tool};
 use eframe::egui::{self, Color32};
 use inkboard_core::geom::Pt;
@@ -44,6 +44,8 @@ const MAX_IMAGE: u64 = 15 << 20;
 const MAX_IMAGES_IN_FLIGHT: usize = 4;
 /// A transient state of somebody else's gesture is dropped (the board shows the host's state again) after this long without news.
 const OVERLAY_IDLE: Duration = Duration::from_secs(3);
+/// Objects of a gesture sent per tick of 50 ms (at most 20 a second, the others take turns): with the cursor that is 40 ephemeral messages a second, under the host limit of 60.
+const MAX_TRANSIENTS_PER_TICK: usize = 1;
 
 /* ------------------------------------------------------------------ display name */
 
@@ -470,6 +472,9 @@ pub struct GuestSession {
     nonce: u64,
     diagnosis: Option<PendingDiagnosis>,
     pub dropped_frames: u64,
+    /// Tests: every ephemeral message sent, with the time of the session's clock (rate measurements).
+    #[cfg(test)]
+    pub sent_log: Vec<(u64, &'static str)>,
 }
 
 impl std::fmt::Debug for GuestSession {
@@ -528,6 +533,8 @@ impl GuestSession {
             nonce: 0,
             diagnosis: None,
             dropped_frames: 0,
+            #[cfg(test)]
+            sent_log: Vec::new(),
         }
     }
 
@@ -631,15 +638,32 @@ impl GuestSession {
             return;
         }
         self.last_presence = Some((p.clone(), now));
+        #[cfg(test)]
+        self.sent_log.push((now, "presence"));
         self.client.send_ephemeral(Message::Presence(p));
     }
     /// State of an object being moved, resized or edited by a gesture still in progress.
     pub fn send_transient(&mut self, object: Id, state: Object) {
+        #[cfg(test)]
+        self.sent_log.push((self.clock.now_ms(), "transient"));
         self.client.send_ephemeral(Message::Transient { object, state: Box::new(state), author: None });
     }
     /// New points of a stroke being drawn.
     pub fn send_stroke(&mut self, stroke: Id, points: Vec<Pt>) {
+        #[cfg(test)]
+        self.sent_log.push((self.clock.now_ms(), "stroke"));
         self.client.send_ephemeral(Message::StrokePoints { stroke, points, author: None });
+    }
+
+    /// The other participants (the host first) with their colors: who can be followed.
+    pub fn others(&self) -> Vec<(u32, String, Color32)> {
+        let me = self.participant();
+        let mut v: Vec<(u32, String, Color32)> = Vec::new();
+        if !self.host_name.is_empty() && me != Some(ParticipantId::HOST) && self.roster.iter().all(|p| p.id != ParticipantId::HOST) {
+            v.push((ParticipantId::HOST.0, self.host_name.clone(), Color32::from_rgb(0x5b, 0x7c, 0xfa)));
+        }
+        v.extend(self.roster.iter().filter(|p| Some(p.id) != me).map(|p| (p.id.0, p.name.clone(), color32(p.color))));
+        v
     }
 
     pub fn take_changes(&mut self) -> Changes {
@@ -1001,6 +1025,8 @@ pub struct MirrorState {
     last_gesture_ms: u64,
     last_sent: Vec<Object>,
     stroke: Option<(Id, usize)>,
+    /// Where the next round of transient states starts among the objects of a gesture.
+    turn: usize,
 }
 
 fn color32(c: (u8, u8, u8)) -> Color32 {
@@ -1139,7 +1165,7 @@ impl App {
             self.enter_mirror(doc);
         }
         if self.mirror.stash.is_some() {
-            let now = std::time::Instant::now();
+            let now = self.agent.remote.now();
             let ended = matches!(g.state(), GuestState::Ended(_));
             // modifications made on the previous frame go first: the refresh below replaces the board
             let ops = self.ed.take_recorded_ops();
@@ -1151,9 +1177,9 @@ impl App {
                 self.apply_ephemeral(&g, m, now);
             }
             for a in &changes.authors {
-                self.agent.remote.strokes.retain(|_, s| s.author != a.0);
+                self.agent.remote.settle(a.0);
             }
-            if self.mirror.overlays.values().any(|t| t.elapsed() >= OVERLAY_IDLE) {
+            if self.mirror.overlays.values().any(|t| now.saturating_duration_since(*t) >= OVERLAY_IDLE) {
                 self.mirror.refresh = true;
             }
             self.agent.remote.prune(now);
@@ -1215,15 +1241,19 @@ impl App {
                 let (name, color) = Self::person_name(g, id);
                 let page = g.doc().page(&p.page);
                 let frames = page.map(|pg| p.selection.iter().filter_map(|i| pg.get(i).map(|o| pg.bounds(o))).collect::<Vec<_>>()).unwrap_or_default();
-                let person = self.agent.remote.people.entry(id.0).or_insert_with(|| RemotePerson {
-                    page: p.page.clone(),
-                    state: presence::PresenceState::new(presence::Participant {
-                        id: format!("guest-{}", id.0),
-                        name: name.clone(),
-                        color,
-                        kind: presence::ParticipantKind::Human,
-                    }),
+                let person = self.agent.remote.people.entry(id.0).or_insert_with(|| {
+                    RemotePerson::new(
+                        p.page.clone(),
+                        presence::PresenceState::new(presence::Participant {
+                            id: format!("guest-{}", id.0),
+                            name: name.clone(),
+                            color,
+                            kind: presence::ParticipantKind::Human,
+                        }),
+                    )
                 });
+                person.editing = p.editing.clone().map(|e| (e, now));
+                person.viewport = p.viewport;
                 person.page = p.page.clone();
                 person.state.participant.name = name;
                 person.state.participant.color = color;
@@ -1232,6 +1262,7 @@ impl App {
                     Some(c) => person.state.glide_to(c, now),
                     None => person.state.last_activity = None,
                 }
+                self.agent.remote.touch(id.0, now);
             }
             Message::Transient { object, state, author } => {
                 if author == me || (self.objects_moving() && self.sel.contains(&object)) {
@@ -1249,17 +1280,14 @@ impl App {
                 if Some(ParticipantId(author)) == me {
                     return;
                 }
-                let s = self.agent.remote.strokes.entry(stroke).or_insert_with(|| RemoteStroke { author, pts: Vec::new(), last: now });
-                if s.pts.len() < 20_000 {
-                    s.pts.extend(points);
-                }
-                s.last = now;
+                self.agent.remote.add_stroke(stroke, author, points, now);
             }
             Message::Agent(ev) => {
-                let page = self.ed.page();
+                // targets are looked up in the session's board, which is ahead of the mirror (it is refreshed after the messages)
+                let page = g.doc().page(&self.ed.current).unwrap_or_else(|| self.ed.page());
                 let steps: Vec<presence::Target> =
                     ev.targets.iter().filter_map(|id| page.get(id).map(|o| presence::Target { id: id.clone(), frame: page.bounds(o) })).collect();
-                let view = page.view;
+                let view = self.ed.page().view;
                 let z = view.zoom.max(1e-6);
                 let anchor =
                     ev.at.unwrap_or_else(|| Pt::new((f64::from(self.canvas_size.0) / 2.0 - view.x) / z, (f64::from(self.canvas_size.1) / 2.0 - view.y) / z));
@@ -1292,7 +1320,7 @@ impl App {
             selection: self.sel.clone(),
             tool: Some(tool_name(self.tool)),
             editing: self.editing.as_ref().map(|e| e.id.clone()),
-            viewport: None,
+            viewport: Some(inkboard_core::geom::Rect::new(-view.x / z, -view.y / z, f64::from(self.canvas_size.0) / z, f64::from(self.canvas_size.1) / z)),
         });
         if g.role() == Role::View {
             return;
@@ -1311,12 +1339,28 @@ impl App {
         } else {
             let page = self.ed.page();
             let current: Vec<Object> = ids.iter().filter_map(|i| page.get(i).cloned()).collect();
-            if current != self.mirror.last_sent {
-                self.mirror.last_gesture_ms = now;
-                for o in &current {
-                    g.send_transient(o.id.clone(), o.clone());
+            // a few objects per tick (the host limits ephemeral messages per second): the others take turns on the next ticks
+            let n = current.len();
+            let mut budget = MAX_TRANSIENTS_PER_TICK;
+            let mut last = None;
+            for k in 0..n {
+                let i = (self.mirror.turn + k) % n;
+                if budget == 0 {
+                    break;
                 }
-                self.mirror.last_sent = current;
+                let o = &current[i];
+                if self.mirror.last_sent.iter().any(|l| l == o) {
+                    continue;
+                }
+                g.send_transient(o.id.clone(), o.clone());
+                self.mirror.last_sent.retain(|l| l.id != o.id);
+                self.mirror.last_sent.push(o.clone());
+                budget -= 1;
+                last = Some(i);
+            }
+            if let Some(i) = last {
+                self.mirror.turn = i + 1;
+                self.mirror.last_gesture_ms = now;
             }
         }
         match &self.drag {

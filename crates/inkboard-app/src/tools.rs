@@ -789,6 +789,9 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     });
     let inside = resp.contains_pointer();
     let editing_now = app.editing.is_some();
+    if (pressed || middle) && inside {
+        crate::presence::follow(app, None); // acting on the board ends the following of somebody's view
+    }
     if let Some(sp) = pos {
         let w = cam.w(sp);
         if (pressed || middle) && inside && !editing_now && app.drag.is_none() {
@@ -864,10 +867,12 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     // ---- drawing
     let dark = app.ed.doc.background.preset.is_dark();
     let (r, g, b) = app.ed.doc.background.preset.rgb();
-    let ghost: Vec<Id> = match &app.drag {
+    let mut ghost: Vec<Id> = match &app.drag {
         Some(Drag::Erase { hit, .. }) => hit.clone(),
         _ => Vec::new(),
     };
+    // objects somebody else is moving: the board's version fades, theirs is drawn over it below
+    ghost.extend(app.agent.remote.ghosts.keys().cloned());
     let editing_id = app.editing.as_ref().map(|e| e.id.clone());
     {
         let page = app.ed.page();
@@ -886,10 +891,13 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         };
         rd.background(rect);
         rd.page(rect, editing_id.as_ref(), &ghost);
+        for g in app.agent.remote.ghosts.values().filter(|g| page.index_of(&g.object.id).is_some()) {
+            rd.draw_one(&g.object);
+        }
     }
     draw_overlay(app, &painter, &cam, dark);
     laser_trail(app, &painter, &ctx, if resp.contains_pointer() { ptr } else { None });
-    app.agent.paint(&painter, &cam, &ctx);
+    app.agent.paint(&painter, &cam, &ctx, app.ed.page());
     crate::rich_edit::draw_text_editor(app, ui, &cam);
     let _ = rect;
 

@@ -1025,6 +1025,7 @@ impl eframe::App for App {
             self.poll_live();
             crate::share_ui::tick(self, ctx);
         }
+        crate::presence::follow_frame(self, ctx);
         self.shortcuts(ctx);
         self.dropped_files(ctx);
         if self.presenting {
@@ -1037,6 +1038,7 @@ impl eframe::App for App {
         crate::join_ui::show(self, ctx);
         if !self.presenting {
             crate::share_ui::show(self, ctx);
+            crate::presence::follow_ui(self, ctx);
         }
         if let Some(r) = self.pen_test.as_mut() {
             r.feed(inkboard_pen::last_sample(), self.pen_force);
