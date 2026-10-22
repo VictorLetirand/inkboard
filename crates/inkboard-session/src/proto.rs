@@ -72,6 +72,15 @@ pub struct DocMeta {
     pub pages: usize,
 }
 
+/// A participant as the host lists it (names and colors shown on the cursors and in the participant list).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParticipantInfo {
+    pub id: ParticipantId,
+    pub name: String,
+    pub color: (u8, u8, u8),
+    pub role: Role,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Welcome {
     pub participant: ParticipantId,
@@ -79,6 +88,12 @@ pub struct Welcome {
     pub role: Role,
     pub doc_meta: DocMeta,
     pub host_proto: u32,
+    /// Display name of the host ("Session of X"); empty when the host did not say.
+    #[serde(default)]
+    pub host_name: String,
+    /// Everybody in the session at that moment, the host included.
+    #[serde(default)]
+    pub participants: Vec<ParticipantInfo>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +293,13 @@ pub enum Message {
     Presence(Presence),
     Agent(AgentEvent),
     // control
+    /// Host -> guests: the complete list of participants, sent whenever someone arrives, leaves, is renamed or changes role.
+    Participants {
+        list: Vec<ParticipantInfo>,
+    },
+    /// Guest -> host: undo (redo) my last modification. The host answers with ordinary `Applied`s; nothing is ever undone locally.
+    Undo,
+    Redo,
     Follow {
         participant: Option<ParticipantId>,
     },

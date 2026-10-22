@@ -2016,6 +2016,7 @@ dependencies = [
  "inkboard-icons",
  "inkboard-mcp",
  "inkboard-pen",
+ "inkboard-session",
  "raw-window-handle",
  "rfd",
  "serde_json",
