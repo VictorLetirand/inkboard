@@ -34,6 +34,9 @@ allow = [
     "BSL-1.0", # clipboard-win, error-code (via arboard, clipboard support)
     "CC0-1.0", # hexf-parse (via naga / wgpu, GPU shader compiler)
     "Ubuntu-font-1.0", # epaint_default_fonts (egui default fonts, listed in THIRD_PARTY_LICENSES.md)
+    # Added with iroh (shared sessions, decision D6 of context/PLAN_REMOTE.md), both permissive:
+    "CDLA-Permissive-2.0", # webpki-roots, webpki-root-certs (Mozilla root certificate data)
+    "Unlicense", # ws_stream_wasm, pharos, async_io_stream (iroh in the browser, wasm32 only)
 ]
 confidence-threshold = 0.8
 

@@ -72,8 +72,7 @@ pub struct DocMeta {
     pub pages: usize,
 }
 
-/// A person in the session, as listed by the host (the host itself is `ParticipantId::HOST`). The name is chosen by the person but
-/// cleaned and made unique by the host; it is cosmetic, not an identity.
+/// A participant as the host lists it (names and colors shown on the cursors and in the participant list).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantInfo {
     pub id: ParticipantId,
@@ -89,10 +88,10 @@ pub struct Welcome {
     pub role: Role,
     pub doc_meta: DocMeta,
     pub host_proto: u32,
-    /// Name of the host, shown as "Session of X".
+    /// Display name of the host ("Session of X"); empty when the host did not say.
     #[serde(default)]
     pub host_name: String,
-    /// Everybody in the session (the host included) with their names; later changes arrive as `Roster`.
+    /// Everybody in the session at that moment, the host included.
     #[serde(default)]
     pub participants: Vec<ParticipantInfo>,
 }
@@ -293,14 +292,14 @@ pub enum Message {
     },
     Presence(Presence),
     Agent(AgentEvent),
-    /// The whole list of participants, sent by the host to everybody when it changes (join, leave, rename, change of role).
-    Roster {
-        participants: Vec<ParticipantInfo>,
+    // control
+    /// Host -> guests: the complete list of participants, sent whenever someone arrives, leaves, is renamed or changes role.
+    Participants {
+        list: Vec<ParticipantInfo>,
     },
-    /// Guest -> host: undo / redo the guest's own last modification (the host answers with an ordinary `Applied`).
+    /// Guest -> host: undo (redo) my last modification. The host answers with ordinary `Applied`s; nothing is ever undone locally.
     Undo,
     Redo,
-    // control
     Follow {
         participant: Option<ParticipantId>,
     },

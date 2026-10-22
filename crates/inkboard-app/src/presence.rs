@@ -26,6 +26,10 @@ const LOOK_LIFE: Duration = Duration::from_millis(900);
 const MAX_STOPS: usize = 24;
 /// Events kept for the session host (lot C) to drain; the oldest are dropped.
 const OUTBOX_MAX: usize = 256;
+/// Time a remote human cursor takes to reach its newest position.
+const GLIDE: Duration = Duration::from_millis(90);
+/// A stroke being drawn by somebody else disappears after this long without a new point (its final form arrives as an object).
+const STROKE_IDLE: Duration = Duration::from_secs(3);
 /// Tools that only read the board: shown as a look, never as a move.
 const LOOK_TOOLS: [&str; 7] = ["describe_board", "board_changes", "render", "export", "find_objects", "search_icons", "list_icon_groups"];
 
@@ -183,6 +187,18 @@ impl PresenceState {
         self.frozen.is_none() && self.opacity(now) > 0.0
     }
 
+    /// A human participant's cursor moved (about 20 updates a second): glides there in a few frames instead of jumping, and counts as
+    /// activity. Unlike an agent's queued legs, a new position replaces the move still in progress.
+    pub fn glide_to(&mut self, to: Pt, now: Instant) {
+        let from = self.position_at(now).unwrap_or(to);
+        self.legs.retain(|l| l.end <= now && now.saturating_duration_since(l.end) < TRAIL_LIFE * 2);
+        if from.dist(to) > 0.01 {
+            self.legs.push(Leg { from, to, start: now, end: now + GLIDE });
+        }
+        self.cursor = Some(to);
+        self.last_activity = Some(now);
+    }
+
     fn push_leg(&mut self, to: Pt, anchor: Pt, now: Instant, fast: bool) -> Instant {
         self.legs.retain(|l| now.saturating_duration_since(l.end) < TRAIL_LIFE * 2);
         let from = self.cursor.unwrap_or(anchor);
@@ -193,15 +209,6 @@ impl PresenceState {
         self.legs.push(Leg { from, to, start, end });
         self.cursor = Some(to);
         end
-    }
-
-    /// A remote human moved to `to` (updates arrive about 20 times a second): the cursor glides there briefly and stays active.
-    pub fn follow_to(&mut self, to: Pt, now: Instant) {
-        let from = self.position_at(now).unwrap_or(to);
-        self.legs.clear();
-        self.legs.push(Leg { from, to, start: now, end: now + Duration::from_millis(80) });
-        self.cursor = Some(to);
-        self.last_activity = Some(now);
     }
 
     /// Applies an agent event. `anchor`: where the cursor first appears (the center of the view).
@@ -236,13 +243,67 @@ pub struct AgentPresence {
     pub headless: bool,
     pub state: PresenceState,
     pub outbox: VecDeque<AgentEvent>,
-    /// Remote humans of a shared session who are on the displayed page (set by `share_ui` before each frame), drawn with the agent.
-    pub remote: Vec<PresenceState>,
+    /// The other people of a shared session (a guest sees the host and the other guests).
+    pub remote: RemotePresence,
+}
+
+/// A participant of a shared session other than this user, with the page they are looking at.
+#[derive(Clone, Debug)]
+pub struct RemotePerson {
+    pub page: Id,
+    pub state: PresenceState,
+}
+
+/// A stroke somebody else is drawing right now (points received so far, in world units).
+#[derive(Clone, Debug)]
+pub struct RemoteStroke {
+    pub author: u32,
+    pub pts: Vec<Pt>,
+    pub last: Instant,
+}
+
+/// Remote participants shown on the canvas: cursor with name, selection outline, stroke in progress. Cosmetic like the rest.
+#[derive(Clone, Debug, Default)]
+pub struct RemotePresence {
+    pub people: std::collections::BTreeMap<u32, RemotePerson>,
+    pub strokes: std::collections::BTreeMap<Id, RemoteStroke>,
+    /// Page shown to this user: only the people on that page are drawn.
+    pub page: Option<Id>,
+}
+
+impl RemotePresence {
+    /// Forgets everything (the session is over).
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Is something drawn that changes with time (the caller then asks for a repaint)?
+    pub fn is_animating(&self, now: Instant) -> bool {
+        self.people.values().any(|p| p.state.is_animating(now)) || !self.strokes.is_empty()
+    }
+
+    fn paint(&self, painter: &Painter, cam: &Cam, now: Instant) {
+        for p in self.people.values().filter(|p| self.page.as_ref().is_none_or(|cur| *cur == p.page)) {
+            draw_presence(painter, cam, &p.state, now);
+        }
+        for s in self.strokes.values() {
+            let color = self.people.get(&s.author).map_or(Color32::GRAY, |p| p.state.participant.color);
+            let pts: Vec<Pos2> = s.pts.iter().map(|p| cam.s(*p)).collect();
+            if pts.len() >= 2 {
+                painter.add(Shape::line(pts, Stroke::new(3.0_f32, color.gamma_multiply(0.85))));
+            }
+        }
+    }
+
+    /// Drops the strokes that have gone quiet.
+    pub fn prune(&mut self, now: Instant) {
+        self.strokes.retain(|_, s| now.saturating_duration_since(s.last) < STROKE_IDLE);
+    }
 }
 
 impl AgentPresence {
     pub fn new(animate: bool, headless: bool) -> Self {
-        Self { animate, headless, state: PresenceState::new(Participant::agent("Claude")), outbox: VecDeque::new(), remote: Vec::new() }
+        Self { animate, headless, state: PresenceState::new(Participant::agent("Claude")), outbox: VecDeque::new(), remote: RemotePresence::default() }
     }
 
     /// Records an event (always) and animates it (unless disabled or headless).
@@ -258,11 +319,9 @@ impl AgentPresence {
 
     pub fn paint(&self, painter: &Painter, cam: &Cam, ctx: &egui::Context) {
         let now = Instant::now();
+        self.remote.paint(painter, cam, now);
         draw_presence(painter, cam, &self.state, now);
-        for r in &self.remote {
-            draw_presence(painter, cam, r, now);
-        }
-        if self.state.is_animating(now) || self.remote.iter().any(|r| r.is_animating(now)) {
+        if self.state.is_animating(now) || self.remote.is_animating(now) {
             ctx.request_repaint();
         }
     }
@@ -286,6 +345,11 @@ pub fn save_animate(on: bool) {
 }
 
 /* ------------------------------------------------------------------ events from tool calls */
+
+/// Is `tool` one that only reads the board (shown as a look)?
+pub fn is_look_tool(tool: &str) -> bool {
+    LOOK_TOOLS.contains(&tool)
+}
 
 fn push_ids(v: &Value, out: &mut Vec<String>) {
     for key in ["id", "ids", "from", "to"] {

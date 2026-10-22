@@ -243,7 +243,7 @@ fn guest_names_are_cleaned_and_unique_and_the_welcome_lists_everybody() {
     w.host.set_host_name("  Bob\n");
     w.host.rename(ParticipantId(1), "Bob");
     w.rounds(3);
-    let roster = raw.received().into_iter().rev().find_map(|m| if let Message::Roster { participants } = m { Some(participants) } else { None }).unwrap();
+    let roster = raw.received().into_iter().rev().find_map(|m| if let Message::Participants { list } = m { Some(list) } else { None }).unwrap();
     assert_eq!(roster[0].name, "Bob");
     assert_eq!(roster[1].name, "Bob (2)", "a guest cannot take the host's name either");
 }
@@ -1002,8 +1002,8 @@ fn the_share_window_and_the_participant_list() {
     assert_eq!(host.members().len(), 3);
     assert_eq!(host.pending().len(), 1);
     assert_eq!(host.members().iter().map(|m| m.role).collect::<Vec<_>>(), [Role::Edit, Role::View, Role::Edit]);
-    assert_eq!(t.app().agent.remote.len(), 2, "two remote cursors are drawn on this page");
-    assert!(t.app().agent.remote.iter().all(|r| !r.selection.is_empty()), "with their selections");
+    assert_eq!(t.app().agent.remote.people.len(), 2, "two remote cursors are drawn on this page");
+    assert!(t.app().agent.remote.people.values().all(|r| !r.state.selection.is_empty()), "with their selections");
     // the screenshot of the lot (kept when INKBOARD_SHARE_SHOT is set)
     for _ in 0..3 {
         t.h.step();

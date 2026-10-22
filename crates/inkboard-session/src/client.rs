@@ -190,7 +190,8 @@ impl Client {
     /// Makes a modification: applied to the view at once, sent to the host. Returns its `client_seq`, or `None` when it is not
     /// possible (read-only, not joined yet, closed) or changes nothing.
     pub fn edit(&mut self, ops: Vec<WireOp>, now: u64) -> Option<u64> {
-        if self.role == Role::View || !self.have_snapshot || !matches!(self.phase, Phase::Live | Phase::Disconnected) {
+        // `Joining` with a snapshot is a reconnection in progress: the edit waits, and `on_welcome` sends it
+        if self.role == Role::View || !self.have_snapshot || !matches!(self.phase, Phase::Live | Phase::Disconnected | Phase::Joining) {
             return None;
         }
         let applied = apply_wire_all(&mut self.doc, &ops);
@@ -206,6 +207,16 @@ impl Client {
         }
         self.pending.push(p);
         Some(client_seq)
+    }
+
+    /// Asks the host to undo (`redo`: redo) this guest's last modification. Returns false when it cannot be asked (read-only,
+    /// not live): the request is not queued, and the local view is never touched, the host answers with ordinary `Applied`s.
+    pub fn request_undo(&mut self, redo: bool) -> bool {
+        if self.role == Role::View || self.phase != Phase::Live || !self.have_snapshot {
+            return false;
+        }
+        self.outbox.push(if redo { Message::Redo } else { Message::Undo });
+        true
     }
 
     /// Sends an ephemeral message (presence, transient state, stroke points); dropped unless live.
@@ -311,7 +322,7 @@ impl Client {
             | Message::Transient { .. }
             | Message::StrokePoints { .. }
             | Message::Agent(_)
-            | Message::Roster { .. }
+            | Message::Participants { .. }
             | Message::Follow { .. }
             | Message::Kick { .. }
             | Message::RoleChange { .. }

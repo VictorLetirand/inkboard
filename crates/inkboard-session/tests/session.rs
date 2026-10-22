@@ -254,7 +254,7 @@ fn an_incompatible_protocol_gets_a_clear_refusal() {
         doc_meta: inkboard_session::proto::DocMeta { name: "x".into(), seq: 0, pages: 1 },
         host_proto: 99,
         host_name: String::new(),
-        participants: Vec::new(),
+        participants: vec![],
     };
     let err = g.client.handle(Message::Welcome(w2), 0).unwrap_err();
     assert!(matches!(err, Error::IncompatibleProtocol { theirs: 99, .. }));

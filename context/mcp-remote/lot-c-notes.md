@@ -19,13 +19,15 @@ Tout est testé sur `SimNet` ; aucune dépendance à `inkboard-net`. Commandes `
   (png/jpeg/gif/webp/svg), quota par invité, jamais décodée par l'hôte avant affichage.
 - Noms : `sanitize_name` (contrôles et marques de direction retirés, 1–40), `unique_name` (« Anna (2) »), fichier `display_name`.
 
-## Ajouts à `inkboard-session` (additifs)
-`ParticipantInfo`, `Welcome.host_name/participants` (serde default), `Message::Roster`, `Message::Undo/Redo`, `Sequencer::insert_asset`,
-deux bras dans `client.rs::handle` (Roster en `Relay`, Undo/Redo parmi les messages réservés à l'hôte). Trois littéraux `Welcome` de tests complétés.
+## Protocole (après fusion avec le lot D)
+Noms de D adoptés : `Welcome.host_name/participants`, `Message::Participants{list}` (envoyé à chaque arrivée, départ, renommage, changement
+de droit), `Undo/Redo`. Seul ajout de C : `Sequencer::insert_asset`. L'hôte répond `Ping` par `Pong`, envoie `Welcome` puis `Snapshot`
+(ou les `Applied` manquants à la reprise). Le lien donné est `inkboard://join#<ticket>` (accepté par `parse_join_link` de D).
+Rejets sans `client_seq` (avertissements, « n objets modifiés par X, non annulés ») : `Rejected{client_seq:0}`.
 
 ## Interface (`share_ui.rs`)
 Bouton « Partager » + pastille/compteur (carte en bas à droite), fenêtre Partager, liste des participants (renommer, droit, suivre, exclure),
-fenêtre d'accord, curseurs distants dessinés par `AgentPresence::paint` (champ `remote`, faute d'accès à `tools.rs`).
+fenêtre d'accord, curseurs distants via `agent.remote` (`RemotePresence` de D, `glide_to`), dessinés par `AgentPresence::paint`.
 
 ## Limites connues
 - Instantané en un seul message (les canaux invités doivent accepter de grands cadres) ; pas de reprise d'image au milieu (on redemande).

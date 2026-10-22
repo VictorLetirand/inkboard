@@ -38,12 +38,16 @@ pub struct Editor {
     open: Option<Vec<Op>>,
     depth: usize,
     rev: u64,
+    /// Shared-session guest hook (see the end of this impl): operations applied since the last `take_recorded_ops`.
+    op_log: Option<Vec<Op>>,
+    /// Shared-session guest hook: refuses every modification (read-only participant).
+    read_only: bool,
 }
 
 impl Editor {
     pub fn new(doc: Document) -> Self {
         let current = doc.pages[0].id.clone();
-        Self { doc, current, history: History::default(), open: None, depth: 0, rev: 0 }
+        Self { doc, current, history: History::default(), open: None, depth: 0, rev: 0, op_log: None, read_only: false }
     }
 
     /// Counter incremented on every modification (to detect "needs saving").
@@ -80,9 +84,13 @@ impl Editor {
     /// transaction, only the operations of this call are undone.
     pub fn try_transact<R, E>(&mut self, f: impl FnOnce(&mut Self) -> Result<R, E>) -> Result<R, E> {
         let (start, rev, current) = (self.open.as_ref().map_or(0, Vec::len), self.rev, self.current.clone());
+        let logged = self.op_log.as_ref().map_or(0, Vec::len);
         self.transact(|e| {
             let r = f(e);
             if r.is_err() {
+                if let Some(log) = e.op_log.as_mut() {
+                    log.truncate(logged);
+                }
                 for op in e.open.as_mut().map(|v| v.split_off(start)).unwrap_or_default().iter().rev() {
                     e.doc.apply(&op.inverse());
                 }
@@ -95,8 +103,14 @@ impl Editor {
     }
 
     fn apply(&mut self, op: Op) {
+        if self.read_only {
+            return;
+        }
         self.doc.apply(&op);
         self.rev += 1;
+        if let Some(log) = self.op_log.as_mut() {
+            log.push(op.clone());
+        }
         match self.open.as_mut() {
             Some(v) => v.push(op),
             None => self.history.push(vec![op]),
@@ -104,6 +118,9 @@ impl Editor {
     }
 
     pub fn undo(&mut self) -> bool {
+        if self.read_only {
+            return false;
+        }
         let ok = self.history.undo(&mut self.doc);
         if ok {
             self.rev += 1;
@@ -112,6 +129,9 @@ impl Editor {
         ok
     }
     pub fn redo(&mut self) -> bool {
+        if self.read_only {
+            return false;
+        }
         let ok = self.history.redo(&mut self.doc);
         if ok {
             self.rev += 1;
@@ -129,6 +149,9 @@ impl Editor {
         self.current = doc.pages[0].id.clone();
         self.doc = doc;
         self.history.clear();
+        if let Some(log) = self.op_log.as_mut() {
+            log.clear();
+        }
         self.rev += 1;
     }
 
@@ -391,6 +414,42 @@ impl Editor {
             let before = self.doc.name.clone();
             self.apply(Op::SetName { before, after: name.to_owned() });
         }
+    }
+
+    /* ------------------------------------- Hook for a shared-session guest */
+    // Separate from the editing methods above on purpose. A guest edits a local mirror of the host's board: its modifications are
+    // recorded here to be sent to the host, the mirror is refreshed from the host's state, and a read-only guest cannot modify it.
+
+    /// Starts (`true`) or stops (`false`) recording the operations that modify the document. Stopping drops what was recorded.
+    pub fn record_ops(&mut self, on: bool) {
+        self.op_log = on.then(Vec::new);
+    }
+
+    /// Operations applied since the last call, in order (empty when not recording). Undo and redo are not recorded: a guest never
+    /// undoes locally.
+    pub fn take_recorded_ops(&mut self) -> Vec<Op> {
+        self.op_log.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// A read-only editor ignores every modification (no change, no revision, no history, nothing recorded).
+    pub fn set_read_only(&mut self, on: bool) {
+        self.read_only = on;
+    }
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// The document was changed without going through the editor (a transient state of somebody else's gesture): caches are rebuilt.
+    pub fn bump_revision(&mut self) {
+        self.rev += 1;
+    }
+
+    /// Replaces the document by a newer state of the same board (refresh of a mirror): the history is left alone, the current page
+    /// is kept when it still exists, the revision moves so that caches are rebuilt.
+    pub fn replace_document(&mut self, doc: Document) {
+        self.doc = doc;
+        self.rev += 1;
+        self.fix_current();
     }
 }
 
@@ -669,6 +728,30 @@ mod tests {
         let id = e.current.clone();
         e.remove_page(&id);
         assert_eq!(e.doc.pages.len(), 1);
+    }
+
+    #[test]
+    fn guest_hook_records_operations_and_read_only_ignores_everything() {
+        let mut e = Editor::new(Document::default());
+        e.record_ops(true);
+        let a = e.insert(shape(0.0, 0.0));
+        let r: Result<(), ()> = e.try_transact(|e| {
+            e.insert(shape(5.0, 5.0));
+            Err(())
+        });
+        assert!(r.is_err());
+        e.update(&a, |o| o.translate(Pt::new(1.0, 0.0)));
+        assert_eq!(e.take_recorded_ops().len(), 2, "the undone transaction is not recorded");
+        assert!(e.take_recorded_ops().is_empty());
+        e.set_read_only(true);
+        let rev = e.revision();
+        e.insert(shape(9.0, 9.0));
+        e.remove(std::slice::from_ref(&a));
+        assert!(!e.undo() && !e.redo());
+        assert_eq!((e.revision(), e.page().objects.len()), (rev, 1));
+        assert!(e.take_recorded_ops().is_empty());
+        e.replace_document(Document::default());
+        assert!(e.revision() > rev && e.page().objects.is_empty());
     }
 
     mod props {

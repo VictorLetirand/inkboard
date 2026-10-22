@@ -4,7 +4,7 @@
 
 use crate::app::App;
 use crate::i18n::{t, tr};
-use crate::presence::{Participant, ParticipantKind, PresenceState};
+use crate::presence::{Participant, ParticipantKind, PresenceState, RemotePerson};
 use crate::session_host::{
     HostAddress, HostConfig, HostEvent, MemberView, PendingView, SessionHost, SessionNet, load_display_name, save_display_name, world_point,
 };
@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 /// Minimum delay between two sends of the host's own cursor.
 const PRESENCE_EVERY: Duration = Duration::from_millis(50);
 
+/// What a guest last said about its view (the cursor itself lives in `app.agent.remote`, drawn by `presence.rs`).
 struct Remote {
-    state: PresenceState,
     page: Id,
     selection: Vec<Id>,
     viewport: Option<Rect>,
@@ -150,10 +150,12 @@ fn on_event(app: &mut App, ev: HostEvent, members: &[MemberView]) {
         HostEvent::Joined { name, .. } => app.toast(&tr!("{} joined", name)),
         HostEvent::Left { id, name } => {
             app.share.remote.remove(&id);
+            app.agent.remote.people.remove(&id.0);
             app.toast(&tr!("{} left", name));
         }
         HostEvent::Excluded { id, name, .. } => {
             app.share.remote.remove(&id);
+            app.agent.remote.people.remove(&id.0);
             app.toast(&tr!("{} was removed", name));
         }
         HostEvent::Warned { name, reason, .. } => app.toast(&tr!("{} went over a limit: {}", name, reason)),
@@ -162,24 +164,21 @@ fn on_event(app: &mut App, ev: HostEvent, members: &[MemberView]) {
             let Some(m) = members.iter().find(|m| m.id == id) else { return };
             let now = Instant::now();
             let (r, g, b) = m.color;
-            let entry = app.share.remote.entry(id).or_insert_with(|| Remote {
+            let person = app.agent.remote.people.entry(id.0).or_insert_with(|| RemotePerson {
+                page: presence.page.clone(),
                 state: PresenceState::new(Participant {
                     id: format!("guest-{}", id.0),
                     name: m.name.clone(),
                     color: Color32::from_rgb(r, g, b),
                     kind: ParticipantKind::Human,
                 }),
-                page: presence.page.clone(),
-                selection: Vec::new(),
-                viewport: None,
             });
             match presence.cursor {
-                Some(c) => entry.state.follow_to(c, now),
-                None => entry.state.last_activity = Some(now),
+                Some(c) => person.state.glide_to(c, now),
+                None => person.state.last_activity = Some(now),
             }
-            entry.page = presence.page.clone();
-            entry.selection = presence.selection.clone();
-            entry.viewport = presence.viewport;
+            person.page = presence.page.clone();
+            app.share.remote.insert(id, Remote { page: presence.page.clone(), selection: presence.selection.clone(), viewport: presence.viewport });
             if app.share.following == Some(id) {
                 follow_view(app, id);
             }
@@ -221,19 +220,17 @@ fn send_own_presence(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Puts the remote cursors that are on the displayed page where the canvas will draw them.
+/// Names, colors and selection outlines of the remote cursors; the canvas draws those on the displayed page.
 fn refresh_remote(app: &mut App, members: &[MemberView]) {
     let page = app.ed.page().clone();
-    app.agent.remote.clear();
-    for (id, r) in &mut app.share.remote {
-        let Some(m) = members.iter().find(|m| m.id == *id) else { continue };
-        r.state.participant.name.clone_from(&m.name);
-        r.state.participant.color = Color32::from_rgb(m.color.0, m.color.1, m.color.2);
-        if r.page != page.id {
-            continue;
-        }
-        r.state.selection = r.selection.iter().filter_map(|i| page.get(i)).map(|o| page.bounds(o)).collect();
-        app.agent.remote.push(r.state.clone());
+    app.agent.remote.page = Some(page.id.clone());
+    app.agent.remote.prune(Instant::now());
+    for (id, p) in &mut app.agent.remote.people {
+        let Some(m) = members.iter().find(|m| m.id.0 == *id) else { continue };
+        p.state.participant.name.clone_from(&m.name);
+        p.state.participant.color = Color32::from_rgb(m.color.0, m.color.1, m.color.2);
+        let sel = app.share.remote.get(&ParticipantId(*id)).map(|r| r.selection.as_slice()).unwrap_or_default();
+        p.state.selection = sel.iter().filter_map(|i| page.get(i)).map(|o| page.bounds(o)).collect();
     }
 }
 

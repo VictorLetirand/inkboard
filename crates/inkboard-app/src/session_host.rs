@@ -672,7 +672,7 @@ impl SessionHost {
         self.housekeeping();
         if self.roster_dirty {
             self.roster_dirty = false;
-            let roster = Message::Roster { participants: self.roster() };
+            let roster = Message::Participants { list: self.roster() };
             self.broadcast(&roster, None);
         }
     }
