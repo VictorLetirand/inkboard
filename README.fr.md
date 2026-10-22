@@ -126,6 +126,10 @@ Moyens : table des identifiants et **index spatial en grille** reconstruits une 
 niveau de détail (objets de moins de 3 px dessinés comme des points), sélection et survol par l'index (< 0,01 ms).
 L'index n'est utilisé qu'à partir de 400 objets et suspendu pendant les gestes qui déplacent des objets.
 
+## Partage en direct
+
+Cliquez sur **Partager** pour obtenir un lien ; les personnes qui l'ouvrent (après votre accord) modifient le même tableau en direct, avec le curseur de chacun et celui de l'agent d'IA. Chiffré de bout en bout, rien ne se connecte avant que vous démarriez le partage, et vous pouvez héberger votre propre relais. En cours de développement : [partager et rejoindre](docs/fr/SHARING.md) · [héberger son relais](docs/fr/RELAY.md).
+
 ## Documentation
 
 - [Architecture et décisions](docs/fr/ARCHITECTURE.md)

@@ -96,6 +96,10 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 
 ![Icon library](docs/img/icon-library.png)
 
+## Live sharing
+
+Click **Share** to get a link; people who open it (after your approval) edit the same board live, with everybody's cursor and the AI agent's. End-to-end encrypted, nothing connects until you start sharing, you can run your own relay. Under development: [how to share and join](docs/SHARING.md) · [host your own relay](docs/RELAY.md).
+
 ## Use it with AI agents (MCP)
 
 `inkboard-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server: an agent can create shapes, bound connectors, tables, code blocks, formulas, images and whole Mermaid diagrams, lay them out automatically, and export.
