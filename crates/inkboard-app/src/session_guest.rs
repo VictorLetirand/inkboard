@@ -97,6 +97,8 @@ pub struct UploadProgress {
 }
 /// A transient state of somebody else's gesture is dropped (the board shows the host's state again) after this long without news.
 const OVERLAY_IDLE: Duration = Duration::from_secs(3);
+/// The detection of the network coming back is looked at this often.
+const NET_CHECK_MS: u64 = 1_000;
 /// Objects of a gesture sent per tick of 50 ms (at most 20 a second, the others take turns): with the cursor that is 40 ephemeral messages a second, under the host limit of 60.
 const MAX_TRANSIENTS_PER_TICK: usize = 1;
 
@@ -264,6 +266,16 @@ pub trait GuestLink {
     fn take_failure(&mut self) -> Option<ConnectError> {
         None
     }
+
+    /// The computer's network came back or changed (or the user asked to retry): the transport should probe its paths again now
+    /// instead of waiting for its own timers. Must not block.
+    fn network_changed(&mut self) {}
+}
+
+/// Notices that the computer's network came back or changed (a new local address). Polled about once a second by the session.
+pub trait NetWatch {
+    /// `true` once for each change to a usable network (offline then online again, or another local address).
+    fn changed(&mut self) -> bool;
 }
 
 impl<T: Transport> GuestLink for T
@@ -403,11 +415,15 @@ pub struct GuestConfig {
     pub probe_ms: u64,
     /// Silence after which the connection is considered dead and a new one is opened.
     pub stale_ms: u64,
-    /// Pause between two attempts to reconnect (it grows to `retry_max_ms`).
+    /// Pause between two attempts to reconnect: `retry_ms` for the first `fast_retries` attempts (close together), then it doubles
+    /// up to `retry_max_ms`.
     pub retry_ms: u64,
     pub retry_max_ms: u64,
+    pub fast_retries: u32,
     /// A connection that is not open after this long is a failure.
     pub connect_timeout_ms: u64,
+    /// While reconnecting, an attempt that is not answered after this long is abandoned (really cut) and the next one starts.
+    pub reconnect_attempt_ms: u64,
     /// Reconnection is abandoned after this long (the host is probably gone).
     pub give_up_ms: u64,
     /// Connection service to diagnose when the link carries no relay hint.
@@ -421,8 +437,10 @@ impl Default for GuestConfig {
             probe_ms: 1_000,
             stale_ms: 20_000,
             retry_ms: 1_000,
-            retry_max_ms: 4_000,
+            retry_max_ms: 8_000,
+            fast_retries: 4,
             connect_timeout_ms: 20_000,
+            reconnect_attempt_ms: 6_000,
             give_up_ms: 15 * 60_000,
             relay_url: DEFAULT_RELAY_URL.to_owned(),
         }
@@ -521,6 +539,10 @@ pub struct GuestSession {
     connecting_since: u64,
     next_attempt: u64,
     attempts: u32,
+    /// Connections started since the connection was lost (shown as "attempt N"); back to 0 once the host answered.
+    reconnect_try: u32,
+    net_watch: Option<Box<dyn NetWatch>>,
+    next_net_check: u64,
     lost_since: Option<u64>,
     changes: Changes,
     manifest: Vec<AssetInfo>,
@@ -598,6 +620,9 @@ impl GuestSession {
             connecting_since: 0,
             next_attempt: 0,
             attempts: 0,
+            reconnect_try: 0,
+            net_watch: None,
+            next_net_check: 0,
             lost_since: None,
             changes: Changes::default(),
             manifest: Vec::new(),
@@ -630,6 +655,35 @@ impl GuestSession {
     /// Session of the real application: operating system randomness and real time.
     pub fn with_defaults(link: Box<dyn GuestLink>, diagnoser: Arc<dyn RelayDiagnoser>, ticket: Ticket, name: &str) -> Self {
         Self::new(link, diagnoser, ticket, name, Box::new(OsEntropy), Clock::real(), GuestConfig::default())
+    }
+
+    /// Plugs in the detection of the network coming back (the real application: `session_net::LocalAddrWatch`).
+    pub fn set_net_watch(&mut self, watch: Box<dyn NetWatch>) {
+        self.net_watch = Some(watch);
+    }
+
+    /// Connections started since the link was lost (0 while the first one is still being waited for).
+    pub fn reconnect_attempt(&self) -> u32 {
+        self.reconnect_try
+    }
+
+    /// "Retry now" (button, or the network came back): the transport probes its paths again, the attempt in progress is abandoned
+    /// and a new one starts at once, with the same participant identifier (the host gives the place back without asking again).
+    pub fn retry_now(&mut self) {
+        let now = self.clock.now_ms();
+        self.link.network_changed();
+        match self.stage {
+            Stage::Reconnecting => {
+                if let Some(c) = self.conn.as_mut() {
+                    c.close();
+                }
+                self.conn = None;
+                self.next_attempt = now;
+                self.attempts = 0;
+            }
+            Stage::Live if self.silent => self.connection_lost(now, ConnectErrorKind::Other, "retry requested"),
+            _ => {}
+        }
     }
 
     pub fn state(&self) -> GuestState {
@@ -984,6 +1038,7 @@ impl GuestSession {
         if matches!(self.stage, Stage::Failed(_) | Stage::Ended(_)) {
             return;
         }
+        self.watch_network(now);
         if self.conn.is_none() && now >= self.next_attempt {
             self.try_connect(now);
         }
@@ -1004,7 +1059,21 @@ impl GuestSession {
         self.ticket.relays.iter().find(|h| h.starts_with("http://") || h.starts_with("https://")).cloned().unwrap_or_else(|| self.cfg.relay_url.clone())
     }
 
+    /// Looks for the network coming back about once a second; a change after the first welcome is a reason to retry at once.
+    fn watch_network(&mut self, now: u64) {
+        if now < self.next_net_check {
+            return;
+        }
+        self.next_net_check = now + NET_CHECK_MS;
+        if self.net_watch.as_mut().is_some_and(|w| w.changed()) && self.welcomed {
+            self.retry_now();
+        }
+    }
+
     fn try_connect(&mut self, now: u64) {
+        if self.welcomed {
+            self.reconnect_try += 1;
+        }
         match self.link.connect(&self.ticket.host) {
             Ok(conn) => {
                 self.conn = Some(conn);
@@ -1022,8 +1091,7 @@ impl GuestSession {
     fn connect_failed(&mut self, kind: ConnectErrorKind, detail: &str, now: u64) {
         if self.welcomed {
             self.attempts += 1;
-            let pause = (self.cfg.retry_ms * u64::from(self.attempts)).min(self.cfg.retry_max_ms);
-            self.next_attempt = now + pause;
+            self.next_attempt = now + self.retry_pause();
             if now.saturating_sub(self.lost_since.unwrap_or(now)) >= self.cfg.give_up_ms {
                 self.stage = Stage::Ended(EndReason::ConnectionLost);
             }
@@ -1043,6 +1111,12 @@ impl GuestSession {
             });
             self.diagnosis = Some(PendingDiagnosis { rx, kind, detail: detail.to_owned(), relay_url: url });
         }
+    }
+
+    /// Pause after the `attempts`-th failed attempt: close together at first, then spaced (doubling up to `retry_max_ms`).
+    fn retry_pause(&self) -> u64 {
+        let slow = self.attempts.saturating_sub(self.cfg.fast_retries).min(16);
+        (self.cfg.retry_ms << slow).min(self.cfg.retry_max_ms.max(self.cfg.retry_ms))
     }
 
     fn poll_diagnosis(&mut self) {
@@ -1094,7 +1168,9 @@ impl GuestSession {
                 self.conn = None;
                 return self.connect_failed(e.kind, &e.detail, now);
             }
-            if now.saturating_sub(self.connecting_since) >= self.cfg.connect_timeout_ms {
+            // a reconnection is given less time than the first connection: the next attempt may find a better path
+            let limit = if self.welcomed { self.cfg.reconnect_attempt_ms } else { self.cfg.connect_timeout_ms };
+            if now.saturating_sub(self.connecting_since) >= limit {
                 self.connection_lost(now, ConnectErrorKind::TimedOut, "the connection could not be established in time");
             }
             return;
@@ -1112,7 +1188,8 @@ impl GuestSession {
                 let _ = c.send(&f);
             }
         }
-        if idle >= self.cfg.stale_ms {
+        let stale = if matches!(self.stage, Stage::Reconnecting) { self.cfg.reconnect_attempt_ms } else { self.cfg.stale_ms };
+        if idle >= stale {
             self.connection_lost(now, ConnectErrorKind::TimedOut, "no news from the host");
         } else if idle >= self.cfg.silence_ms {
             self.silent = true;
@@ -1127,11 +1204,15 @@ impl GuestSession {
         self.silent = false;
         self.client.connection_lost();
         self.held.clear(); // sent again with the pending modifications once back
-        if self.welcomed {
+        if self.welcomed && matches!(self.stage, Stage::Reconnecting) {
+            // an attempt made while reconnecting failed: the next one waits a little (close together first, then spaced)
+            self.connect_failed(kind, detail, now);
+        } else if self.welcomed {
             self.stage = Stage::Reconnecting;
             self.lost_since.get_or_insert(now);
             self.next_attempt = now;
             self.attempts = 0;
+            self.reconnect_try = 0;
         } else {
             self.connect_failed(kind, detail, now);
         }
@@ -1208,6 +1289,7 @@ impl GuestSession {
             ClientEvent::Joined { .. } => {
                 self.lost_since = None;
                 self.attempts = 0;
+                self.reconnect_try = 0;
                 // an image being sent goes on from what the host holds (it keeps it for a guest that comes back)
                 for u in &mut self.uploads {
                     u.sent = u.acked;

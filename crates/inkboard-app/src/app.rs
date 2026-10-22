@@ -1006,6 +1006,8 @@ impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         crate::share_ui::stop(self);
         self.leave_guest();
+        // the sockets close on threads of their own (no freeze); the last `Bye` gets a short chance to leave before the process ends
+        crate::session_net::wait_background_closes(std::time::Duration::from_millis(1500));
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
