@@ -16,6 +16,7 @@ mod join_ui;
 mod keymap;
 mod library;
 mod live;
+mod names;
 mod panel;
 mod pen_test;
 mod presence;
@@ -39,6 +40,8 @@ struct Launch {
     open: Option<PathBuf>,
     /// `inkboard://join/…` link received from the system: opens the "Join a session" window.
     join: Option<String>,
+    /// The first argument was an `inkboard://` link that is not acceptable (quotes, spaces, line breaks, too long): nothing else is read.
+    bad_link: bool,
     screenshot: Option<PathBuf>,
     bench: bool,
     bench_close: bool,
@@ -51,8 +54,30 @@ struct Launch {
     bench_icons: Option<(usize, usize)>,
 }
 
+/// Longest `inkboard://` link accepted on the command line (a real ticket is under 3 000 characters).
+const MAX_LINK_ARG: usize = 4096;
+
+fn is_inkboard_link(a: &str) -> bool {
+    a.len() >= 11 && a.is_char_boundary(11) && a[..11].eq_ignore_ascii_case("inkboard://")
+}
+
+/// A link that is safe to hand to the join window: no quote, white space or control character (a `"` that slipped through a mail
+/// client would otherwise let the arguments after it be read as options), not too long.
+fn is_acceptable_link(a: &str) -> bool {
+    a.len() <= MAX_LINK_ARG && !a.chars().any(|c| c.is_control() || c.is_whitespace() || c == '"' || c == '\'')
+}
+
 fn parse_args(args: &[String]) -> Launch {
     let mut l = Launch::default();
+    // a link from the system (protocol handler) is the whole command line: no other argument is read as an option or a path
+    if let Some(first) = args.first().filter(|a| is_inkboard_link(a)) {
+        if is_acceptable_link(first) {
+            l.join = Some(first.clone());
+        } else {
+            l.bad_link = true;
+        }
+        return l;
+    }
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -73,7 +98,13 @@ fn parse_args(args: &[String]) -> Launch {
                 l.bench_icons = Some((n, d.parse().ok().filter(|d| *d > 0).unwrap_or(n.min(2000))));
             }
             "--ui-demo" => l.ui_demo = it.next().cloned().unwrap_or_default(),
-            other if other.len() >= 11 && other.is_char_boundary(11) && other[..11].eq_ignore_ascii_case("inkboard://") => l.join = Some(other.to_owned()),
+            other if is_inkboard_link(other) => {
+                if is_acceptable_link(other) {
+                    l.join = Some(other.to_owned());
+                } else {
+                    l.bad_link = true;
+                }
+            }
             other => l.open = Some(PathBuf::from(other)),
         }
     }
@@ -115,6 +146,9 @@ Your last saved file is intact.",
 
 fn main() -> eframe::Result {
     let l = parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
+    if l.bad_link {
+        report("Inkboard", "The invitation link was refused: it contains quotes, spaces or line breaks, or it is too long. Copy it again from the invitation.");
+    }
     if l.screenshot.is_none() && !l.bench && l.bench_icons.is_none() {
         install_panic_hook();
     }

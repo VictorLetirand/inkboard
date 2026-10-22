@@ -448,6 +448,27 @@ pub const FR: &[(&str, &str)] = &[
     ("{} wants to join", "{} veut rejoindre"),
     ("{} was removed", "{} a été exclu"),
     ("{} went over a limit: {}", "{} a dépassé une limite : {}"),
+    ("Hide", "Masquer"),
+    ("Show", "Afficher"),
+    ("Link used: {} (guest ID {})", "Lien utilisé : {} (identifiant de l'invité : {})"),
+    ("Relays only (do not publish my direct address)", "Relais seulement (ne pas publier mon adresse directe)"),
+    (
+        "A link normally contains the IP addresses of this computer, which anybody holding the link can read. \"Relays only\" leaves them out; connections then go through a relay.",
+        "Un lien contient normalement les adresses IP de cet ordinateur, lisibles par toute personne qui détient le lien. « Relais seulement » les retire ; les connexions passent alors par un relais.",
+    ),
+    (
+        "No relay address is known yet: the links appear as soon as a relay answers.",
+        "Aucune adresse de relais n'est connue pour l'instant : les liens apparaîtront dès qu'un relais répondra.",
+    ),
+    (
+        "To cut off a removed person for good, generate new links: they can ask to join again as long as they hold the old link.",
+        "Pour couper définitivement une personne exclue, régénérez les liens : tant qu'elle garde l'ancien lien, elle peut redemander à rejoindre.",
+    ),
+    ("To cut someone off for good, generate new links.", "Pour couper quelqu'un définitivement, régénérez les liens."),
+    (
+        "The agent was refused a file access: guests can edit this board",
+        "L'agent s'est vu refuser un accès à un fichier : des invités peuvent modifier ce tableau",
+    ),
     ("− column", "− colonne"),
     ("− row", "− ligne"),
 ];
