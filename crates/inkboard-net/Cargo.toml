@@ -1,0 +1,19 @@
+[package]
+name = "inkboard-net"
+description = "Native network transport of shared sessions (iroh: QUIC, NAT traversal, relays) and relay diagnostics."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Native only: the whole crate is empty on wasm32 (the browser transport comes later).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+inkboard-session = { path = "../inkboard-session" }
+iroh = { version = "1.4.0", default-features = false, features = ["tls-ring"] }
+# Already in the tree through iroh: used directly by the relay diagnostics (no HTTP client crate).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread", "sync", "time"] }
+webpki-roots = "1"
+
+[lints]
+workspace = true
