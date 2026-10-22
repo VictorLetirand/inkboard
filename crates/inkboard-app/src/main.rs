@@ -23,6 +23,7 @@ mod render;
 mod rich_edit;
 mod session_guest;
 mod session_host;
+mod session_net;
 mod share_ui;
 mod theme;
 mod tools;
@@ -175,6 +176,9 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
             if l.screenshot.is_none() && !l.bench && l.bench_icons.is_none() {
                 // live mode of inkboard-mcp: an agent can drive the displayed board
                 a.live = live::LiveServer::start(cc.egui_ctx.clone(), inkboard_mcp::live::discovery_path()).ok();
+                // shared sessions: only configurations, the network opens when the user clicks "Start sharing" or "Join"
+                a.share.net = Some(session_net::host_net());
+                a.join.factory = Some(session_net::guest_factory());
             }
             if let Some((n, d)) = l.bench_icons
                 && let Ok(lib) = inkboard_icons::Library::open(library::PACK)
@@ -201,6 +205,8 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_session_e2e;
 #[cfg(test)]
 mod tests_session_guest;
 #[cfg(test)]

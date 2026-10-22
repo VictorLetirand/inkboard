@@ -1002,6 +1002,12 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Closing the application ends the shared session cleanly: guests are told, the network threads and sockets are released.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        crate::share_ui::stop(self);
+        self.leave_guest();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let started = Instant::now();
         if let Some(p) = self.pending_open.take() {
