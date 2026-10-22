@@ -110,6 +110,9 @@ pub struct App {
     pub layers_open: bool,
     /// Interface language choice (system language, or forced).
     pub lang_pref: crate::i18n::Pref,
+    /// Setting "Use built-in fonts" (the embedded set is also used during any shared session) and the set currently installed.
+    pub fonts_pref: bool,
+    pub fonts_embedded: bool,
     /// Laser pointer trail: screen positions and instants.
     pub laser: Vec<(egui::Pos2, Instant)>,
     /// Id of the main menu (to open it in `--ui-demo menu` screenshots).
@@ -185,7 +188,10 @@ impl App {
 
     /// `restore`: reloads the last autosave (disabled in tests).
     pub fn build(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>, screenshot: Option<PathBuf>, restore: bool) -> Self {
-        fonts::install(&cc.egui_ctx);
+        // like the language, the font setting is read only for the real application (tests use the system set)
+        let fonts_pref = restore && fonts::load_embedded_pref();
+        let fonts_embedded = fonts_pref || fonts::ALWAYS_EMBEDDED;
+        fonts::apply(&cc.egui_ctx, fonts_embedded);
         // the language is read from the settings only for the real application (tests stay in English)
         let lang_pref = if restore {
             let p = crate::i18n::load_pref();
@@ -218,6 +224,8 @@ impl App {
             ui_dark: false,
             layers_open: false,
             lang_pref,
+            fonts_pref,
+            fonts_embedded,
             laser: Vec::new(),
             menu_popup: None,
             ui_demo: String::new(),
@@ -335,6 +343,21 @@ impl App {
         match (&self.caches.spatial, self.objects_moving()) {
             (Some(ix), false) => page.objects_in_rect_idx(r, contain, ix),
             _ => page.objects_in_rect(r, contain),
+        }
+    }
+
+    /// The fonts every participant of a shared session must have in common (host or guest), plus the user's setting.
+    pub fn wants_embedded_fonts(&self) -> bool {
+        fonts::ALWAYS_EMBEDDED || self.fonts_pref || self.guest.is_some() || self.share.host.is_some()
+    }
+
+    /// Switches between the system and the embedded fonts when a session starts or ends or the setting changes (takes effect next frame).
+    pub fn sync_fonts(&mut self, ctx: &egui::Context) {
+        let want = self.wants_embedded_fonts();
+        if want != self.fonts_embedded {
+            fonts::apply(ctx, want);
+            self.fonts_embedded = want;
+            ctx.request_repaint();
         }
     }
 
@@ -1012,6 +1035,7 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let started = Instant::now();
+        self.sync_fonts(ctx);
         if let Some(p) = self.pending_open.take() {
             self.open_path(&p);
         }

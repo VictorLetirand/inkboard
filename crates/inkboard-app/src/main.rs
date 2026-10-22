@@ -49,6 +49,8 @@ struct Launch {
     shortcuts_demo: bool,
     formula_demo: bool,
     pen_test: bool,
+    /// `--embedded-fonts`: uses the embedded font set for this run (screenshots, comparisons), without changing the setting.
+    embedded_fonts: bool,
     ui_demo: String,
     /// `--bench-icons COUNT[:DISTINCT]`
     bench_icons: Option<(usize, usize)>,
@@ -91,6 +93,7 @@ fn parse_args(args: &[String]) -> Launch {
             "--shortcuts-demo" => l.shortcuts_demo = true,
             "--formula-demo" => l.formula_demo = true,
             "--pen-test" => l.pen_test = true,
+            "--embedded-fonts" => l.embedded_fonts = true,
             "--bench-icons" => {
                 let spec = it.next().cloned().unwrap_or_default();
                 let (n, d) = spec.split_once(':').unwrap_or((spec.as_str(), "0"));
@@ -227,6 +230,7 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
             a.edit_demo = l.edit_demo;
             a.formula_demo = l.formula_demo;
             a.ui_demo = l.ui_demo.clone();
+            a.fonts_pref |= l.embedded_fonts;
             a.pen_test = l.pen_test.then(pen_test::PenReport::default);
             if l.shortcuts_demo {
                 a.dialog = Some(app::Dialog::Shortcuts { filter: String::new(), recording: Some(keymap::Action::ToolPen) });

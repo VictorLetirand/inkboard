@@ -395,6 +395,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Unlock", "Déverrouiller"),
     ("Unlock the selection", "Déverrouiller la sélection"),
     ("Unreadable image", "Image illisible"),
+    ("Use built-in fonts", "Utiliser les polices intégrées"),
     (
         "This vector image uses features that are not allowed in a shared session (filter, mask, link...): this change was cancelled.",
         "Cette image vectorielle utilise des fonctions interdites en session partagée (filtre, masque, lien…) : cette modification a été annulée.",

@@ -983,6 +983,32 @@ fn shared_app() -> (T, SimNet) {
     (t, net)
 }
 
+#[test]
+fn hosting_switches_to_the_embedded_fonts_and_stopping_gives_the_system_fonts_back() {
+    use inkboard_core::text::Measurer as _;
+    let width = |t: &mut T| t.app().measurer.width("Fonts shared by everyone in the session", inkboard_core::FontFamily::Sans, 16.0, false);
+    let (mut t, _net) = shared_app();
+    // the application started with the system set; the session starts on the next frames
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert!(t.app().fonts_embedded && t.app().wants_embedded_fonts());
+    let shared = width(&mut t);
+    crate::share_ui::stop(t.app());
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert!(!t.app().fonts_embedded, "back to the system set");
+    assert_ne!(width(&mut t), shared, "the measurer follows the installed set");
+    // the setting alone also selects the embedded set, with the same widths as in the session
+    t.app().fonts_pref = true;
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert!(t.app().fonts_embedded);
+    assert_eq!(width(&mut t), shared);
+}
+
 fn app_ticket(t: &mut T, role: Role) -> Ticket {
     let app = t.app();
     let addr = app.share.addr.clone().unwrap();
