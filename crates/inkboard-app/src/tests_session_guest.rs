@@ -828,9 +828,55 @@ fn an_inkboard_link_on_the_command_line_opens_the_join_window_not_a_file() {
     assert_eq!(l.join.as_deref(), Some("inkboard://join/abc"));
     assert!(l.open.is_none());
     let l = crate::parse_args(&["INKBOARD://JOIN/abc".to_owned(), "board.inkboard".to_owned()]);
-    assert!(l.join.is_some() && l.open.is_some());
+    assert!(l.join.is_some() && l.open.is_none(), "a link is the whole command line: no other argument is read");
     let l = crate::parse_args(&["board.inkboard".to_owned(), "inkb".to_owned(), "é".to_owned()]);
     assert!(l.join.is_none() && l.open.is_some(), "short and multi-byte arguments do not panic");
+}
+
+#[test]
+fn a_link_on_the_command_line_hides_every_other_argument_from_the_option_parser() {
+    let args = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let l = crate::parse_args(&args(&["inkboard://join#x", "--screenshot", "y"]));
+    assert_eq!(l.join.as_deref(), Some("inkboard://join#x"));
+    assert!(l.screenshot.is_none() && l.open.is_none() && !l.bench, "--screenshot is not an option after a link");
+    let l = crate::parse_args(&args(&["inkboard://join#x", "--bench", "--pen-test", "C:\\Users\\me\\file.inkboard"]));
+    assert!(l.join.is_some() && !l.bench && !l.pen_test && l.open.is_none());
+    // a link with a quote, white space, a line break or an absurd length is refused, and still nothing after it is read
+    let long = format!("inkboard://join#{}", "a".repeat(5000));
+    for bad in ["inkboard://join#x\"", "inkboard://join#x y", "inkboard://join#x\r\n", "inkboard://join#x\"--screenshot", long.as_str()] {
+        let l = crate::parse_args(&args(&[bad, "--screenshot", "y"]));
+        assert!(l.join.is_none() && l.bad_link, "{bad:?} is refused");
+        assert!(l.screenshot.is_none() && l.open.is_none(), "nothing after a refused link is read");
+    }
+}
+
+#[test]
+fn host_and_guest_clean_names_with_the_same_single_function() {
+    use crate::session_host::sanitize_name as host;
+    let long = "é".repeat(60);
+    let cases = [
+        "Anna",
+        "  Anna \t Smith\n",
+        "\u{3164}",
+        "\u{2800}Anna",
+        "An\u{061C}na",
+        "\u{115F}\u{1160}",
+        "a\u{034F}b",
+        "\u{202E}evil\u{202C}",
+        "x\u{200D}y\u{2066}z",
+        "\u{00AD}",
+        "€€€",
+        long.as_str(),
+    ];
+    for c in cases {
+        let g = sanitize_name(c);
+        assert_eq!(host(c, &g), g, "{c:?}: both sides give the same name");
+        assert_eq!(crate::names::clean_name(c).unwrap_or_else(|| "Guest".to_owned()), g);
+        assert!(g.chars().count() <= NAME_MAX && !g.chars().any(|ch| ch.is_control() || ('\u{200B}'..='\u{200F}').contains(&ch)));
+    }
+    assert_eq!(sanitize_name("\u{3164}"), "Guest", "an invisible name is refused");
+    assert_eq!(host("\u{2800}", "Host"), "Host");
+    assert_eq!(sanitize_name("\u{2800}Anna\u{3164}"), "Anna");
 }
 
 #[test]

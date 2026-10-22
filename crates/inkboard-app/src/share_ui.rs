@@ -63,6 +63,10 @@ pub struct Share {
     pub host_name: String,
     pub max_participants: usize,
     pub auto_accept_view: bool,
+    /// The links are shown in clear (hidden by default: screen sharing, over-the-shoulder readers).
+    pub links_shown: bool,
+    /// Leave the direct (IP) addresses of this computer out of the links; guests then go through a relay.
+    pub relays_only: bool,
     /// Tests: the session's time in ms, moved by hand (the real clock otherwise).
     pub test_clock: Option<Arc<AtomicU64>>,
     renaming: Option<(ParticipantId, String)>,
@@ -89,6 +93,8 @@ impl Share {
             host_name,
             max_participants: HostConfig::default().max_participants,
             auto_accept_view: false,
+            links_shown: false,
+            relays_only: false,
             test_clock: None,
             renaming: None,
             copied: None,
@@ -105,6 +111,12 @@ impl Share {
 
 /* ------------------------------------------------------------------------------------------------------- start / stop */
 
+/// The address as given to the links: with "relays only", the direct (IP) addresses of this computer are left out.
+pub fn published_address(addr: &HostAddress, relays_only: bool) -> HostAddress {
+    let relays = addr.relays.iter().filter(|h| !relays_only || h.parse::<std::net::SocketAddr>().is_err()).cloned().collect();
+    HostAddress { host: addr.host.clone(), relays }
+}
+
 /// "Start sharing": opens the network side and starts the session on the current board. A real network opens on a thread (the
 /// interface keeps running, "Starting…" is shown and the start can be cancelled): `tick` finishes the job; a simulated one blocks.
 pub fn start(app: &mut App) {
@@ -112,6 +124,7 @@ pub fn start(app: &mut App) {
     if app.share.starting.is_some() {
         return;
     }
+    app.share.links_shown = false;
     let Some(net) = app.share.net.as_mut() else {
         app.share.error = Some(t("Sharing is not available in this build."));
         return;
@@ -409,6 +422,8 @@ fn consent_window(ctx: &egui::Context, pending: &[PendingView], acts: &mut Vec<A
         .show(ctx, |ui| {
             for p in pending {
                 ui.label(RichText::new(tr!("{} wants to join", p.name)).strong());
+                let kind = if p.key_role == Role::Edit { t("Edit link") } else { t("Read-only link") };
+                ui.label(RichText::new(tr!("Link used: {} (guest ID {})", kind, p.short_id)).small());
                 ui.horizontal(|ui| {
                     if ui.add_enabled(p.key_role == Role::Edit, egui::Button::new(t("Accept as editor"))).clicked() {
                         acts.push(Act::Accept(p.request, Role::Edit));
@@ -429,8 +444,11 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
     let mut open = true;
     let running = app.share.is_running();
     let members: Vec<MemberView> = app.share.host.as_ref().map(SessionHost::members).unwrap_or_default();
-    let links: Option<(String, String)> = match (app.share.host.as_ref(), app.share.addr.as_ref()) {
-        (Some(h), Some(a)) => h.link(Role::Edit, a).ok().zip(h.link(Role::View, a).ok()),
+    let published = app.share.addr.as_ref().map(|a| published_address(a, app.share.relays_only));
+    // "relays only" with no relay known yet: a link would reach nobody, so none is offered
+    let waiting_for_relay = app.share.relays_only && published.as_ref().is_some_and(|a| a.relays.is_empty());
+    let links: Option<(String, String)> = match (app.share.host.as_ref(), published.as_ref()) {
+        (Some(h), Some(a)) if !waiting_for_relay => h.link(Role::Edit, a).ok().zip(h.link(Role::View, a).ok()),
         _ => None,
     };
     let count = app.share.host.as_ref().map_or(1, SessionHost::participant_count);
@@ -513,17 +531,29 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
                 }
                 return;
             }
-            // links
+            // links (hidden until asked: the link is the secret)
+            ui.checkbox(&mut share.relays_only, t("Relays only (do not publish my direct address)"));
+            ui.label(RichText::new(t("A link normally contains the IP addresses of this computer, which anybody holding the link can read. \"Relays only\" leaves them out; connections then go through a relay.")).small().color(p.mute));
+            if waiting_for_relay {
+                ui.label(RichText::new(t("No relay address is known yet: the links appear as soon as a relay answers.")).small().color(p.mute));
+            }
             if let Some((edit, view)) = &links {
                 for (label, url) in [(t("Edit link"), edit), (t("Read-only link"), view)] {
                     ui.label(label);
                     ui.horizontal(|ui| {
-                        let mut shown = url.clone();
-                        ui.add(egui::TextEdit::singleline(&mut shown).desired_width(270.0));
+                        if share.links_shown {
+                            let mut shown = url.clone();
+                            ui.add(egui::TextEdit::singleline(&mut shown).desired_width(270.0));
+                        } else {
+                            ui.label(RichText::new("••••••••••••••••••••").color(p.mute));
+                        }
                         if ui.button(t("Copy")).clicked() {
                             acts.push(Act::Copy(url.clone()));
                         }
                     });
+                }
+                if ui.button(if share.links_shown { t("Hide") } else { t("Show") }).clicked() {
+                    share.links_shown = !share.links_shown;
                 }
                 if share.copied.is_some_and(|c| c.elapsed() < Duration::from_secs(3)) {
                     ui.label(RichText::new(t("Link copied")).small().color(p.mute));
@@ -543,6 +573,7 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
             for m in &members {
                 participant_row(ui, share, following, m, acts);
             }
+            ui.label(RichText::new(t("To cut off a removed person for good, generate new links: they can ask to join again as long as they hold the old link.")).small().color(p.mute));
             ui.separator();
             if ui.button(t("Stop sharing")).clicked() {
                 acts.push(Act::Stop);
@@ -580,7 +611,7 @@ fn participant_row(ui: &mut egui::Ui, share: &mut Share, following: Option<u32>,
         if ui.small_button(if on { t("Stop following") } else { t("Follow") }).clicked() {
             acts.push(Act::Follow((!on).then_some(m.id)));
         }
-        if ui.small_button(t("Remove")).clicked() {
+        if ui.small_button(t("Remove")).on_hover_text(t("To cut someone off for good, generate new links.")).clicked() {
             acts.push(Act::Kick(m.id));
         }
     });
