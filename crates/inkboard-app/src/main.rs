@@ -22,6 +22,8 @@ mod presence;
 mod render;
 mod rich_edit;
 mod session_guest;
+mod session_host;
+mod share_ui;
 mod theme;
 mod tools;
 mod ui;
@@ -201,6 +203,8 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
 mod tests;
 #[cfg(test)]
 mod tests_session_guest;
+#[cfg(test)]
+mod tests_session_host;
 #[cfg(test)]
 mod tests_ui;
 #[cfg(test)]

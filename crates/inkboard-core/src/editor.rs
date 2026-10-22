@@ -453,6 +453,35 @@ impl Editor {
     }
 }
 
+/* ------------------------------------------------------------------------------------------------------------------------------
+ * Shared sessions: modifications made by another participant (see `history::AuthorHistories` for the per-author undo).
+ * ---------------------------------------------------------------------------------------------------------------------------- */
+impl Editor {
+    /// Applies modifications made by a remote participant. They do **not** go into this editor's undo stack (the local user's Ctrl+Z
+    /// never undoes somebody else's work) but they do increment the revision (unsaved changes, caches).
+    pub fn apply_external(&mut self, ops: &[Op]) {
+        if ops.is_empty() {
+            return;
+        }
+        for op in ops {
+            self.doc.apply(op);
+        }
+        self.rev += 1;
+        self.fix_current();
+    }
+
+    /// Like [`Editor::apply_external`] for a change that is computed on the document itself (e.g. applying index-free operations):
+    /// `f` modifies the document and returns the core operations it performed (nothing changed: the revision stays the same).
+    pub fn apply_external_with(&mut self, f: impl FnOnce(&mut Document) -> Vec<Op>) -> Vec<Op> {
+        let ops = f(&mut self.doc);
+        if !ops.is_empty() {
+            self.rev += 1;
+            self.fix_current();
+        }
+        ops
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -808,5 +837,52 @@ mod tests {
                 prop_assert_eq!(&e.current, &current);
             }
         }
+    }
+
+    /* ----------------------------------------------- external modifications */
+
+    #[test]
+    fn external_changes_bump_the_revision_but_never_enter_the_undo_stack() {
+        let mut e = Editor::new(Document::default());
+        let mine = e.insert(shape(0.0, 0.0));
+        let page = e.current.clone();
+        let theirs = shape(200.0, 0.0);
+        let their_id = theirs.id.clone();
+        let rev = e.revision();
+        e.apply_external(&[Op::Insert { page, index: 1, obj: Box::new(theirs) }]);
+        assert_eq!(e.revision(), rev + 1);
+        assert_eq!(e.page().objects.len(), 2);
+        e.apply_external(&[]);
+        assert_eq!(e.revision(), rev + 1, "nothing applied: same revision");
+        assert!(e.undo(), "the local user can undo their own insertion");
+        assert!(e.page().get(&mine).is_none() && e.page().get(&their_id).is_some(), "the remote object is untouched");
+        assert!(!e.can_undo(), "the remote modification was never on the stack");
+    }
+
+    #[test]
+    fn external_removal_of_the_current_page_moves_to_another_page() {
+        let mut e = Editor::new(Document::default());
+        let first = e.current.clone();
+        let second = e.add_page("two");
+        let index = e.doc.pages.iter().position(|p| p.id == second).unwrap();
+        let page = Box::new(e.doc.pages[index].clone());
+        e.apply_external(&[Op::RemovePage { index, page }]);
+        assert_eq!(e.current, first);
+    }
+
+    #[test]
+    fn apply_external_with_reports_what_was_performed() {
+        let mut e = Editor::new(Document::default());
+        let page = e.current.clone();
+        let rev = e.revision();
+        let ops = e.apply_external_with(|d| {
+            let op = Op::Insert { page, index: 0, obj: Box::new(shape(1.0, 1.0)) };
+            d.apply(&op);
+            vec![op]
+        });
+        assert_eq!((ops.len(), e.revision()), (1, rev + 1));
+        assert!(e.apply_external_with(|_| Vec::new()).is_empty());
+        assert_eq!(e.revision(), rev + 1);
+        assert!(!e.can_undo());
     }
 }

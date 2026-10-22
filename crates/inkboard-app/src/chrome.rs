@@ -235,6 +235,7 @@ fn help_card(app: &mut App, ctx: &Context) {
     theme::floating(ctx, "help", Align2::RIGHT_BOTTOM, vec2(-12.0, -12.0), 3, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            crate::share_ui::title_button(app, ui);
             let timer = theme::icon_button(ui, "timer", app.timer.is_some(), true).on_hover_text(t("Timer (time-box a workshop or a presentation)"));
             egui::Popup::from_toggle_button_response(&timer).close_behavior(egui::PopupCloseBehavior::CloseOnClick).width(230.0).show(|ui| timer_menu(app, ui));
             if theme::icon_button(ui, "help", false, true).on_hover_text(t("Keyboard shortcuts")).clicked() {
