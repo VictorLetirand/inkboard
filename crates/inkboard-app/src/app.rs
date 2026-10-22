@@ -166,6 +166,10 @@ pub struct App {
     pub fit_selection_next: bool,
     pub pending_open: Option<PathBuf>,
     pub canvas_rect: egui::Rect,
+    /// Shared session joined as a guest (see `session_guest.rs`), the state of its mirror, and the "Join" window (`join_ui.rs`).
+    pub guest: Option<Box<crate::session_guest::GuestSession>>,
+    pub mirror: crate::session_guest::MirrorState,
+    pub join: crate::join_ui::JoinUi,
 }
 
 fn autosave_path() -> PathBuf {
@@ -256,6 +260,9 @@ impl App {
             fit_selection_next: false,
             pending_open: None,
             canvas_rect: egui::Rect::ZERO,
+            guest: None,
+            mirror: Default::default(),
+            join: Default::default(),
         };
         if restore {
             let kp = autosave_path().with_file_name("keymap.json");
@@ -553,6 +560,10 @@ impl App {
     }
 
     pub fn set_tool(&mut self, t: Tool) {
+        // a read-only guest can only look around and point
+        if self.view_only() && !matches!(t, Tool::Hand | Tool::Laser) {
+            return;
+        }
         if self.editing.is_some() {
             self.commit_editing();
         }
@@ -665,6 +676,9 @@ impl App {
         if files.is_empty() || self.presenting || self.dialog.is_some() {
             return;
         }
+        if self.guest_active() {
+            return self.toast(&t("Not available in a shared session yet"));
+        }
         self.commit_editing();
         let (images, others): (Vec<PathBuf>, Vec<PathBuf>) = files.into_iter().partition(|f| crate::tools::is_image_file(f));
         if !others.is_empty() {
@@ -744,12 +758,8 @@ impl App {
             Action::Open => self.open_dialog(),
             Action::Save => self.save(),
             Action::SaveAs => self.save_as(),
-            Action::Undo => {
-                self.ed.undo();
-            }
-            Action::Redo => {
-                self.ed.redo();
-            }
+            Action::Undo => self.undo(),
+            Action::Redo => self.redo(),
             Action::SelectAll => self.select_all(),
             Action::Duplicate => self.sel = self.ed.duplicate(&sel, Pt::new(24.0, 24.0)),
             Action::Delete => self.delete_selection(),
@@ -806,6 +816,10 @@ impl App {
     }
 
     fn autosave(&mut self) {
+        // the mirror of somebody else's board is never the user's autosave
+        if self.guest_active() {
+            return;
+        }
         if self.dirty() && self.last_autosave.elapsed() > Duration::from_secs(10) {
             let p = autosave_path();
             if let Some(dir) = p.parent() {
@@ -996,8 +1010,11 @@ impl eframe::App for App {
             self.ui_dark = dark;
         }
         self.apply_present_request(ctx);
-        self.watch_file();
-        self.poll_live();
+        self.guest_frame(ctx);
+        if self.guest.is_none() {
+            self.watch_file();
+            self.poll_live();
+        }
         self.shortcuts(ctx);
         self.dropped_files(ctx);
         if self.presenting {
@@ -1007,6 +1024,7 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| crate::tools::canvas(self, ui));
         ui::dialogs(self, ctx);
+        crate::join_ui::show(self, ctx);
         if let Some(r) = self.pen_test.as_mut() {
             r.feed(inkboard_pen::last_sample(), self.pen_force);
             crate::pen_test::panel(r, ctx, self.pen_force);
@@ -1022,7 +1040,7 @@ impl eframe::App for App {
         if ctx.input(|i| i.viewport().close_requested()) && self.screenshot.is_none() {
             // what is being typed is validated first, then the autosave keeps the work: we let the window close
             self.commit_editing();
-            if self.dirty() {
+            if self.dirty() && !self.guest_active() {
                 let _ = inkboard_core::serial::save(&self.ed.doc, &autosave_path());
             }
         }

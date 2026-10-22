@@ -12,6 +12,7 @@ mod i18n;
 mod i18n_fr;
 mod icons;
 mod insert;
+mod join_ui;
 mod keymap;
 mod library;
 mod live;
@@ -20,6 +21,7 @@ mod pen_test;
 mod presence;
 mod render;
 mod rich_edit;
+mod session_guest;
 mod theme;
 mod tools;
 mod ui;
@@ -32,6 +34,8 @@ use std::path::PathBuf;
 #[derive(Clone, Default)]
 struct Launch {
     open: Option<PathBuf>,
+    /// `inkboard://join/…` link received from the system: opens the "Join a session" window.
+    join: Option<String>,
     screenshot: Option<PathBuf>,
     bench: bool,
     bench_close: bool,
@@ -66,6 +70,7 @@ fn parse_args(args: &[String]) -> Launch {
                 l.bench_icons = Some((n, d.parse().ok().filter(|d| *d > 0).unwrap_or(n.min(2000))));
             }
             "--ui-demo" => l.ui_demo = it.next().cloned().unwrap_or_default(),
+            other if other.len() >= 11 && other.is_char_boundary(11) && other[..11].eq_ignore_ascii_case("inkboard://") => l.join = Some(other.to_owned()),
             other => l.open = Some(PathBuf::from(other)),
         }
     }
@@ -175,6 +180,9 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
                 a.ed = inkboard_core::Editor::new(bench_icons::document(&lib, n, d));
                 a.icon_bench = Some(bench_icons::IconBench::new(n, d));
             }
+            if let Some(link) = l.join.clone() {
+                a.open_join_window(Some(link));
+            }
             a.bench = l.bench.then(|| app::Bench { close_up: l.bench_close, ..Default::default() });
             a.edit_demo = l.edit_demo;
             a.formula_demo = l.formula_demo;
@@ -191,6 +199,8 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_session_guest;
 #[cfg(test)]
 mod tests_ui;
 #[cfg(test)]

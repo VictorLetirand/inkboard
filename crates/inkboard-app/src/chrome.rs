@@ -106,6 +106,7 @@ fn save_state(app: &App) -> String {
 /* -------------------------------------------------------------- outils */
 
 fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
+    let (view_only, guest) = (app.view_only(), app.guest_active());
     let (anchor, offset) = if narrow { (Align2::LEFT_TOP, vec2(12.0, 62.0)) } else { (Align2::CENTER_TOP, vec2(0.0, 12.0)) };
     theme::floating(ctx, "tools", anchor, offset, 4, |ui| {
         ui.horizontal(|ui| {
@@ -122,7 +123,7 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
                         tip = format!("{tip}\n{}", t("Double-click to lock"));
                     }
                     let (active, locked) = (app.tool == *tool, app.tool == *tool && app.tool_lock && lockable);
-                    let resp = theme::icon_button(ui, icon, active, true);
+                    let resp = theme::icon_button(ui, icon, active, !view_only || matches!(tool, Tool::Hand));
                     if locked {
                         theme::lock_badge(ui, resp.rect);
                     }
@@ -137,10 +138,10 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
                     }
                 }
             }
-            if theme::icon_button(ui, "image", false, true).on_hover_text(t("Insert image")).clicked() {
+            if theme::icon_button(ui, "image", false, !guest).on_hover_text(t("Insert image")).clicked() {
                 app.insert_images_dialog();
             }
-            if theme::icon_button(ui, "library", app.palette.open, true).on_hover_text(t("Icon library")).clicked() {
+            if theme::icon_button(ui, "library", app.palette.open, !guest).on_hover_text(t("Icon library")).clicked() {
                 app.palette.toggle();
             }
             let key = Action::for_tool(Tool::Laser).map(|a| app.keymap.label(a)).unwrap_or_default();
@@ -150,7 +151,7 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
             theme::vsep(ui);
             let name = t("Keep the tool active after drawing");
             let tip = format!("{name} ({})", app.keymap.label(Action::ToolLock));
-            let resp = theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, true);
+            let resp = theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, !view_only);
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, app.tool_lock, &name));
             if resp.on_hover_text(tip).clicked() {
                 app.tool_lock = !app.tool_lock;
@@ -170,11 +171,11 @@ fn zoom_card(app: &mut App, ctx: &Context) {
     theme::floating(ctx, "zoom", Align2::LEFT_BOTTOM, vec2(12.0, -12.0), 3, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
-            if theme::icon_button(ui, "undo", false, app.ed.can_undo()).on_hover_text(format!("{} ({})", t("Undo"), app.keymap.label(Action::Undo))).clicked() {
-                app.ed.undo();
+            if theme::icon_button(ui, "undo", false, app.can_undo()).on_hover_text(format!("{} ({})", t("Undo"), app.keymap.label(Action::Undo))).clicked() {
+                app.undo();
             }
-            if theme::icon_button(ui, "redo", false, app.ed.can_redo()).on_hover_text(format!("{} ({})", t("Redo"), app.keymap.label(Action::Redo))).clicked() {
-                app.ed.redo();
+            if theme::icon_button(ui, "redo", false, app.can_redo()).on_hover_text(format!("{} ({})", t("Redo"), app.keymap.label(Action::Redo))).clicked() {
+                app.redo();
             }
             theme::vsep(ui);
             if theme::icon_button(ui, "minus", false, true).on_hover_text(t("Zoom out")).clicked() {
@@ -292,7 +293,12 @@ fn pages_card(app: &mut App, ctx: &Context) {
 /* ------------------------------------------------------------ menu principal */
 
 fn mi(ui: &mut Ui, icon: &str, label: &str, key: &str) -> bool {
-    let clicked = theme::menu_item(ui, Some(icon), label, key, false, true);
+    mi_if(ui, icon, label, key, true)
+}
+
+/// Menu row that may be disabled (grayed out, no click).
+fn mi_if(ui: &mut Ui, icon: &str, label: &str, key: &str, enabled: bool) -> bool {
+    let clicked = theme::menu_item(ui, Some(icon), label, key, false, enabled);
     if clicked {
         ui.close();
     }
@@ -312,13 +318,23 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
     egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
         theme::menu_style(ui);
         ui.set_min_width(238.0);
-        if mi(ui, "filenew", "New board", &key(app, Action::New)) {
+        // in a shared session the board is the host's: no new board, no opening another one, no upload of images
+        let (guest, view_only) = (app.guest_active(), app.view_only());
+        if mi_if(ui, "filenew", "New board", &key(app, Action::New), !guest) {
             app.request_new_document();
         }
-        if mi(ui, "folder", "Open / import a file…", &key(app, Action::Open)) {
+        if mi_if(ui, "folder", "Open / import a file…", &key(app, Action::Open), !guest) {
             app.open_dialog();
         }
-        if mi(ui, "mermaid", "Import Mermaid…", "") {
+        if guest || app.guest.is_some() {
+            if mi(ui, "play", "Leave the session", "") {
+                app.leave_guest();
+                app.join.window = None;
+            }
+        } else if mi(ui, "play", "Join a session…", "") {
+            app.open_join_window(None);
+        }
+        if mi_if(ui, "mermaid", "Import Mermaid…", "", !guest) {
             app.dialog = Some(Dialog::Mermaid {
                 text: t("flowchart TD\n  A[Idea] --> B{Feasible?}\n  B -->|Yes| C[Prototype]\n  B -->|No| D[Drop it]"),
                 new_board: false,
@@ -357,30 +373,30 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         }
         theme::menu_sep(ui);
         theme::menu_label(ui, "Insert");
-        if mi(ui, "image", "Image…", "") {
+        if mi_if(ui, "image", "Image…", "", !guest) {
             app.insert_images_dialog();
         }
-        if mi(ui, "library", "Icon library…", "") {
+        if mi_if(ui, "library", "Icon library…", "", !guest) {
             app.palette.toggle();
         }
-        if mi(ui, "code", "Code block", "") {
+        if mi_if(ui, "code", "Code block", "", !view_only) {
             app.insert_code_block();
         }
-        if mi(ui, "formula", "Formula (LaTeX)…", "") {
+        if mi_if(ui, "formula", "Formula (LaTeX)…", "", !guest) {
             app.dialog =
                 Some(Dialog::Formula { src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into(), editing: None, preview: Default::default() });
         }
-        if mi(ui, "vote", "Vote dot", "") {
+        if mi_if(ui, "vote", "Vote dot", "", !view_only) {
             app.set_tool(Tool::Vote);
         }
         theme::menu_sep(ui);
         theme::menu_label(ui, "Edit");
-        if theme::menu_item(ui, Some("undo"), "Undo", &key(app, Action::Undo), false, app.ed.can_undo()) {
-            app.ed.undo();
+        if theme::menu_item(ui, Some("undo"), "Undo", &key(app, Action::Undo), false, app.can_undo()) {
+            app.undo();
             ui.close();
         }
-        if theme::menu_item(ui, Some("redo"), "Redo", &key(app, Action::Redo), false, app.ed.can_redo()) {
-            app.ed.redo();
+        if theme::menu_item(ui, Some("redo"), "Redo", &key(app, Action::Redo), false, app.can_redo()) {
+            app.redo();
             ui.close();
         }
         if mi(ui, "all", "Select all", &key(app, Action::SelectAll)) {
@@ -458,7 +474,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         if mi(ui, "keyboard", "Keyboard shortcuts…", "") {
             app.dialog = Some(Dialog::Shortcuts { filter: String::new(), recording: None });
         }
-        if mi(ui, "trashAll", "Clear the whole board", "") {
+        if mi_if(ui, "trashAll", "Clear the whole board", "", !guest) {
             let ids: Vec<Id> = app.ed.page().objects.iter().map(|o| o.id.clone()).collect();
             app.ed.remove(&ids);
             app.sel.clear();

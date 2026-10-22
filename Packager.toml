@@ -33,6 +33,14 @@ description = "Inkboard board"
 name = "Inkboard board"
 role = "editor"
 
+# Invitation links of shared sessions: opening `inkboard://join/<ticket>` runs `inkboard "inkboard://join/<ticket>"`, which opens the "Join a
+# session" window. Registered by the installers: NSIS and WiX (registry keys `Software\Classes\inkboard`, written by the templates of
+# `packaging/`, which keep that part of the default templates), .deb (`x-scheme-handler/inkboard` in the desktop file) and macOS
+# (`CFBundleURLTypes`). `name` is the macOS-only name of the scheme; `role` only exists for macOS.
+[[deep-link-protocols]]
+schemes = ["inkboard"]
+name = "Inkboard session link"
+
 [[binaries]]
 path = "inkboard"
 main = true
