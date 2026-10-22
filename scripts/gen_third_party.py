@@ -14,7 +14,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGETS = ['x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu', 'aarch64-apple-darwin', 'x86_64-apple-darwin']
 LICENSE_FILE = re.compile(r'^((LICENSE|LICENCE|COPYING|NOTICE|UNLICENSE|OFL|UFL)([-_.].*)?(\.(txt|md))?|Hack-Regular\.txt|[\w-]+-license\.txt)$', re.I)
-PERMISSIVE = ('MIT', 'Apache-2.0', 'BSD', 'ISC', 'Zlib', 'Unicode', 'OFL', 'BSL-1.0', 'Unlicense', '0BSD', 'Ubuntu-font', 'LLVM-exception', 'CC0')
+PERMISSIVE = ('MIT', 'Apache-2.0', 'BSD', 'ISC', 'Zlib', 'Unicode', 'OFL', 'BSL-1.0', 'Unlicense', '0BSD', 'Ubuntu-font', 'LLVM-exception', 'CC0', 'CDLA-Permissive')
 
 
 def run(*args):
