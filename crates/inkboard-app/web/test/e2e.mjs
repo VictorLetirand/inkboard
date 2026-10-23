@@ -8,12 +8,14 @@
 //      (enterprise message with its tips and the diagnostic copy), a network cut and its return, the host leaving;
 //   4. screenshots of every state (desktop and emulated phone) go to --out.
 //
-//   node e2e.mjs [--skip-build] [--dist ../dist-e2e] [--out ./results-e2e] [--headed]
+//   node e2e.mjs [--skip-build] [--dist ../dist-e2e] [--out ./results-e2e] [--headed] [--only <prefix>[,<prefix>…]]   (scenario names)
 //
 // Needs Internet (the public relay), Chrome (CHROME=<path to chrome.exe>), puppeteer-core (PUPPETEER_DIR), trunk, and for `ring` a clang
 // with the wasm32 target (CC_wasm32_unknown_unknown / AR_wasm32_unknown_unknown). RUST_TOOLCHAIN (default 1.99.1) selects the Rust
 // toolchain. No check asserts a duration (waits are on conditions, with generous time-outs). Exit code 1 when a check fails.
 import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, mkdtempSync } from 'node:fs';
@@ -31,6 +33,7 @@ const opt = (name, dflt) => { const i = argv.indexOf(`--${name}`); return i < 0 
 const dist = resolve(opt('dist', join(here, '../dist-e2e')));
 const out = resolve(opt('out', join(here, 'results-e2e')));
 const headed = argv.includes('--headed');
+const only = opt('only', '');
 const toolchain = process.env.RUST_TOOLCHAIN ?? '1.99.1';
 const chrome = process.env.CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -48,6 +51,7 @@ const run = (cmd, args, options) => {
 };
 /** A scenario that fails (a check or an exception) does not stop the others. */
 async function scenario(name, fn) {
+  if (only && !only.split(',').some((o) => name.startsWith(o))) return;
   console.log(`--- ${name}`);
   try { await fn(); } catch (e) { console.error(`ERROR in "${name}": ${e.stack ?? e}`); failed++; }
 }
@@ -244,6 +248,70 @@ async function waitDownload(since, ext) {
   return null;
 }
 const objectsOf = (file) => JSON.parse(readFileSync(file, 'utf8')).document.pages.flatMap((p) => p.objects);
+
+/* ---------------------------------------------------------------- fake relays (silent network blocks, see "e3" and "e4") */
+/** A TCP port that accepts connections and never answers: TLS and HTTP requests hang, like packets dropped by a firewall. */
+async function startBlackhole() {
+  const sockets = new Set();
+  const srv = net.createServer((c) => { sockets.add(c); c.on('error', () => {}); c.on('close', () => sockets.delete(c)); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  return { port: srv.address().port, accepted: () => sockets.size, close: () => { sockets.forEach((c) => c.destroy()); srv.close(); } };
+}
+/**
+ * A relay look-alike that lets plain HTTPS requests through (204, no CORS header) but refuses (`upgrade: 'refuse'`: 403, like a
+ * filtering proxy) or never answers (`upgrade: 'hang'`) the WebSocket upgrade. Self-signed certificate (the browser ignores it).
+ */
+async function startWebSocketBlocker(upgrade) {
+  const dir = mkdtempSync(join(tmpdir(), 'inkboard-cert-'));
+  const [key, cert] = [join(dir, 'key.pem'), join(dir, 'cert.pem')];
+  const r = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '2', '-subj', '/CN=fake-relay',
+    '-addext', 'subjectAltName=DNS:*.relay.n0.iroh.link,DNS:*.iroh.link'], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`openssl cannot make a certificate: ${r.stderr}`);
+  const seen = { http: [], upgrades: 0 };
+  const held = new Set();
+  // `/ping` is the request iroh's own browser probe makes (a CORS `fetch`): answered like a real relay does, so that iroh picks this
+  // relay as its home relay and then tries the WebSocket, as it does behind a proxy that lets plain HTTPS through
+  const srv = https.createServer({ key: readFileSync(key), cert: readFileSync(cert) }, (req, res) => {
+    seen.http.push(req.url);
+    if (req.url === '/ping') { res.writeHead(200, { 'access-control-allow-origin': '*', 'content-type': 'text/plain' }); res.end('pong'); } else { res.writeHead(204); res.end(); }
+  });
+  srv.on('upgrade', (req, socket) => {
+    seen.upgrades++;
+    socket.on('error', () => {});
+    if (upgrade === 'refuse') { socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); } else { held.add(socket); }
+  });
+  await new Promise((r2) => srv.listen(0, '127.0.0.1', r2));
+  return { port: srv.address().port, seen, close: () => { held.forEach((c) => c.destroy()); srv.close(); rmSync(dir, { recursive: true, force: true }); } };
+}
+/** Chrome rule that sends every relay name (both spellings: with and without the final dot) to `target`. */
+const mapRelays = (target) => `--host-resolver-rules=MAP *.iroh.link ${target}, MAP *.iroh.link. ${target}`;
+/** Short time-outs for the bench (the page's defaults are 15 s to connect, 5 s per probe): the knob exists only in the `web-test` build. */
+const quickNet = (p) => p.evaluate(() => window.__inkboard_test.set_timeouts?.(8000, 3000, 1000));
+const extraBrowsers = [];
+/** Joins with `ticket` in a new browser started with `args` and returns the failure window's state (screenshot `shotName`). */
+async function failedJoin(label, args, ticket, { french = false, shotName, mobile = false } = {}) {
+  const b = await puppeteer.launch({ executablePath: chrome, headless: !headed, args: [...(mobile ? phoneArgs : chromeArgs), ...args] });
+  extraBrowsers.push(b);
+  const ctx = b.defaultBrowserContext();
+  await ctx.overridePermissions(origin, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
+  const P = await newPage(ctx, label, { french, mobile });
+  await open(P, ticket);
+  await quickNet(P);
+  await until(P, 'the join box', (s) => s.window?.from_system);
+  await press(P, 'join_go');
+  const failed = await until(P, 'the failure', (s) => s.state === 'failed', { timeout: 120000 });
+  await sleep(600);
+  if (shotName) await shot(P, shotName);
+  let diagnostic = failed.issue.diagnostic;
+  if (diagnostic === undefined) { // a build without the field in the hook: the text the "Copy the diagnostic" button puts on the clipboard
+    await press(P, 'issue_copy');
+    await sleep(800);
+    diagnostic = await P.evaluate(() => navigator.clipboard.readText().catch((e) => `error: ${e}`));
+  }
+  console.log(`[${label}] ${failed.issue.class}: ${failed.issue.headline}`);
+  console.log(`[${label}] diagnostic:\n${diagnostic.split('\n').map((l) => `    ${l}`).join('\n')}`);
+  return { page: P, state: failed, issue: failed.issue, diagnostic };
+}
 
 let browser;
 let blockedBrowser;
@@ -575,6 +643,7 @@ try {
     await sleep(800);
     const clip = await E.evaluate(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return `error: ${e}`; } });
     check('"Copy the diagnostic" copies the diagnostic to the browser clipboard', /Connection service: .*iroh\.link/.test(clip) && /Inkboard/.test(clip), clip.split('\n').slice(0, 3).join(' | '));
+    check('DNS block: the copied diagnostic states the facts and does not claim the relay is reachable', /Reachable: no/.test(clip) && /Cause retained: relay unreachable/.test(clip) && /HTTPS probe[^\n]*failed/i.test(clip) && /Browser: /.test(clip), clip.split('\n').slice(0, 14).join(' | '));
     await press(E, 'issue_retry');
     await until(E, 'the new attempt to start', (s) => s.state === 'joining', { timeout: 30000 });
     await until(E, 'the failure again', (s) => s.state === 'failed', { timeout: 120000 });
@@ -608,6 +677,54 @@ try {
     await G.close();
   });
 
+  /* ---- e3. relay blocked SILENTLY (packets dropped): the browser never gets an answer */
+  await scenario('e3. relay silently unreachable (time-outs, no immediate error): enterprise message, facts in the diagnostic', async () => {
+    const hole = await startBlackhole();
+    try {
+      const r = await failedJoin('blocked-silent', [mapRelays(`127.0.0.1:${hole.port}`)], ticket, { shotName: 'e3a-relay-silent-desktop' });
+      check('the browser really tried the relay (a connection reached the black hole)', hole.accepted() > 0, `${hole.accepted()} connection(s)`);
+      check('silent block: "cannot reach the connection service" (firewall/gateway), NOT "the service answers"', r.issue.class === 'Unreachable' && /Cannot reach the connection service/.test(r.issue.headline), `${r.issue.class}: ${r.issue.headline}`);
+      check('silent block: three actionable tips naming the domain', r.issue.tips.length === 3 && r.issue.tips.some((t) => /relay\.n0\.iroh\.link/.test(t)), `${r.issue.tips.length}`);
+      check('silent block: the diagnostic does not claim the relay is reachable', !/Reachable: yes/.test(r.diagnostic) && /Reachable: no/.test(r.diagnostic), r.diagnostic.split('\n').find((l) => l.startsWith('Reachable')));
+      check('silent block: the diagnostic states the facts (probe, relay connection, URLs, browser, time, cause)',
+        /HTTPS probe[^\n]*(timed out|failed)/i.test(r.diagnostic) && /Relay connection \(iroh\): not connected/.test(r.diagnostic) && /Relay URL used by the browser: https:\/\/[^\s]+/.test(r.diagnostic)
+        && /Browser: .*Chrome/.test(r.diagnostic) && /Gave up after: \d+(\.\d+)? s/.test(r.diagnostic) && /Cause retained: relay unreachable/.test(r.diagnostic), '');
+      check('the diagnostic holds no ticket', !r.diagnostic.includes(ticket.slice(0, 16)));
+      await r.page.close();
+    } finally { hole.close(); }
+    // the same with a non-routable address instead of a local black hole (packets go to the network and are dropped, or refused at once)
+    const r2 = await failedJoin('blocked-silent-ip', [mapRelays('10.255.255.1')], ticket, { shotName: 'e3b-relay-nonroutable-desktop' });
+    check('non-routable relay address: same message as a silent block', r2.issue.class === 'Unreachable' && r2.issue.tips.length === 3 && !/Reachable: yes/.test(r2.diagnostic), `${r2.issue.class}`);
+    await r2.page.close();
+  });
+
+  /* ---- e4. HTTPS passes but the WebSocket is blocked (a filtering proxy) */
+  for (const upgrade of ['refuse', 'hang']) {
+    await scenario(`e4-${upgrade}. HTTPS passes but the WebSocket is ${upgrade === 'refuse' ? 'refused (403)' : 'never answered'}: dedicated message`, async () => {
+      const fake = await startWebSocketBlocker(upgrade);
+      try {
+        const args = [mapRelays(`127.0.0.1:${fake.port}`), '--ignore-certificate-errors'];
+        const r = await failedJoin(`blocked-ws-${upgrade}`, args, ticket, { shotName: `e4-${upgrade}-websocket-blocked-desktop` });
+        check('the browser really tried the WebSocket upgrade', fake.seen.upgrades > 0, `${fake.seen.upgrades} upgrade(s), ${fake.seen.http.length} plain request(s)`);
+        check('HTTPS passes but no WebSocket: the dedicated "blocks the connection itself" class', r.issue.class === 'WebSocketBlocked' && /WebSocket/.test(r.issue.headline) && !/Cannot reach the connection service/.test(r.issue.headline), `${r.issue.class}: ${r.issue.headline}`);
+        check('three tips, the first asks IT to allow WebSocket connections to *.relay.n0.iroh.link (port 443)', r.issue.tips.length === 3 && /WebSocket/.test(r.issue.tips[0]) && /\*\.relay\.n0\.iroh\.link/.test(r.issue.tips[0]) && /443/.test(r.issue.tips[0]), r.issue.tips[0]);
+        check('the message does not claim to know the exact cause', /cause/i.test(r.issue.headline) || /seem|appear|may|might/i.test(r.issue.headline), r.issue.headline);
+        check('the diagnostic: probe answered, relay not connected, cause WebSocket blocked', /HTTPS probe[^\n]*answered/i.test(r.diagnostic) && /Relay connection \(iroh\): not connected/.test(r.diagnostic) && /Cause retained: WebSocket blocked/.test(r.diagnostic), '');
+        check('the diagnostic does not say the relay is reachable', !/Reachable: yes/.test(r.diagnostic), '');
+        await r.page.close();
+        if (upgrade === 'refuse') {
+          const fr = await failedJoin('blocked-ws-fr', args, ticket, { french: true, shotName: 'e4-refuse-websocket-blocked-desktop-fr' });
+          check('in French: WebSocket message with the service-informatique tip', fr.issue.class === 'WebSocketBlocked' && fr.issue.tips.length === 3 && /WebSocket/.test(fr.issue.tips[0]) && /service informatique/.test(fr.issue.tips[0]), fr.issue.tips[0]);
+          await fr.page.close();
+          const ph = await failedJoin('blocked-ws-phone', args, ticket, { mobile: true, shotName: 'e4-refuse-websocket-blocked-phone' });
+          const ms = Object.entries((await state(ph.page)).marks);
+          check('the WebSocket message and its buttons fit the phone', ms.length > 0 && ms.every(([, [x, , w]]) => x >= 0 && x + w <= ph.state.screen[0] + 0.5), `screen ${ph.state.screen.join('x')}`);
+          await ph.page.close();
+        }
+      } finally { fake.close(); }
+    });
+  }
+
   /* ---- z. the host leaves */
   await scenario('z. the host ends the session: banner with "Save a copy"', async () => {
     await A.bringToFront();
@@ -624,7 +741,17 @@ try {
     if (file) check('the copy holds the whole shared board', objectsOf(file).length === finalCount, `${objectsOf(file).length} vs ${finalCount}`);
   });
 
-  const bad = logs.filter((l) => !['blocked', 'blocked-fr', 'blocked-phone', 'old-browser', 'no-webgl'].includes(l.label) && /^\[(pageerror|error)\]/.test(l.text) && !/Failed to load resource|ERR_NAME_NOT_RESOLVED|WebSocket connection/.test(l.text));
+  /* ---- y. the relay answers normally but the host is gone (its session is over): the relay connection is established */
+  await scenario('y. real relay, host gone: "the service answers, the host cannot be reached" with the relay connected', async () => {
+    try { host.stdin.write('quit\n'); } catch { /* already gone (scenario z) */ }
+    await sleep(3000);
+    const r = await failedJoin('host-gone', [], ticket, { shotName: 'y1-host-unreachable-desktop' });
+    check('relay connected, host absent: the "service answers but the host cannot be reached" message, no tips', r.issue.class === 'HostUnreachable' && /service answers/.test(r.issue.headline) && r.issue.tips.length === 0, `${r.issue.class}: ${r.issue.headline}`);
+    check('the diagnostic: relay connection established, cause host unreachable', /Relay connection \(iroh\): connected/.test(r.diagnostic) && /Cause retained: host unreachable/.test(r.diagnostic), '');
+    await r.page.close();
+  });
+
+  const bad = logs.filter((l) => !(l.label.startsWith('blocked') || ['old-browser', 'no-webgl'].includes(l.label)) && /^\[(pageerror|error)\]/.test(l.text) && !/Failed to load resource|ERR_NAME_NOT_RESOLVED|WebSocket connection/.test(l.text));
   check('no unexpected error in the browser consoles', bad.length === 0, bad.slice(0, 3).map((l) => `${l.label}: ${l.text}`).join(' | '));
   console.log('--- console (first lines)');
   for (const l of logs.slice(0, 20)) console.log(`${l.label} ${l.text}`);
@@ -636,6 +763,7 @@ try {
   await blockedBrowser?.close().catch(() => {});
   await phoneBrowser?.close().catch(() => {});
   await blockedPhoneBrowser?.close().catch(() => {});
+  for (const b of extraBrowsers) await b.close().catch(() => {});
   try { host.stdin.write('quit\n'); } catch { /* gone */ }
   await sleep(1500);
   host.kill();
