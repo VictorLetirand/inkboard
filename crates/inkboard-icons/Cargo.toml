@@ -1,0 +1,19 @@
+[package]
+name = "inkboard-icons"
+description = "Reader of the icon library packed by scripts/build_icon_library.py: sets, search and SVG extraction."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# Embeds the pack of the application (≈ 8 MB) and exposes it as `PACK` / `shared()`.
+embedded = []
+
+[dependencies]
+miniz_oxide = "0.8"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+[lints]
+workspace = true

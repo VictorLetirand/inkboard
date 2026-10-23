@@ -1,0 +1,4 @@
+# Reference images (<name>.png) are committed; the files below are produced by a run and must not be.
+*.new.png
+*.diff.png
+*.old.png

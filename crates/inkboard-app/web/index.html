@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- No zoom of the page by pinching or by focusing a field (the board has its own zoom); the keyboard of a phone shrinks the page. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#f4f4f4" />
+    <title>Inkboard</title>
+    <link data-trunk rel="icon" href="../assets/icon.svg" />
+    <!-- The application itself. The renderer is chosen by Trunk.toml (WebGL by default). -->
+    <link data-trunk rel="rust" href="../Cargo.toml" data-bin="inkboard" data-wasm-opt="s" data-initializer="initializer.js" />
+    <!-- The icon pack (8 MB) is not part of the .wasm: the application fetches `icons.bin` when the icon library is first opened. -->
+    <link data-trunk rel="copy-file" href="../assets/icons.bin" />
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #f4f4f4; font: 15px/1.45 system-ui, sans-serif; color: #222; }
+      canvas { width: 100%; height: 100%; display: block; touch-action: none; outline: none; -webkit-tap-highlight-color: transparent; }
+      /* both languages are in the page; the one that does not match the browser is hidden */
+      [lang="fr"] .en, [lang="en"] .fr { display: none; }
+      #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; background: #f4f4f4; }
+      #loading h1 { margin: 0; font-size: 26px; letter-spacing: 0.5px; }
+      #loading .track { width: min(320px, 70vw); height: 6px; border-radius: 3px; background: #d6d6d6; overflow: hidden; }
+      #loading-bar { width: 4%; height: 100%; background: #4263eb; transition: width 0.25s ease-out; }
+      #loading-size { min-height: 1.4em; font-variant-numeric: tabular-nums; color: #666; font-size: 13px; }
+      #loading .note { max-width: 360px; color: #777; font-size: 13px; }
+      #error { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; background: #f4f4f4; }
+      #error[hidden] { display: none; }
+      #error p { display: none; max-width: 520px; margin: 6px 0; }
+      #error[data-case="webgl"] p.webgl, #error[data-case="other"] p.other, #error[data-case="old"] p.old { display: block; }
+      #error h1 { font-size: 20px; margin: 0 0 8px; }
+      #error button { margin-top: 14px; padding: 10px 22px; font: inherit; border: 0; border-radius: 8px; background: #4263eb; color: #fff; cursor: pointer; }
+      #error-detail { max-width: 640px; white-space: pre-wrap; word-break: break-word; font: 12px monospace; color: #777; }
+    </style>
+    <script>
+      // pick the language of the messages of this page (the application chooses its own from the same setting)
+      document.documentElement.lang = (navigator.language || "en").toLowerCase().startsWith("fr") ? "fr" : "en";
+      // shows the error panel instead of the loading screen: case "webgl" (nothing to draw with), "old" (browser too old), "other" (detail)
+      window.inkboardFail = function (kind, detail) {
+        var load = document.getElementById("loading");
+        if (load) load.remove();
+        var panel = document.getElementById("error");
+        if (!panel) return;
+        // the precise message stays (a later start-up error is only a consequence of it)
+        if (!panel.hidden && panel.getAttribute("data-case") !== "other") return;
+        panel.setAttribute("data-case", kind);
+        panel.removeAttribute("hidden");
+        var d = document.getElementById("error-detail");
+        if (d) d.textContent = detail || "";
+      };
+      // checked before the 5 MB download: what the application cannot run without
+      (function () {
+        var missing = [];
+        if (typeof WebAssembly !== "object") missing.push("WebAssembly");
+        if (typeof WebSocket !== "function") missing.push("WebSocket");
+        if (typeof BigInt !== "function") missing.push("BigInt");
+        if (!(window.crypto && crypto.getRandomValues)) missing.push("crypto.getRandomValues");
+        if (missing.length) {
+          window.addEventListener("DOMContentLoaded", function () { window.inkboardFail("old", "Missing: " + missing.join(", ")); });
+          return;
+        }
+        var gl = false;
+        try { gl = !!document.createElement("canvas").getContext("webgl2"); } catch (e) { /* none */ }
+        if (!gl && !navigator.gpu) {
+          window.addEventListener("DOMContentLoaded", function () { window.inkboardFail("webgl", "No WebGL 2, no WebGPU"); });
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <canvas id="inkboard_canvas" tabindex="0"></canvas>
+    <div id="loading">
+      <h1>Inkboard</h1>
+      <div class="track"><div id="loading-bar"></div></div>
+      <div><span class="en">Loading Inkboard…</span><span class="fr">Chargement d'Inkboard…</span></div>
+      <div id="loading-size"></div>
+      <div class="note">
+        <span class="en">The first visit downloads about 5 MB; your browser keeps it for the next ones.</span>
+        <span class="fr">La première visite télécharge environ 5 Mo ; votre navigateur les garde pour les suivantes.</span>
+      </div>
+    </div>
+    <div id="error" hidden>
+      <h1><span class="en">Inkboard cannot start</span><span class="fr">Inkboard ne peut pas démarrer</span></h1>
+      <p class="webgl">
+        <span class="en">This browser does not offer WebGL, which Inkboard needs to draw the board. Turn on hardware acceleration in the browser settings, update the browser or the graphics driver, or try another browser (Chrome, Edge, Firefox or Safari, recent versions).</span>
+        <span class="fr">Ce navigateur ne propose pas WebGL, dont Inkboard a besoin pour dessiner le tableau. Activez l'accélération matérielle dans les réglages du navigateur, mettez à jour le navigateur ou le pilote graphique, ou essayez un autre navigateur (Chrome, Edge, Firefox ou Safari, versions récentes).</span>
+      </p>
+      <p class="old">
+        <span class="en">This browser is too old for Inkboard. Update it, or open this page in a recent version of Chrome or Edge.</span>
+        <span class="fr">Ce navigateur est trop ancien pour Inkboard. Mettez-le à jour, ou ouvrez cette page dans une version récente de Chrome ou d'Edge.</span>
+      </p>
+      <p class="other">
+        <span class="en">Something went wrong while starting. Reload the page; if it happens again, try another browser.</span>
+        <span class="fr">Une erreur est survenue au démarrage. Rechargez la page ; si cela se reproduit, essayez un autre navigateur.</span>
+      </p>
+      <button type="button" onclick="location.reload()"><span class="en">Reload the page</span><span class="fr">Recharger la page</span></button>
+      <pre id="error-detail"></pre>
+    </div>
+    <noscript>Inkboard needs JavaScript and WebAssembly. / Inkboard a besoin de JavaScript et de WebAssembly.</noscript>
+  </body>
+</html>

@@ -1,0 +1,81 @@
+# Installers: cargo packager --release   (tool: cargo install cargo-packager --locked)
+# Formats produced per system: Windows → NSIS (.exe) and WiX (.msi); macOS → .app and .dmg; Linux → .deb and .AppImage.
+# Prerequisite: cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp (the .github/workflows/release.yml workflow does it).
+name = "inkboard"
+product-name = "Inkboard"
+version = "0.1.0"
+identifier = "org.inkboard.app"
+description = "Inkboard, an infinite, offline and free whiteboard."
+long-description = "Inkboard is a 100% offline infinite whiteboard: drawing, shapes, bound connectors, rich text, LaTeX formulas, draw.io / Excalidraw / JSON Canvas / Mermaid import and export, presentation mode, and an MCP server to drive the board from an agent."
+authors = ["The Inkboard contributors"]
+publisher = "Inkboard"
+copyright = "Copyright (c) 2026 The Inkboard contributors — MIT OR Apache-2.0"
+category = "GraphicsAndDesign"
+license-file = "packaging/LICENSE.txt"
+out-dir = "dist"
+binaries-dir = "target/release"
+icons = ["crates/inkboard-app/assets/icon.ico", "crates/inkboard-app/assets/icon.png"]
+resources = [
+  { src = "README.md", target = "README.md" },
+  { src = "LICENSE-MIT", target = "LICENSE-MIT" },
+  { src = "LICENSE-APACHE", target = "LICENSE-APACHE" },
+  { src = "THIRD_PARTY_LICENSES.md", target = "THIRD_PARTY_LICENSES.md" },
+]
+
+# Native board files: double-clicking a `.inkboard` file runs `inkboard <file>`. Only `extensions`, `mime-type` (Linux), `description`
+# (Windows), `name` (macOS CFBundleTypeName; also the Windows ProgID) and `role` exist in cargo-packager 0.11.8: there is no per-association
+# icon key (Windows uses the program's icon; macOS and Linux use the application icon). The older `.inkboard.json` / `.tableau.json`
+# names are deliberately not associated (".json" belongs to other programs); they still open from the application.
+[[file-associations]]
+extensions = ["inkboard"]
+mime-type = "application/x-inkboard"
+description = "Inkboard board"
+name = "Inkboard board"
+role = "editor"
+
+# Invitation links of shared sessions: opening `inkboard://join/<ticket>` runs `inkboard "inkboard://join/<ticket>"`, which opens the "Join a
+# session" window. Registered by the installers: NSIS and WiX (registry keys `Software\Classes\inkboard`, written by the templates of
+# `packaging/`, which keep that part of the default templates), .deb (`x-scheme-handler/inkboard` in the desktop file) and macOS
+# (`CFBundleURLTypes`). `name` is the macOS-only name of the scheme; `role` only exists for macOS.
+[[deep-link-protocols]]
+schemes = ["inkboard"]
+name = "Inkboard session link"
+
+[[binaries]]
+path = "inkboard"
+main = true
+
+# Command-line tools, installed next to the application (format conversion, MCP server).
+[[binaries]]
+path = "ink"
+
+[[binaries]]
+path = "inkboard-mcp"
+
+# Windows installer (.exe): installs for the current user only (no administrator prompt), in the language of the system.
+[nsis]
+installer-mode = "currentUser"
+languages = ["English", "French"]
+display-language-selector = false
+installer-icon = "crates/inkboard-app/assets/icon.ico"
+sidebar-image = "packaging/installer/sidebar.bmp"
+header-image = "packaging/installer/header.bmp"
+# the uninstaller offers to remove the user's data (custom shortcuts, language, autosaves); kept by default
+appdata-paths = ["$APPDATA/$PRODUCTNAME"]
+# copy of the default template of cargo-packager 0.11.8 whose uninstaller really removes the `.inkboard` association (see the header of the file)
+template = "packaging/nsis/installer.nsi"
+
+# Windows installer (.msi): copy of the default template of cargo-packager 0.11.8 that reads `association.extensions` (see the header of the file),
+# otherwise the `.inkboard` association (Extension / ProgId / Verb tables) is missing from the package.
+[wix]
+template = "packaging/wix/main.wxs"
+
+# Linux (.deb): libraries loaded at runtime by egui/winit (untested: no Linux machine was available during development).
+[deb]
+depends = ["libgl1", "libxkbcommon0"]
+# declares the application/x-inkboard type (the desktop file only lists it): maps *.inkboard to it
+files = { "packaging/linux/inkboard.xml" = "usr/share/mime/packages/inkboard.xml" }
+
+# macOS (untested: no Mac was available during development).
+[macos]
+minimum-system-version = "11.0"

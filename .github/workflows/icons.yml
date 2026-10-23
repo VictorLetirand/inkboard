@@ -1,0 +1,70 @@
+name: Icon library update
+
+# Every Monday (and on demand) the icon pack is rebuilt from the latest upstream drawings (draw.io, Simple Icons, Tabler, Lucide, Material
+# Design Icons). When icons were added, removed or redrawn, the new pack is checked (it parses, every icon renders) and a pull request is
+# opened with the list of changes. Nothing is merged automatically: a person looks at the summary and merges.
+#
+# One-time repository setting: Settings -> Actions -> General -> "Allow GitHub Actions to create and approve pull requests".
+# Pull requests opened with the default token do not start the CI by themselves: add a personal access token as the secret ICONS_PR_TOKEN
+# to have it started (or close and reopen the pull request).
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only build and report, do not open a pull request"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the pack from the latest upstream sources
+        # exits with code 2 (and writes nothing) if more than 25 % of the icons would disappear: an upstream restructuring needs a human
+        run: python3 scripts/build_icon_library.py --fetch .icon-sources --report icons-report.md
+
+      - name: Show what changed
+        run: cat icons-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Did the pack change?
+        id: diff
+        run: |
+          if git diff --quiet -- crates/inkboard-app/assets; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.diff.outputs.changed == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.diff.outputs.changed == 'true'
+
+      - name: Check the new pack (it parses, every icon renders)
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          cargo test -p inkboard-icons -- --ignored
+          cargo test --release -p inkboard-app -- --ignored every_library_icon_renders
+
+      - name: Refresh the third-party licenses
+        if: steps.diff.outputs.changed == 'true'
+        run: python3 scripts/gen_third_party.py
+
+      - name: Open the pull request
+        if: steps.diff.outputs.changed == 'true' && !inputs.dry_run
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.ICONS_PR_TOKEN || github.token }}
+          branch: icons/update
+          delete-branch: true
+          add-paths: |
+            crates/inkboard-app/assets
+            THIRD_PARTY_LICENSES.md
+          commit-message: "Update the icon library"
+          title: "Update the icon library"
+          body-path: icons-report.md
+          labels: icons

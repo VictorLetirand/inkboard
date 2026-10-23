@@ -1,0 +1,11 @@
+# Windows: link the C runtime statically so the executables run on a clean machine without the Visual C++ redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# Browser build: `getrandom` 0.3 (pulled by iroh) takes its entropy from `crypto.getRandomValues` only with this backend.
+# (Setting the RUSTFLAGS environment variable replaces this: repeat the flag there.)
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

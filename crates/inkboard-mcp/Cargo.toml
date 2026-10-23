@@ -1,0 +1,30 @@
+[package]
+name = "inkboard-mcp"
+description = "MCP (stdio) server of the whiteboard: lets an agent create and modify boards (.inkboard files), import Mermaid and export."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "inkboard_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "inkboard-mcp"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.23.1"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+regex = "1.13.1"
+serde_json = "1.0.154"
+inkboard-core = { path = "../inkboard-core" }
+inkboard-formats = { path = "../inkboard-formats" }
+inkboard-icons = { path = "../inkboard-icons", features = ["embedded"] }
+
+[build-dependencies]
+embed-resource = "3"
+
+[lints]
+workspace = true

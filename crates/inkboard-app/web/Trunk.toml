@@ -1,0 +1,14 @@
+# Web build of Inkboard. Run `trunk build --release` (or `trunk serve`) from this folder, or use scripts/build_web.ps1 / build_web.sh.
+# Needs: rustup target add wasm32-unknown-unknown, cargo install trunk wasm-bindgen-cli --locked (trunk 0.22 needs a recent Rust).
+[build]
+target = "index.html"
+dist = "dist"
+# relative links: the page works from any folder of a static host
+public_url = "./"
+# WebGL (`glow`) is the light renderer. For WebGPU with a WebGL fallback: `trunk build --release --features web-wgpu`.
+no_default_features = true
+features = ["web-glow"]
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080

@@ -1,0 +1,49 @@
+name: Bench
+
+# Performance guard: `ink bench 20000` (generate 20 000 objects + save) is run 5 times; the median wall time must stay under THRESHOLD_MS.
+# Measured on a GitHub runner (ubuntu-latest, 2026-10-20, workflow_dispatch): runs 57, 56, 59, 57, 60 ms, median 57 ms.
+# (Local reference, Windows 11, release build, 2026-10-19: 92 ms median of 7 runs.)
+# Threshold = 3 (regression margin) x 57 ms = 171 ms, rounded to 170 ms. Re-measure and update this comment if the runner image changes a lot.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # every Monday, 04:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      THRESHOLD_MS: 170
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release -p inkboard-cli
+
+      - name: ink bench 20000 x 5, median against the threshold
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/bench.inkboard"
+          times=()
+          for i in 1 2 3 4 5; do
+            start=$(date +%s%N)
+            ./target/release/ink bench 20000 "$out" > /dev/null
+            end=$(date +%s%N)
+            ms=$(( (end - start) / 1000000 ))
+            echo "run $i: ${ms} ms"
+            times+=("$ms")
+          done
+          median=$(printf '%s\n' "${times[@]}" | sort -n | sed -n 3p)
+          echo "median: ${median} ms (threshold ${THRESHOLD_MS} ms)"
+          echo "### ink bench 20000: median ${median} ms (threshold ${THRESHOLD_MS} ms)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$median" -gt "$THRESHOLD_MS" ]; then
+            echo "::error::performance regression: median ${median} ms > ${THRESHOLD_MS} ms"
+            exit 1
+          fi
