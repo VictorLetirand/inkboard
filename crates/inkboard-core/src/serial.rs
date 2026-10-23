@@ -120,6 +120,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut f = std::fs::File::create(&tmp)?;
     f.write_all(bytes)?;
     f.sync_all()?;
+    #[allow(clippy::drop_non_drop)] // on wasm32 a `File` has no destructor (the call is then only a marker of where the file is closed)
     drop(f);
     std::fs::rename(&tmp, path)
 }

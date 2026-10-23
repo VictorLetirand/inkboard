@@ -25,6 +25,8 @@ pub struct JoinWindow {
     pub relay_confirmed: bool,
     /// Custom relays, one `https://` address per line (the `relays` file; empty: the public relays).
     pub relays: String,
+    /// The name field already took the keyboard focus once (browser).
+    pub name_focused: bool,
 }
 
 /// What the relays named by a link mean for the user (see [`judge_relays`]).
@@ -186,6 +188,21 @@ impl App {
         }
     }
 
+    /// A link arrived in the address of the browser page: the "Join" window opens with it, to be completed with a name. A link that is
+    /// not valid opens the window with its error and the link as text, so that it can be corrected or replaced.
+    pub fn join_link_received(&mut self, link: String) {
+        if self.guest.is_some() {
+            return self.toast(&t("Leave the current session before joining another one."));
+        }
+        self.open_join_window(Some(link));
+        if let Some(w) = self.join.window.as_mut()
+            && let Err(e) = parse_join_link(&w.link)
+        {
+            w.from_system = false;
+            w.error = Some(e.message());
+        }
+    }
+
     /// Closes the window and gives up (or leaves) the session.
     fn close_join(&mut self) {
         self.join.window = None;
@@ -197,8 +214,34 @@ fn modal(title: String) -> egui::Window<'static> {
     egui::Window::new(title).fade_in(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).order(egui::Order::Foreground).collapsible(false).resizable(false)
 }
 
+/// Width of a window on this screen: `want`, or less on a phone.
+fn fit(ctx: &egui::Context, want: f32) -> f32 {
+    want.min(ctx.content_rect().width() - 24.0).max(200.0)
+}
+
+/// Larger buttons and fields for a finger; the usual sizes for a mouse.
+fn touch_sizes(ui: &mut egui::Ui) {
+    if crate::platform::coarse_pointer() {
+        let s = ui.spacing_mut();
+        s.interact_size.y = 40.0;
+        s.button_padding = vec2(16.0, 8.0);
+        s.item_spacing = vec2(10.0, 10.0);
+    }
+}
+
+/// Inner margin of a text field (the default of egui; taller for a finger).
+fn field_margin() -> egui::Vec2 {
+    if crate::platform::coarse_pointer() { vec2(8.0, 11.0) } else { vec2(4.0, 2.0) }
+}
+
+/// Tells the browser bench where a widget is (nothing happens in the published page nor on the desktop).
+fn mark(_name: &str, _r: &egui::Response) {
+    #[cfg(all(target_arch = "wasm32", feature = "web-test"))]
+    crate::web_test::mark(_name, _r.rect);
+}
+
 fn issue_ui(ui: &mut egui::Ui, issue: &NetIssue, diagnosing: bool) {
-    ui.set_max_width(460.0);
+    ui.set_max_width(fit(ui.ctx(), 460.0));
     ui.label(RichText::new(issue.headline()).strong().color(ui.visuals().text_color()));
     if let Some(w) = issue.warning() {
         ui.add_space(4.0);
@@ -236,7 +279,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 fn unknown_relay_window(app: &mut App, ctx: &egui::Context, mut w: JoinWindow, domain: String) {
     let (mut go, mut cancel) = (false, false);
     modal(t("Unknown relay")).show(ctx, |ui| {
-        ui.set_max_width(440.0);
+        touch_sizes(ui);
+        ui.set_max_width(fit(ctx, 440.0));
         ui.label(RichText::new(tr!("This link uses an unknown relay: {}. Continue only if you trust the sender.", domain)).strong().color(AMBER));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -263,13 +307,19 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
         return unknown_relay_window(app, ctx, w, domain);
     }
     let (mut join, mut cancel) = (false, false);
+    let width = fit(ctx, 420.0);
     modal(t("Join a session")).show(ctx, |ui| {
-        ui.set_min_width(420.0);
+        touch_sizes(ui);
+        ui.set_min_width(width);
+        if width < 420.0 {
+            ui.set_max_width(width);
+        }
         ui.label(t("Invitation link"));
         if w.from_system {
             ui.label(RichText::new(t("Link received")).weak());
         } else {
-            let r = ui.add(egui::TextEdit::singleline(&mut w.link).desired_width(f32::INFINITY).hint_text("inkboard://join/…"));
+            let r = ui.add(egui::TextEdit::singleline(&mut w.link).margin(field_margin()).desired_width(f32::INFINITY).hint_text("inkboard://join/…"));
+            mark("join_link", &r);
             if r.changed() {
                 w.error = None;
                 w.relay_confirmed = false;
@@ -277,10 +327,17 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
         }
         ui.add_space(4.0);
         ui.label(t("Your name"));
-        let r = ui.add(egui::TextEdit::singleline(&mut w.name).char_limit(NAME_MAX).desired_width(f32::INFINITY));
+        let r = ui.add(egui::TextEdit::singleline(&mut w.name).margin(field_margin()).char_limit(NAME_MAX).desired_width(f32::INFINITY));
+        mark("join_name", &r);
+        // in a browser the name is what is left to do: the cursor is already there
+        if cfg!(target_arch = "wasm32") && !w.name_focused {
+            r.request_focus();
+            w.name_focused = true;
+        }
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             join = true;
         }
+        ui.label(RichText::new(t("The other participants see this name.")).weak().small());
         ui.add_space(4.0);
         egui::CollapsingHeader::new(t("Custom relays")).default_open(!w.relays.trim().is_empty()).show(ui, |ui| {
             if ui.add(egui::TextEdit::multiline(&mut w.relays).desired_rows(2).desired_width(f32::INFINITY).hint_text("https://relay.example.org")).changed() {
@@ -294,8 +351,12 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            join |= ui.button(t("Join")).clicked();
-            cancel = ui.button(t("Cancel")).clicked();
+            let go = ui.button(t("Join"));
+            mark("join_go", &go);
+            join |= go.clicked();
+            let no = ui.button(t("Cancel"));
+            mark("join_cancel", &no);
+            cancel = no.clicked();
         });
     });
     if cancel {
@@ -310,8 +371,10 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
 fn joining_window(app: &mut App, ctx: &egui::Context) {
     let host = app.guest.as_ref().map(|g| g.host_name().to_owned()).unwrap_or_default();
     let mut cancel = false;
+    let width = fit(ctx, 380.0);
     modal(t("Join a session")).show(ctx, |ui| {
-        ui.set_min_width(380.0);
+        touch_sizes(ui);
+        ui.set_min_width(width);
         if !host.is_empty() {
             ui.label(RichText::new(tr!("Session of {}", host)).strong());
         }
@@ -320,7 +383,9 @@ fn joining_window(app: &mut App, ctx: &egui::Context) {
             ui.label(t("Waiting for the host's approval…"));
         });
         ui.add_space(6.0);
-        cancel = ui.button(t("Cancel")).clicked();
+        let no = ui.button(t("Cancel"));
+        mark("wait_cancel", &no);
+        cancel = no.clicked();
     });
     if cancel {
         app.close_join();
@@ -331,12 +396,15 @@ fn failed_window(app: &mut App, ctx: &egui::Context, issue: NetIssue) {
     let diagnosing = app.guest.as_ref().is_some_and(|g| g.is_diagnosing());
     let (mut copy, mut retry, mut close) = (false, false, false);
     modal(t("Cannot join the session")).show(ctx, |ui| {
+        touch_sizes(ui);
         issue_ui(ui, &issue, diagnosing);
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            copy = ui.button(t("Copy the diagnostic")).clicked();
-            retry = ui.button(t("Try again")).clicked();
-            close = ui.button(t("Close")).clicked();
+        ui.horizontal_wrapped(|ui| {
+            let (c, r, x) = (ui.button(t("Copy the diagnostic")), ui.button(t("Try again")), ui.button(t("Close")));
+            mark("issue_copy", &c);
+            mark("issue_retry", &r);
+            mark("issue_close", &x);
+            (copy, retry, close) = (c.clicked(), r.clicked(), x.clicked());
         });
     });
     if copy {
@@ -354,10 +422,13 @@ fn failed_window(app: &mut App, ctx: &egui::Context, issue: NetIssue) {
 fn ended_window(app: &mut App, ctx: &egui::Context, reason: EndReason) {
     let mut close = false;
     modal(t("Cannot join the session")).show(ctx, |ui| {
-        ui.set_max_width(420.0);
+        touch_sizes(ui);
+        ui.set_max_width(fit(ctx, 420.0));
         ui.label(end_message(&reason));
         ui.add_space(6.0);
-        close = ui.button(t("Close")).clicked();
+        let x = ui.button(t("Close"));
+        mark("ended_close", &x);
+        close = x.clicked();
     });
     if close {
         app.close_join();
@@ -370,14 +441,24 @@ fn white(text: impl Into<String>) -> RichText {
 }
 
 /// Button of a banner: white with dark text.
-fn bar_button(ui: &mut egui::Ui, text: String) -> bool {
-    ui.add(egui::Button::new(RichText::new(text).color(Color32::BLACK)).fill(Color32::WHITE)).clicked()
+fn bar_button(ui: &mut egui::Ui, name: &str, text: String) -> bool {
+    let min = if crate::platform::coarse_pointer() { vec2(0.0, 36.0) } else { vec2(0.0, 0.0) };
+    let r = ui.add(egui::Button::new(RichText::new(text).color(Color32::BLACK)).fill(Color32::WHITE).min_size(min));
+    mark(name, &r);
+    r.clicked()
 }
 
 fn bar(ctx: &egui::Context, id: &str, anchor: Align2, offset: egui::Vec2, fill: Color32, add: impl FnOnce(&mut egui::Ui)) {
     egui::Area::new(egui::Id::new(id)).anchor(anchor, offset).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).fill(fill).show(ui, |ui| {
-            ui.horizontal(add);
+            // a phone is too narrow for one row: the banner then wraps
+            let room = ctx.content_rect().width() - 24.0;
+            if room < 560.0 {
+                ui.set_max_width(room.max(200.0));
+                ui.horizontal_wrapped(add);
+            } else {
+                ui.horizontal(add);
+            }
         });
     });
 }
@@ -389,6 +470,8 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
     let sending = app.guest.as_ref().and_then(|g| g.upload_progress());
     let title = if host.is_empty() { t("Shared session") } else { tr!("Session of {}", host) };
     let attempt = app.guest.as_ref().map_or(0, |g| g.reconnect_attempt());
+    // under the row of tools when it moves below the title (narrow window or phone)
+    let top = if ctx.content_rect().width() < 1180.0 { 124.0 } else { 72.0 };
     let (mut leave, mut save, mut retry) = (false, false, false);
     bar(ctx, "guest-bar", Align2::RIGHT_TOP, vec2(-12.0, 12.0), Color32::from_rgb(0x2b, 0x4c, 0xb8), |ui| {
         ui.label(white(title).strong());
@@ -399,11 +482,11 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
             ui.label(white(format!("· {}", tr!("Sending images… {}%", p.percent))));
         }
         if !matches!(state, GuestState::Ended(_)) {
-            leave = bar_button(ui, t("Leave the session"));
+            leave = bar_button(ui, "bar_leave", t("Leave the session"));
         }
     });
     match state {
-        GuestState::Reconnecting => bar(ctx, "guest-reconnect", Align2::CENTER_TOP, vec2(0.0, 72.0), AMBER, |ui| {
+        GuestState::Reconnecting => bar(ctx, "guest-reconnect", Align2::CENTER_TOP, vec2(0.0, top), AMBER, |ui| {
             ui.spinner();
             let title = if attempt > 0 { tr!("Reconnecting… (attempt {})", attempt) } else { t("Reconnecting…") };
             ui.label(white(title).strong());
@@ -413,14 +496,14 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
                 t("The board is shown as it was; it is updated when the connection is back.")
             };
             ui.label(white(msg));
-            retry = bar_button(ui, t("Retry now"));
+            retry = bar_button(ui, "bar_retry", t("Retry now"));
         }),
         GuestState::Ended(r) => {
             let msg = end_message(r);
-            bar(ctx, "guest-ended", Align2::CENTER_TOP, vec2(0.0, 72.0), RED, |ui| {
+            bar(ctx, "guest-ended", Align2::CENTER_TOP, vec2(0.0, top), RED, |ui| {
                 ui.label(white(msg).strong());
-                save = bar_button(ui, t("Save a copy of the board"));
-                leave = bar_button(ui, t("Leave"));
+                save = bar_button(ui, "bar_save", t("Save a copy of the board"));
+                leave = bar_button(ui, "bar_leave", t("Leave"));
             });
         }
         _ => {}

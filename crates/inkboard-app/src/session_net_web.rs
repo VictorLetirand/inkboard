@@ -5,7 +5,7 @@
 //! The "Join" window also calls the small settings functions below; a browser keeps no relay file, so the custom relay list is empty.
 
 use crate::join_ui::SessionFactory;
-use crate::session_guest::{Clock, ConnectError, Diagnosis, GuestConfig, GuestLink, GuestSession, RelayDiagnoser};
+use crate::session_guest::{Clock, ConnectError, Diagnosis, GuestConfig, GuestLink, GuestSession, NetWatch, RelayDiagnoser};
 use crate::session_link::{Dialing, connect_error};
 use inkboard_net::{CancelToken, NetConfig, WebTransport};
 use inkboard_session::crypto::{OsEntropy, Ticket};
@@ -96,6 +96,21 @@ impl GuestLink for WebLink {
     fn take_failure(&mut self) -> Option<ConnectError> {
         self.failure.lock().unwrap_or_else(PoisonError::into_inner).take()
     }
+
+    /// The browser's relay connection is probed again now (see [`BrowserNetWatch`]).
+    fn network_changed(&mut self) {
+        self.transport.network_change();
+    }
+}
+
+/// The `online` and `visibilitychange` events of the browser (listened to by `platform`): the network came back, or the tab is awake
+/// again after a time without frames. The guest then reconnects at once instead of waiting for its pauses between attempts.
+struct BrowserNetWatch;
+
+impl NetWatch for BrowserNetWatch {
+    fn changed(&mut self) -> bool {
+        crate::platform::take_net_event()
+    }
 }
 
 impl Drop for WebLink {
@@ -113,6 +128,8 @@ pub fn guest_factory() -> SessionFactory {
         let relay = Arc::new(AtomicU8::new(RELAY_UNKNOWN));
         let transport = Rc::new(WebTransport::guest(NetConfig { connect_timeout: GUEST_CONNECT, ..NetConfig::default() }));
         let link = Box::new(WebLink { transport, ticket: ticket.clone(), failure: Arc::default(), relay: Arc::clone(&relay) });
-        GuestSession::new(link, Arc::new(WebDiagnoser(relay)), ticket, name, Box::new(OsEntropy), Clock::real(), GuestConfig::default())
+        let mut session = GuestSession::new(link, Arc::new(WebDiagnoser(relay)), ticket, name, Box::new(OsEntropy), Clock::real(), GuestConfig::default());
+        session.set_net_watch(Box::new(BrowserNetWatch));
+        session
     })
 }

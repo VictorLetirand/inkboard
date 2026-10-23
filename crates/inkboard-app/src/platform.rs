@@ -25,6 +25,8 @@ pub enum Incoming {
     Images(Vec<(Option<String>, Vec<u8>)>),
     /// An image pasted from the clipboard: width, height, RGBA pixels.
     PastedImage(crate::app::RawImage),
+    /// An invitation link found in the address of the page (`#<ticket>`, already taken out of the address bar).
+    JoinLink(String),
 }
 
 /// State of the icon pack, which the web build downloads when the library is first opened.

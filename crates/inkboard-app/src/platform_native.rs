@@ -18,6 +18,22 @@ pub fn data_dir() -> PathBuf {
     inkboard_mcp::live::data_dir()
 }
 
+/// A small setting kept as a file of the data folder (the browser keeps it in its local storage).
+pub fn load_pref(name: &str) -> Option<String> {
+    std::fs::read_to_string(data_dir().join(name)).ok()
+}
+
+pub fn save_pref(name: &str, value: &str) {
+    let dir = data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join(name), value);
+}
+
+/// Is the main pointer imprecise (a finger)? Never on the desktop, whose interface is sized for a mouse.
+pub fn coarse_pointer() -> bool {
+    false
+}
+
 /// Nothing arrives late on the desktop.
 pub fn poll() -> Vec<Incoming> {
     Vec::new()

@@ -770,7 +770,7 @@ impl App {
     /// Takes what the browser delivered since the last frame (a picked board or images, a pasted image); empty on the desktop.
     fn poll_platform(&mut self) {
         for incoming in platform::poll() {
-            if self.view_only() && !matches!(incoming, Incoming::Board { .. }) {
+            if self.view_only() && !matches!(incoming, Incoming::Board { .. } | Incoming::JoinLink(_)) {
                 self.toast(&t("You have read-only access: this change was refused."));
                 continue;
             }
@@ -780,6 +780,7 @@ impl App {
                     let at = self.view_center();
                     self.insert_image_bytes(items, at);
                 }
+                Incoming::JoinLink(link) => self.join_link_received(link),
                 Incoming::PastedImage((w, h, rgba)) => {
                     // the key release that follows must not paste the board's own clipboard as well
                     self.last_paste_at = Some(Instant::now());

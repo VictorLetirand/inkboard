@@ -47,7 +47,7 @@ log = "0.4"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement", "Location", "Response", "console", "Crypto", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "HtmlElement", "Element", "Node", "Event", "EventTarget", "ClipboardEvent", "DataTransfer", "DataTransferItem", "DataTransferItemList", "File", "FileList"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement", "Location", "Response", "console", "Crypto", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "HtmlElement", "Element", "Node", "Event", "EventTarget", "ClipboardEvent", "DataTransfer", "DataTransferItem", "DataTransferItemList", "File", "FileList", "History", "Storage", "MediaQueryList"] }
 
 [build-dependencies]
 embed-resource = "3"

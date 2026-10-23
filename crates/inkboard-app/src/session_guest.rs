@@ -135,12 +135,14 @@ pub fn save_name_to(dir: &std::path::Path, name: &str) {
     let _ = std::fs::write(name_path(dir), sanitize_name(name));
 }
 
+/// The last name used: the file `display_name` of the data folder, or the local storage of the browser.
 pub fn load_name() -> Option<String> {
-    load_name_from(&crate::platform::data_dir())
+    let raw = crate::platform::load_pref("display_name")?;
+    (!raw.trim().is_empty()).then(|| sanitize_name(&raw))
 }
 
 pub fn save_name(name: &str) {
-    save_name_to(&crate::platform::data_dir(), name);
+    crate::platform::save_pref("display_name", &sanitize_name(name));
 }
 
 /* ------------------------------------------------------------------ invitation link */

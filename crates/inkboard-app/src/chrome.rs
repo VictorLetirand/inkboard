@@ -15,6 +15,9 @@ use std::time::Duration;
 /// Window width below which the toolbar moves under the title bar (`@media (max-width:1180px)`).
 const NARROW: f32 = 1180.0;
 
+/// Window width below which the row of tools does not fit any more (it then scrolls sideways).
+const TOOLS_ROW_WIDTH: f32 = 820.0;
+
 /// Toolbar tools, in separated groups; `(tool, icon, label)`.
 const TOOL_GROUPS: &[&[(Tool, &str, &str)]] = &[
     &[(Tool::Select, "select", "Select"), (Tool::Hand, "hand", "Hand")],
@@ -109,54 +112,68 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
     let view_only = app.view_only();
     let (anchor, offset) = if narrow { (Align2::LEFT_TOP, vec2(12.0, 62.0)) } else { (Align2::CENTER_TOP, vec2(0.0, 12.0)) };
     theme::floating(ctx, "tools", anchor, offset, 4, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 1.0;
-            for (gi, group) in TOOL_GROUPS.iter().enumerate() {
-                if gi > 0 {
-                    theme::vsep(ui);
+        if narrow && ctx.content_rect().width() < TOOLS_ROW_WIDTH {
+            // a phone is narrower than the row of tools (about 760 px): it scrolls sideways (a drag) instead of losing the last tools
+            let room = ctx.content_rect().width() - 2.0 * offset.x - 16.0;
+            egui::ScrollArea::horizontal()
+                .max_width(room.max(120.0))
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| tool_row(app, ui, view_only));
+        } else {
+            tool_row(app, ui, view_only);
+        }
+    });
+}
+
+/// The tools in one row.
+fn tool_row(app: &mut App, ui: &mut Ui, view_only: bool) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 1.0;
+        for (gi, group) in TOOL_GROUPS.iter().enumerate() {
+            if gi > 0 {
+                theme::vsep(ui);
+            }
+            for (tool, icon, label) in *group {
+                let key = Action::for_tool(*tool).map(|a| app.keymap.label(a)).unwrap_or_default();
+                let mut tip = if key.is_empty() { t(label) } else { format!("{} ({key})", t(label)) };
+                let lockable = lockable(*tool);
+                if lockable {
+                    tip = format!("{tip}\n{}", t("Double-click to lock"));
                 }
-                for (tool, icon, label) in *group {
-                    let key = Action::for_tool(*tool).map(|a| app.keymap.label(a)).unwrap_or_default();
-                    let mut tip = if key.is_empty() { t(label) } else { format!("{} ({key})", t(label)) };
-                    let lockable = lockable(*tool);
-                    if lockable {
-                        tip = format!("{tip}\n{}", t("Double-click to lock"));
-                    }
-                    let (active, locked) = (app.tool == *tool, app.tool == *tool && app.tool_lock && lockable);
-                    let resp = theme::icon_button(ui, icon, active, !view_only || matches!(tool, Tool::Hand));
-                    if locked {
-                        theme::lock_badge(ui, resp.rect);
-                    }
-                    let name = if locked { format!("{} ({})", t(label), t("locked")) } else { t(label) };
-                    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, &name));
-                    let resp = resp.on_hover_text(tip);
-                    if resp.double_clicked() && lockable {
-                        app.set_tool(*tool);
-                        app.tool_lock = true;
-                    } else if resp.clicked() {
-                        app.set_tool(*tool);
-                    }
+                let (active, locked) = (app.tool == *tool, app.tool == *tool && app.tool_lock && lockable);
+                let resp = theme::icon_button(ui, icon, active, !view_only || matches!(tool, Tool::Hand));
+                if locked {
+                    theme::lock_badge(ui, resp.rect);
+                }
+                let name = if locked { format!("{} ({})", t(label), t("locked")) } else { t(label) };
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, &name));
+                let resp = resp.on_hover_text(tip);
+                if resp.double_clicked() && lockable {
+                    app.set_tool(*tool);
+                    app.tool_lock = true;
+                } else if resp.clicked() {
+                    app.set_tool(*tool);
                 }
             }
-            if theme::icon_button(ui, "image", false, !view_only).on_hover_text(t("Insert image")).clicked() {
-                app.insert_images_dialog();
-            }
-            if theme::icon_button(ui, "library", app.palette.open, !view_only).on_hover_text(t("Icon library")).clicked() {
-                app.palette.toggle();
-            }
-            let key = Action::for_tool(Tool::Laser).map(|a| app.keymap.label(a)).unwrap_or_default();
-            if theme::icon_button(ui, "laser", app.tool == Tool::Laser, true).on_hover_text(format!("{} ({key})", t("Laser pointer"))).clicked() {
-                app.set_tool(Tool::Laser);
-            }
-            theme::vsep(ui);
-            let name = t("Keep the tool active after drawing");
-            let tip = format!("{name} ({})", app.keymap.label(Action::ToolLock));
-            let resp = theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, !view_only);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, app.tool_lock, &name));
-            if resp.on_hover_text(tip).clicked() {
-                app.tool_lock = !app.tool_lock;
-            }
-        });
+        }
+        if theme::icon_button(ui, "image", false, !view_only).on_hover_text(t("Insert image")).clicked() {
+            app.insert_images_dialog();
+        }
+        if theme::icon_button(ui, "library", app.palette.open, !view_only).on_hover_text(t("Icon library")).clicked() {
+            app.palette.toggle();
+        }
+        let key = Action::for_tool(Tool::Laser).map(|a| app.keymap.label(a)).unwrap_or_default();
+        if theme::icon_button(ui, "laser", app.tool == Tool::Laser, true).on_hover_text(format!("{} ({key})", t("Laser pointer"))).clicked() {
+            app.set_tool(Tool::Laser);
+        }
+        theme::vsep(ui);
+        let name = t("Keep the tool active after drawing");
+        let tip = format!("{name} ({})", app.keymap.label(Action::ToolLock));
+        let resp = theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, !view_only);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, app.tool_lock, &name));
+        if resp.on_hover_text(tip).clicked() {
+            app.tool_lock = !app.tool_lock;
+        }
     });
 }
 

@@ -622,7 +622,9 @@ pub fn follow_ui(app: &mut App, ctx: &egui::Context) {
             set = Some(None);
         }
         if !people.is_empty() {
-            egui::Area::new(egui::Id::new("guest-people")).anchor(egui::Align2::RIGHT_TOP, vec2(-12.0, 52.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+            // below the row of tools when it sits under the title (narrow window, phone)
+            let top = if ctx.content_rect().width() < 1180.0 { 116.0 } else { 52.0 };
+            egui::Area::new(egui::Id::new("guest-people")).anchor(egui::Align2::RIGHT_TOP, vec2(-12.0, top)).order(egui::Order::Foreground).show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     for (id, name, color) in &people {
                         ui.horizontal(|ui| {
@@ -630,7 +632,10 @@ pub fn follow_ui(app: &mut App, ctx: &egui::Context) {
                             ui.painter().circle_filled(r.center(), 5.0, *color);
                             ui.label(name);
                             let on = app.agent.remote.following == Some(*id);
-                            if ui.small_button(if on { t("Stop following") } else { t("Follow") }).clicked() {
+                            let label = if on { t("Stop following") } else { t("Follow") };
+                            // a finger needs the full-size button
+                            let clicked = if crate::platform::coarse_pointer() { ui.button(label).clicked() } else { ui.small_button(label).clicked() };
+                            if clicked {
                                 set = Some((!on).then_some(*id));
                             }
                         });

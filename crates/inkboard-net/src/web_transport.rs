@@ -247,6 +247,14 @@ impl WebTransport {
         self.dial(ticket, Some(cancel)).await
     }
 
+    /// The browser says the network changed (it came back): the endpoint probes its relay again now instead of on its own timers.
+    pub fn network_change(&self) {
+        let endpoint = self.guest.borrow().as_ref().map(|(_, e)| e.clone());
+        if let Some(e) = endpoint {
+            spawn_local(async move { e.network_change().await });
+        }
+    }
+
     /// Closes the endpoint (the frames of the connections closed just before are given a moment to go out).
     pub async fn close(&self) {
         let endpoint = self.guest.borrow_mut().take();

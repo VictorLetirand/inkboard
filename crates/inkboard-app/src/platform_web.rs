@@ -35,12 +35,17 @@ thread_local! {
     static INBOX: RefCell<Vec<Incoming>> = const { RefCell::new(Vec::new()) };
     static PACK: RefCell<PackState> = const { RefCell::new(PackState::Idle) };
     static ICONS: Cell<Option<&'static inkboard_icons::Library>> = const { Cell::new(None) };
+    /// The browser said the network is back (or the tab is visible again) since the session last looked.
+    static NET_EVENT: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Called once at startup: remembers the context (to wake the application up) and listens to the clipboard.
+/// Called once at startup: remembers the context (to wake the application up), listens to the clipboard, to the address of the page
+/// (an invitation link) and to the browser's network events.
 pub fn init(ctx: &egui::Context) {
     CTX.with(|c| *c.borrow_mut() = Some(ctx.clone()));
     install_paste_listener();
+    install_link_listener();
+    install_network_listeners();
 }
 
 fn wake() {
@@ -84,7 +89,7 @@ pub fn request_icon_pack() -> Pack {
             });
         }
         match &*p {
-            PackState::Ready(b) => Pack::Ready(*b),
+            PackState::Ready(b) => Pack::Ready(b),
             PackState::Failed(e) => Pack::Failed(e.clone()),
             PackState::Idle | PackState::Loading => Pack::Loading,
         }
@@ -168,6 +173,87 @@ fn install_paste_listener() {
     });
     let _ = document.add_event_listener_with_callback("paste", on_paste.as_ref().unchecked_ref());
     on_paste.forget();
+}
+
+/* ------------------------------------------------------------------ invitation link, network, preferences */
+
+/// An invitation link is `https://<page>/#<ticket>`: the ticket is in the fragment, which a browser never sends to a server. This takes it
+/// out of the address bar (so that it stays neither in the history nor on a screen shared by mistake) and queues it for the application.
+/// `#join=<ticket>` is read as well.
+fn take_link_from_address() {
+    let Some(window) = web_sys::window() else { return };
+    let location = window.location();
+    let hash = location.hash().unwrap_or_default();
+    let link = hash.trim_start_matches('#').trim();
+    if link.is_empty() {
+        return;
+    }
+    let link = link.strip_prefix("join=").unwrap_or(link).to_owned();
+    if let Ok(history) = window.history() {
+        let path = format!("{}{}", location.pathname().unwrap_or_default(), location.search().unwrap_or_default());
+        let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&path));
+    }
+    push(Incoming::JoinLink(link));
+}
+
+/// A link present when the page loads, or put in the address bar of the open page.
+fn install_link_listener() {
+    take_link_from_address();
+    let Some(window) = web_sys::window() else { return };
+    let on_change = Closure::<dyn FnMut()>::new(take_link_from_address);
+    let _ = window.add_event_listener_with_callback("hashchange", on_change.as_ref().unchecked_ref());
+    on_change.forget();
+}
+
+/// `online` and a tab that becomes visible again: the session should look at its connection now instead of waiting for its own timers
+/// (a hidden tab draws no frame, so the session has been asleep). `offline` only wakes the application up to say so.
+fn install_network_listeners() {
+    let Some(window) = web_sys::window() else { return };
+    let on_back = Closure::<dyn FnMut()>::new(|| {
+        NET_EVENT.with(|e| e.set(true));
+        wake();
+    });
+    let _ = window.add_event_listener_with_callback("online", on_back.as_ref().unchecked_ref());
+    on_back.forget();
+    let on_offline = Closure::<dyn FnMut()>::new(wake);
+    let _ = window.add_event_listener_with_callback("offline", on_offline.as_ref().unchecked_ref());
+    on_offline.forget();
+    if let Some(document) = window.document() {
+        let doc = document.clone();
+        let on_visible = Closure::<dyn FnMut()>::new(move || {
+            if !doc.hidden() {
+                NET_EVENT.with(|e| e.set(true));
+                wake();
+            }
+        });
+        let _ = document.add_event_listener_with_callback("visibilitychange", on_visible.as_ref().unchecked_ref());
+        on_visible.forget();
+    }
+}
+
+/// Did the browser report the network back (or the tab visible again) since the last call?
+pub fn take_net_event() -> bool {
+    NET_EVENT.with(Cell::take)
+}
+
+/// Is the main pointer imprecise (a finger)? Then the session windows get larger touch targets.
+pub fn coarse_pointer() -> bool {
+    web_sys::window().and_then(|w| w.match_media("(pointer: coarse)").ok().flatten()).is_some_and(|m| m.matches())
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+/// A small setting (the guest's display name) kept in the browser's local storage, on this device only.
+pub fn load_pref(name: &str) -> Option<String> {
+    local_storage()?.get_item(&format!("inkboard.{name}")).ok().flatten()
+}
+
+pub fn save_pref(name: &str, value: &str) {
+    if let Some(s) = local_storage() {
+        let _ = s.set_item(&format!("inkboard.{name}"), value);
+    }
 }
 
 /* ------------------------------------------------------------------ files */
