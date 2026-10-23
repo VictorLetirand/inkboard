@@ -1134,9 +1134,13 @@ impl GuestSession {
         if kind != ConnectErrorKind::NoNetwork {
             let (tx, rx) = channel();
             let (d, u) = (Arc::clone(&self.diagnoser), url.clone());
+            // a browser has no thread: its diagnoser cannot look at the network and answers at once
+            #[cfg(not(target_arch = "wasm32"))]
             std::thread::spawn(move || {
                 let _ = tx.send(d.diagnose(&u));
             });
+            #[cfg(target_arch = "wasm32")]
+            let _ = tx.send(d.diagnose(&u));
             self.diagnosis = Some(PendingDiagnosis { rx, kind, detail: detail.to_owned(), relay_url: url, unknown_relay });
         }
     }

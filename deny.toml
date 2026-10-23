@@ -4,12 +4,13 @@
 # of unmaintained crates cannot be set in this file (cargo-deny 0.20).
 
 [graph]
-# Same targets as the released binaries.
+# Same targets as the released binaries and the web page.
 targets = [
     "x86_64-pc-windows-msvc",
     "x86_64-unknown-linux-gnu",
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
+    "wasm32-unknown-unknown", # the web page
 ]
 
 [advisories]

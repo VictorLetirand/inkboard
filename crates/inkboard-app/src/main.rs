@@ -30,6 +30,7 @@ mod rich_edit;
 mod session_guest;
 // the guest side uses a few checks of the host side: it stays compiled on the web, but nothing starts it there
 mod session_host;
+mod session_link;
 #[cfg_attr(not(target_arch = "wasm32"), path = "session_net.rs")]
 #[cfg_attr(target_arch = "wasm32", path = "session_net_web.rs")]
 mod session_net;
@@ -44,6 +45,8 @@ mod ui;
 mod watch;
 #[cfg(target_arch = "wasm32")]
 mod web;
+#[cfg(all(target_arch = "wasm32", feature = "web-test"))]
+mod web_test;
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -276,3 +279,5 @@ mod tests_session_host;
 mod tests_ui;
 #[cfg(test)]
 mod tests_visual;
+#[cfg(test)]
+mod tests_web_host;

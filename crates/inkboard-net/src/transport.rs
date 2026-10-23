@@ -8,17 +8,20 @@
 //! reader task and one writer task per connection. `connect`/`host`/`ticket` block the calling thread (never call them from
 //! inside an async runtime); `send`/`recv`/`accept` never block.
 
+use crate::cancel::CancelToken;
 use crate::config::{NetConfig, RelaySetting};
-use crate::ticket::{MAX_HINTS, addr_to_hints, ticket_to_addr};
+use crate::ticket::{MAX_HINTS, addr_to_hints};
+use crate::wire::{
+    ALPN, CLOSE_NORMAL, CLOSE_REFUSED, FLUSH_TIMEOUT, FrameError, GuestRelays, MAX_QUEUED_BYTES, PREAMBLE, QUEUE, bind_guest, dial_plan, local, net,
+    open_stream, quic_config, read_fault, read_frame, ticket_addr, write_fault, write_frame,
+};
 use inkboard_session::crypto::{HostKeys, Ticket};
 use inkboard_session::error::{Error, NetCause, Result};
 use inkboard_session::limits::Violation;
 use inkboard_session::proto::Role;
 use inkboard_session::transport::{Connection, Transport};
-use iroh::endpoint::{Connection as QuicConn, ConnectionError, Incoming, ReadError, ReadExactError, RecvStream, SendStream, VarInt, presets};
-use iroh::endpoint::{IdleTimeout, QuicTransportConfig};
-use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, TransportAddr};
-use std::fmt::Display;
+use iroh::endpoint::{Connection as QuicConn, Incoming, RecvStream, SendStream, VarInt, presets};
+use iroh::{Endpoint, EndpointAddr, EndpointId, TransportAddr};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -27,35 +30,14 @@ use tokio::runtime::{Builder as RuntimeBuilder, Handle, Runtime};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use tokio::time::{sleep, timeout};
 
-/// ALPN of the session protocol (the trailing number is the transport framing version).
-pub const ALPN: &[u8] = b"inkboard/session/1";
-const PREAMBLE: &[u8; 4] = b"IBN1";
-/// Application close codes.
-const CLOSE_NORMAL: u32 = 0;
-const CLOSE_REFUSED: u32 = 1;
-/// Frames buffered per direction before back-pressure (reader) or `Congested` (sender).
-const QUEUE: usize = 1024;
-/// Bytes buffered per direction, whatever the number of frames: a peer that does not read (sender side: `Congested`) or a flood
-/// that the application does not drain (reader side: back-pressure) cannot make this side hold more.
-const MAX_QUEUED_BYTES: usize = 32 << 20;
 /// Connections accepted by the transport but not yet taken with `accept`.
 const PENDING_ACCEPT: usize = 64;
 /// Connections that have not sent their preamble yet, at most (the others are refused at once).
 const MAX_HANDSHAKING: usize = 64;
 /// A peer that connects but does not send the preamble in time is dropped.
 const PREAMBLE_TIMEOUT: Duration = Duration::from_secs(5);
-/// On a local `close`, how long to wait for the peer to confirm it has read everything.
-const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Dropping a transport waits this long (at most) for the connections closed just before to be flushed.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
-
-fn net(cause: NetCause, detail: impl Into<String>) -> Error {
-    Error::Network { cause, detail: detail.into() }
-}
-
-fn local(e: impl Display) -> Error {
-    net(NetCause::Local, e.to_string())
-}
 
 /* ------------------------------------------------------------- Connection */
 
@@ -225,48 +207,6 @@ impl Drop for IrohConn {
     }
 }
 
-fn map_conn_error(e: &ConnectionError) -> Error {
-    match e {
-        ConnectionError::TimedOut => net(NetCause::TimedOut, "nothing received from the peer within the idle timeout"),
-        ConnectionError::ApplicationClosed(c) if c.error_code == VarInt::from_u32(CLOSE_REFUSED) => net(NetCause::Refused, "the host refused the connection"),
-        _ => Error::Closed,
-    }
-}
-
-fn read_fault(e: &ReadError, conn: &QuicConn) -> Error {
-    match e {
-        ReadError::ConnectionLost(ce) => map_conn_error(ce),
-        _ => conn.close_reason().map_or(Error::Closed, |ce| map_conn_error(&ce)),
-    }
-}
-
-enum FrameError {
-    Read(ReadError),
-    Truncated,
-    TooLarge(usize),
-}
-
-/// `Ok(None)` at a clean end of stream (between two frames).
-async fn read_frame(recv: &mut RecvStream, max_frame: usize) -> std::result::Result<Option<Vec<u8>>, FrameError> {
-    let mut len = [0u8; 4];
-    match recv.read_exact(&mut len).await {
-        Ok(()) => {}
-        Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
-        Err(ReadExactError::FinishedEarly(_)) => return Err(FrameError::Truncated),
-        Err(ReadExactError::ReadError(e)) => return Err(FrameError::Read(e)),
-    }
-    let n = u32::from_le_bytes(len) as usize;
-    if n > max_frame {
-        return Err(FrameError::TooLarge(n));
-    }
-    let mut frame = vec![0u8; n];
-    match recv.read_exact(&mut frame).await {
-        Ok(()) => Ok(Some(frame)),
-        Err(ReadExactError::FinishedEarly(_)) => Err(FrameError::Truncated),
-        Err(ReadExactError::ReadError(e)) => Err(FrameError::Read(e)),
-    }
-}
-
 async fn read_loop(mut recv: RecvStream, inbox: mpsc::Sender<Vec<u8>>, shared: Arc<Shared>, conn: QuicConn, max_frame: usize) {
     loop {
         // back-pressure by bytes: the application is not draining what is already here
@@ -305,17 +245,8 @@ async fn write_loop(mut send: SendStream, mut queue: mpsc::Receiver<Vec<u8>>, sh
                 None => break true,
                 Some(frame) => {
                     shared.out_bytes.fetch_sub(frame.len(), Ordering::SeqCst);
-                    let len = (frame.len() as u32).to_le_bytes();
-                    let written = async {
-                        send.write_all(&len).await?;
-                        send.write_all(&frame).await
-                    };
-                    if let Err(e) = written.await {
-                        let fault = match e {
-                            iroh::endpoint::WriteError::ConnectionLost(ce) => map_conn_error(&ce),
-                            _ => conn.close_reason().map_or(Error::Closed, |ce| map_conn_error(&ce)),
-                        };
-                        shared.peer_gone(Some(fault));
+                    if let Err(e) = write_frame(&mut send, &frame).await {
+                        shared.peer_gone(Some(write_fault(&e, &conn)));
                         break false;
                     }
                 }
@@ -335,11 +266,6 @@ async fn write_loop(mut send: SendStream, mut queue: mpsc::Receiver<Vec<u8>>, sh
 
 /* -------------------------------------------------------------- Endpoints */
 
-fn quic_config(idle: Duration) -> QuicTransportConfig {
-    let idle: IdleTimeout = idle.clamp(Duration::from_secs(1), Duration::from_secs(3600)).try_into().expect("clamped idle timeout fits");
-    QuicTransportConfig::builder().max_idle_timeout(Some(idle)).build()
-}
-
 async fn bind_host(cfg: &NetConfig) -> Result<Endpoint> {
     let mut builder =
         Endpoint::builder(presets::Minimal).alpns(vec![ALPN.to_vec()]).relay_mode(cfg.relays.mode()).transport_config(quic_config(cfg.idle_timeout));
@@ -347,83 +273,6 @@ async fn bind_host(cfg: &NetConfig) -> Result<Endpoint> {
         builder = builder.clear_ip_transports().bind_addr(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).map_err(local)?;
     }
     builder.bind().await.map_err(local)
-}
-
-/// Relays a guest uses to reach the host of a given ticket.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum GuestRelays {
-    Off,
-    Default,
-    List(Vec<RelayUrl>),
-}
-
-impl GuestRelays {
-    fn for_ticket(setting: &RelaySetting, ticket_relays: &[RelayUrl]) -> Self {
-        let mut list: Vec<RelayUrl> = match setting {
-            RelaySetting::Disabled => return Self::Off,
-            RelaySetting::Default => Vec::new(),
-            RelaySetting::Custom(urls) => urls.clone(),
-        };
-        list.extend(ticket_relays.iter().cloned());
-        list.sort();
-        list.dedup();
-        if list.is_empty() { Self::Default } else { Self::List(list) }
-    }
-
-    fn mode(&self) -> RelayMode {
-        match self {
-            Self::Off => RelayMode::Disabled,
-            Self::Default => RelayMode::Default,
-            Self::List(urls) => RelayMode::custom(urls.iter().cloned()),
-        }
-    }
-}
-
-async fn bind_guest(cfg: &NetConfig, relays: &GuestRelays) -> Result<Endpoint> {
-    Endpoint::builder(presets::Minimal).relay_mode(relays.mode()).transport_config(quic_config(cfg.idle_timeout)).bind().await.map_err(local)
-}
-
-/// A failed dial: when relays were expected but the endpoint never reached one, the relay is the culprit.
-fn dial_failure(endpoint: &Endpoint, relays_on: bool, detail: String) -> Error {
-    if relays_on && endpoint.addr().relay_urls().next().is_none() {
-        net(NetCause::RelayUnreachable, format!("no connection to a relay ({detail})"))
-    } else {
-        net(NetCause::HostUnreachable, detail)
-    }
-}
-
-/// Lets another thread abort a dial in progress (`connect_ticket_cancellable`): the attempt ends at once instead of at
-/// `connect_timeout`. Cloning shares the same token.
-#[derive(Clone, Debug)]
-pub struct CancelToken(Arc<watch::Sender<bool>>);
-
-impl Default for CancelToken {
-    fn default() -> Self {
-        Self(Arc::new(watch::channel(false).0))
-    }
-}
-
-impl CancelToken {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn cancel(&self) {
-        self.0.send_replace(true);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        *self.0.borrow()
-    }
-
-    async fn cancelled(&self) {
-        let mut rx = self.0.subscribe();
-        // The wrapper drops the watch guard at once (it is not `Send`).
-        async {
-            rx.wait_for(|c| *c).await.ok();
-        }
-        .await;
-    }
 }
 
 async fn dial(
@@ -434,12 +283,7 @@ async fn dial(
     flushing: &Arc<AtomicUsize>,
     cancel: Option<&CancelToken>,
 ) -> Result<IrohConn> {
-    let attempt = async {
-        let conn = endpoint.connect(addr, ALPN).await.map_err(|e| dial_failure(endpoint, relays_on, e.to_string()))?;
-        let (mut send, recv) = conn.open_bi().await.map_err(|e| map_conn_error(&e))?;
-        send.write_all(PREAMBLE).await.map_err(|e| net(NetCause::HostUnreachable, e.to_string()))?;
-        Ok::<_, Error>((conn, send, recv))
-    };
+    let attempt = async { open_stream(endpoint, addr, relays_on).await };
     let aborted = async {
         match cancel {
             Some(c) => c.cancelled().await,
@@ -453,7 +297,7 @@ async fn dial(
     match result {
         Ok(Ok((conn, send, recv))) => Ok(IrohConn::start(conn, send, recv, cfg.max_frame, flushing)),
         Ok(Err(e)) => Err(e),
-        Err(_) => Err(dial_failure(endpoint, relays_on, format!("no answer within {} s", cfg.connect_timeout.as_secs_f32()))),
+        Err(_) => Err(crate::wire::dial_failure(endpoint, relays_on, format!("no answer within {} s", cfg.connect_timeout.as_secs_f32()))),
     }
 }
 
@@ -613,26 +457,12 @@ impl IrohTransport {
     /// link cannot make this machine knock on an internal address. Whether an *unknown* public relay is acceptable is the user's
     /// call (the application asks before dialing).
     pub fn connect_ticket(&mut self, ticket: &Ticket) -> Result<IrohConn> {
-        self.connect_addr(self.ticket_addr(ticket)?, None)
-    }
-
-    /// The address of a ticket, without the relays this guest may not use (see [`IrohTransport::connect_ticket`]).
-    fn ticket_addr(&self, ticket: &Ticket) -> Result<EndpointAddr> {
-        let mut addr = ticket_to_addr(ticket)?;
-        let before = addr.addrs.len();
-        addr.addrs.retain(|a| match a {
-            TransportAddr::Relay(url) => self.cfg.allows_ticket_relay(url),
-            _ => true,
-        });
-        if addr.addrs.is_empty() && before > 0 {
-            return Err(net(NetCause::HostUnreachable, "the relay address in the link is not allowed (https on a public address is required)"));
-        }
-        Ok(addr)
+        self.connect_addr(ticket_addr(&self.cfg, ticket)?, None)
     }
 
     /// Like [`IrohTransport::connect_ticket`], but `cancel` ends the attempt at once (`Error::Closed`).
     pub fn connect_ticket_cancellable(&mut self, ticket: &Ticket, cancel: &CancelToken) -> Result<IrohConn> {
-        self.connect_addr(self.ticket_addr(ticket)?, Some(cancel))
+        self.connect_addr(ticket_addr(&self.cfg, ticket)?, Some(cancel))
     }
 
     /// Tells the endpoints that the network may have changed (the computer woke up, an interface came back): iroh looks at the
@@ -645,15 +475,8 @@ impl IrohTransport {
         }
     }
 
-    fn connect_addr(&mut self, mut addr: EndpointAddr, cancel: Option<&CancelToken>) -> Result<IrohConn> {
-        let ticket_relays: Vec<RelayUrl> = addr.relay_urls().cloned().collect();
-        let relays = GuestRelays::for_ticket(&self.cfg.relays, &ticket_relays);
-        if relays == GuestRelays::Off {
-            addr.addrs.retain(|a| !a.is_relay());
-        }
-        if addr.is_empty() {
-            return Err(net(NetCause::HostUnreachable, "the link has no usable address (relays are disabled and no direct address is known)"));
-        }
+    fn connect_addr(&mut self, addr: EndpointAddr, cancel: Option<&CancelToken>) -> Result<IrohConn> {
+        let (addr, relays) = dial_plan(&self.cfg, addr)?;
         let rt = self.rt.as_ref().expect("the runtime lives as long as the transport");
         let cfg = &self.cfg;
         let endpoint = match &self.guest {

@@ -28,6 +28,7 @@ relative); to try it locally run `trunk serve` in `crates/inkboard-app/web/` and
 - **Renderer**: WebGL (`glow`, the default, lighter). `scripts/build_web.sh wgpu` (Windows: `-Renderer wgpu`) builds the WebGPU renderer with a WebGL fallback
   (`web-wgpu` feature, a bit larger).
 - **Toolchain**: if the Rust that `rustup` selects is older than 1.91, set `RUSTUP_TOOLCHAIN` (for example `RUSTUP_TOOLCHAIN=1.99.1`).
+- **C compiler**: the network transport (`iroh`, through `ring`) compiles C for WebAssembly, so the build needs a `clang` with the WebAssembly backend (LLVM 15 or later; on Linux the `clang` package). If `clang` is not the one on the `PATH`, set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown` to a `clang` and a `llvm-ar`.
 - The desktop build is not affected: `cargo build -p inkboard-app` is unchanged and still embeds the icon pack.
 
 ## What differs from the desktop application

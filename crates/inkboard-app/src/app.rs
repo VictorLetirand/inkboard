@@ -1137,6 +1137,8 @@ impl eframe::App for App {
         self.poll_platform();
         self.apply_present_request(ctx);
         self.guest_frame(ctx);
+        #[cfg(all(target_arch = "wasm32", feature = "web-test"))]
+        crate::web_test::frame(self);
         if self.guest.is_none() {
             self.watch_file();
             self.poll_live();

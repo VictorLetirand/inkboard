@@ -67,7 +67,11 @@ pub fn start() {
                 eframe::WebOptions::default(),
                 Box::new(|cc| {
                     platform::init(&cc.egui_ctx);
-                    Ok(Box::new(app::App::new(cc, None, None)))
+                    let mut app = app::App::new(cc, None, None);
+                    app.join.factory = Some(crate::session_net::guest_factory());
+                    #[cfg(feature = "web-test")]
+                    crate::web_test::install(&cc.egui_ctx);
+                    Ok(Box::new(app))
                 }),
             )
             .await;
