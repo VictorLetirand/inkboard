@@ -174,6 +174,26 @@ fn sequencer_applies_a_client_seq_once() {
     assert_eq!(s.seq(), 4);
 }
 
+#[test]
+fn the_log_and_the_change_table_are_bounded_and_a_guest_too_far_behind_gets_a_snapshot() {
+    use inkboard_core::model::Id;
+    use inkboard_session::sequencer::CatchUp;
+    // many large modifications: 400 x ~25 kB would be 10 MB without the byte budget, 800 000 remembered objects without the cap
+    let mut s = Sequencer::new(inkboard_core::Document::new("d"), 10_000);
+    s.set_budgets(200_000, 5_000);
+    let page = s.doc().pages[0].id.clone();
+    for round in 0..400 {
+        let ids = (0..2_000).map(|i| Id(format!("r{round}-{i}"))).collect();
+        s.apply_local(ParticipantId::HOST, vec![WireOp::Delete { page: page.clone(), ids }]);
+        let (entries, bytes) = s.log_stats();
+        assert!(bytes <= 200_000 && entries < 20, "round {round}: {entries} entries, {bytes} bytes");
+        assert!(s.tracked_objects() <= 5_000, "round {round}: {} objects", s.tracked_objects());
+    }
+    assert_eq!(s.seq(), 400);
+    assert!(matches!(s.catch_up(0, Vec::new()), CatchUp::Snapshot(_)), "what was evicted is replaced by a snapshot");
+    assert!(matches!(s.catch_up(398, Vec::new()), CatchUp::Applied(v) if v.len() == 2), "recent entries are still served as modifications");
+}
+
 /// A raw connection to the host with a given key, to play the role of a hostile or buggy peer.
 struct Raw {
     conn: inkboard_session::sim::SimConn,

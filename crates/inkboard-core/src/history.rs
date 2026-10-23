@@ -193,11 +193,61 @@ impl AuthorOutcome {
     }
 }
 
+/// One undoable submission: its core operations (they carry the "before" state of every touched object) and an estimate of the
+/// memory they hold.
+#[derive(Clone, Debug)]
+struct Step {
+    ops: Vec<Op>,
+    cost: usize,
+}
+
+impl Step {
+    fn new(ops: Vec<Op>) -> Self {
+        let cost = ops.iter().map(op_cost).sum();
+        Self { ops, cost }
+    }
+}
+
+fn json_len<T: serde::Serialize>(v: &T) -> usize {
+    serde_json::to_vec(v).map_or(256, |b| b.len())
+}
+
+/// Estimated bytes held by an operation (the size of its JSON form plus a fixed overhead: deterministic and computed once).
+fn op_cost(op: &Op) -> usize {
+    64 + match op {
+        Op::Insert { obj, .. } | Op::Remove { obj, .. } => json_len(obj),
+        Op::Replace { before, after, .. } => json_len(before) + json_len(after),
+        Op::Reorder { before, after, .. } => (before.len() + after.len()) * 40,
+        Op::SetLayers { before, after, .. } => json_len(before) + json_len(after),
+        Op::AddPage { page, .. } | Op::RemovePage { page, .. } => json_len(page),
+        Op::RenamePage { before, after, .. } | Op::SetName { before, after } => before.len() + after.len(),
+        Op::SetBackground { .. } => 16,
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct AuthorStacks {
-    /// One entry per submission: the core operations it performed (they carry the "before" state of every touched object).
-    undo: Vec<Vec<Op>>,
-    redo: Vec<Vec<Op>>,
+    /// One entry per submission.
+    undo: Vec<Step>,
+    redo: Vec<Step>,
+}
+
+impl AuthorStacks {
+    fn bytes(&self) -> usize {
+        self.undo.iter().chain(&self.redo).map(|s| s.cost).sum()
+    }
+
+    /// Drops the oldest step (undo side first). `false` when there is none.
+    fn drop_oldest(&mut self) -> bool {
+        if !self.undo.is_empty() {
+            self.undo.remove(0);
+        } else if !self.redo.is_empty() {
+            self.redo.remove(0);
+        } else {
+            return false;
+        }
+        true
+    }
 }
 
 /// Object touched by an operation (`None` for the operations that concern a page or the document).
@@ -233,8 +283,13 @@ fn holds(doc: &Document, op: &Op) -> bool {
 #[derive(Clone, Debug)]
 pub struct AuthorHistories {
     stacks: HashMap<Author, AuthorStacks>,
-    last: HashMap<Id, Author>,
+    /// Who modified each object last, and when (a counter): only used to name who changed an object that an undo had to skip.
+    last: HashMap<Id, (Author, u64)>,
+    tick: u64,
     limit: usize,
+    max_author_bytes: usize,
+    max_total_bytes: usize,
+    max_tracked: usize,
 }
 
 impl Default for AuthorHistories {
@@ -244,15 +299,73 @@ impl Default for AuthorHistories {
 }
 
 impl AuthorHistories {
+    /// Estimated bytes of undo steps one author may hold (the oldest steps go first).
+    pub const DEFAULT_AUTHOR_BYTES: usize = 32 << 20;
+    /// Same, all authors together (the author holding the most loses its oldest step first).
+    pub const DEFAULT_TOTAL_BYTES: usize = 128 << 20;
+    /// Objects whose last author is remembered (the least recently modified are forgotten: their author is then just "someone").
+    pub const DEFAULT_TRACKED: usize = 100_000;
+
     /// `limit`: undo steps kept per author.
     pub fn new(limit: usize) -> Self {
-        Self { stacks: HashMap::new(), last: HashMap::new(), limit }
+        Self::with_budgets(limit, Self::DEFAULT_AUTHOR_BYTES, Self::DEFAULT_TOTAL_BYTES, Self::DEFAULT_TRACKED)
+    }
+
+    /// `limit` steps per author, at most `author_bytes` per author and `total_bytes` overall (estimates, see [`Self::bytes`]),
+    /// and the last author of at most `tracked` objects.
+    pub fn with_budgets(limit: usize, author_bytes: usize, total_bytes: usize, tracked: usize) -> Self {
+        Self {
+            stacks: HashMap::new(),
+            last: HashMap::new(),
+            tick: 0,
+            limit,
+            max_author_bytes: author_bytes,
+            max_total_bytes: total_bytes,
+            max_tracked: tracked,
+        }
+    }
+
+    /// Estimated bytes held by all the undo and redo steps.
+    pub fn bytes(&self) -> usize {
+        self.stacks.values().map(AuthorStacks::bytes).sum()
+    }
+
+    /// Objects whose last author is remembered.
+    pub fn tracked(&self) -> usize {
+        self.last.len()
+    }
+
+    /// Who modified `id` last, if still remembered.
+    pub fn last_author(&self, id: &Id) -> Option<Author> {
+        self.last.get(id).map(|(a, _)| *a)
     }
 
     /// Notes that `author` modified these objects (also for modifications that are not undoable per author, e.g. the host's own).
     pub fn note<'a>(&mut self, author: Author, ids: impl IntoIterator<Item = &'a Id>) {
         for id in ids {
-            self.last.insert(id.clone(), author);
+            self.tick += 1;
+            self.last.insert(id.clone(), (author, self.tick));
+        }
+        if self.last.len() > self.max_tracked {
+            // eviction: the older half of the notes goes (by time of the last modification), so the work is amortized
+            let keep = self.max_tracked / 2;
+            let mut ticks: Vec<u64> = self.last.values().map(|(_, t)| *t).collect();
+            ticks.sort_unstable();
+            let threshold = ticks.get(ticks.len().saturating_sub(keep)).copied().unwrap_or(u64::MAX);
+            self.last.retain(|_, (_, t)| *t >= threshold);
+        }
+    }
+
+    /// Applies the byte budgets after `author`'s stacks grew: the oldest steps are dropped (they can no longer be undone).
+    fn enforce_budgets(&mut self, author: Author) {
+        if let Some(s) = self.stacks.get_mut(&author) {
+            while s.bytes() > self.max_author_bytes && s.drop_oldest() {}
+        }
+        while self.bytes() > self.max_total_bytes {
+            let Some(biggest) = self.stacks.iter().max_by_key(|(a, s)| (s.bytes(), **a)).map(|(a, _)| *a) else { break };
+            if !self.stacks.get_mut(&biggest).is_some_and(AuthorStacks::drop_oldest) {
+                break;
+            }
         }
     }
 
@@ -264,10 +377,11 @@ impl AuthorHistories {
         self.note(author, ops.iter().filter_map(op_object));
         let s = self.stacks.entry(author).or_default();
         s.redo.clear();
-        s.undo.push(ops);
+        s.undo.push(Step::new(ops));
         if s.undo.len() > self.limit {
             s.undo.remove(0);
         }
+        self.enforce_budgets(author);
     }
 
     pub fn can_undo(&self, author: Author) -> bool {
@@ -284,13 +398,13 @@ impl AuthorHistories {
 
     fn skip(&self, op: &Op) -> Skipped {
         let object = op_object(op).cloned();
-        let by = object.as_ref().and_then(|id| self.last.get(id)).copied();
+        let by = object.as_ref().and_then(|id| self.last_author(id));
         Skipped { object, by }
     }
 
     /// Undoes the author's last submission against `doc` (the current document). `None` when there is nothing to undo.
     pub fn undo(&mut self, author: Author, doc: &Document) -> Option<AuthorOutcome> {
-        let step = self.stacks.get_mut(&author)?.undo.pop()?;
+        let step = self.stacks.get_mut(&author)?.undo.pop()?.ops;
         let mut scratch = doc.clone();
         let (mut out, mut done) = (AuthorOutcome::default(), Vec::new());
         for op in step.iter().rev() {
@@ -306,14 +420,15 @@ impl AuthorHistories {
         self.note(author, out.ops.iter().filter_map(op_object));
         if !done.is_empty() {
             done.reverse();
-            self.stacks.entry(author).or_default().redo.push(done);
+            self.stacks.entry(author).or_default().redo.push(Step::new(done));
+            self.enforce_budgets(author);
         }
         Some(out)
     }
 
     /// Redoes the author's last undone submission (same rule: what somebody else changed since is skipped).
     pub fn redo(&mut self, author: Author, doc: &Document) -> Option<AuthorOutcome> {
-        let step = self.stacks.get_mut(&author)?.redo.pop()?;
+        let step = self.stacks.get_mut(&author)?.redo.pop()?.ops;
         let mut scratch = doc.clone();
         let (mut out, mut done) = (AuthorOutcome::default(), Vec::new());
         for op in &step {
@@ -328,10 +443,11 @@ impl AuthorHistories {
         self.note(author, out.ops.iter().filter_map(op_object));
         if !done.is_empty() {
             let s = self.stacks.entry(author).or_default();
-            s.undo.push(done);
+            s.undo.push(Step::new(done));
             if s.undo.len() > self.limit {
                 s.undo.remove(0);
             }
+            self.enforce_budgets(author);
         }
         Some(out)
     }
@@ -452,6 +568,53 @@ mod author_tests {
             n += 1;
         }
         assert_eq!(n, 2, "only the last two steps are kept");
+    }
+
+    /// An operation that weighs about `n * 80` estimated bytes (a reordering of `n` objects), for the memory-bound tests.
+    fn heavy(doc: &Document, n: usize) -> Vec<Op> {
+        let ids: Vec<Id> = (0..n).map(|i| Id(format!("h{i}"))).collect();
+        vec![Op::Reorder { page: doc.pages[0].id.clone(), before: ids.clone(), after: ids }]
+    }
+
+    fn steps_left(h: &mut AuthorHistories, author: Author, doc: &Document) -> usize {
+        std::iter::from_fn(|| h.undo(author, doc)).count()
+    }
+
+    #[test]
+    fn undo_memory_is_bounded_per_author_and_overall_and_the_oldest_steps_go_first() {
+        let doc = doc_with(1);
+        // one step weighs about 80 kB: 2 fit in 200 kB, and 5 authors together keep at most 500 kB
+        let mut h = AuthorHistories::with_budgets(200, 200_000, 500_000, 1_000);
+        for _ in 0..50 {
+            h.record(1, heavy(&doc, 1_000));
+            assert!(h.bytes() <= 500_000, "{}", h.bytes());
+        }
+        assert_eq!(steps_left(&mut h, 1, &doc), 2, "only the newest steps of one author are kept");
+        let mut h = AuthorHistories::with_budgets(200, 200_000, 500_000, 1_000);
+        for round in 0..20 {
+            for author in 1..=5 {
+                h.record(author, heavy(&doc, 1_000 + round));
+                assert!(h.bytes() <= 500_000, "{}", h.bytes());
+            }
+        }
+        assert!((1..=5).all(|a| h.can_undo(a)), "every author keeps its latest step: the biggest holder pays first");
+        let kept: usize = (1..=5).map(|a| steps_left(&mut h, a, &doc)).sum();
+        assert!((5..=7).contains(&kept), "about 500 kB of 80 kB steps, not 100 of them: {kept}");
+    }
+
+    #[test]
+    fn the_memory_of_who_modified_what_is_bounded_and_forgets_the_oldest_first() {
+        let mut h = AuthorHistories::with_budgets(200, usize::MAX, usize::MAX, 100);
+        let ids: Vec<Id> = (0..10_000).map(|i| Id(format!("o{i}"))).collect();
+        for (i, id) in ids.iter().enumerate() {
+            h.note(1 + (i % 3) as u32, std::iter::once(id));
+            assert!(h.tracked() <= 100);
+        }
+        assert_eq!(h.last_author(&ids[9_999]), Some(1 + (9_999 % 3) as u32), "the latest is kept");
+        assert_eq!(h.last_author(&ids[0]), None, "the oldest was forgotten");
+        // an object modified again is a recent one again
+        h.note(9, std::iter::once(&ids[9_999]));
+        assert_eq!(h.last_author(&ids[9_999]), Some(9));
     }
 
     proptest! {
