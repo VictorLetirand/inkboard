@@ -98,6 +98,25 @@ Utilisez **Quitter la session** (bandeau bleu ou menu principal). Votre propre t
 
 ---
 
+## Inviter quelqu'un qui n'a rien d'installé : rejoindre depuis un navigateur
+
+Un invité peut rejoindre **depuis une page web**, sans rien installer (Chrome ou Edge sur ordinateur ou téléphone ; voir [WEB.md](WEB.md) pour ce qui a été essayé).
+
+**Le lien.** C'est l'adresse de la page web d'Inkboard suivie de `#` et du ticket d'invitation : `https://<adresse de la page>/#<ticket>`. Le ticket est la partie du lien de l'hôte située après `inkboard://join#` (ou `inkboard://join/`). Il reste dans la partie de l'adresse après `#`, qu'un navigateur n'envoie jamais à un serveur web ; la page l'efface en plus de la barre d'adresse dès qu'elle l'a lu, pour qu'il ne reste pas dans l'historique du navigateur. L'adresse de la page dépend de l'endroit où Inkboard est publié (pas encore décidé) ; d'ici là, l'hôte peut composer le lien à la main comme ci-dessus, ou donner à l'invité l'adresse de la page et le lien natif, que l'invité colle dans la fenêtre **Rejoindre une session…** de la page (elle accepte `inkboard://join#…`, `https://…#…` et le ticket seul).
+
+**Pour l'invité :**
+
+1. Ouvrez le lien. La page se charge (environ 5 Mo la première fois, puis votre navigateur les garde) et une fenêtre **Rejoindre une session** s'ouvre avec le lien déjà rempli.
+2. Saisissez **Votre nom** (celui de votre dernière visite est pré-rempli ; il n'est gardé que dans ce navigateur) et cliquez sur **Rejoindre** (ou appuyez sur Entrée).
+3. Attendez l'accord de l'hôte, comme dans l'application. Vous voyez ensuite le tableau et vous le modifiez, avec les curseurs de chacun et celui de l'agent.
+4. Pour garder une copie : **Enregistrer** (Ctrl+S) télécharge un fichier `.inkboard` ; les entrées d'export du menu principal téléchargent du PNG, du SVG, etc. Si l'hôte ferme la session, le bandeau rouge propose **Enregistrer une copie du tableau**.
+
+**Les problèmes de réseau** sont signalés comme dans l'application : « Connexion… / Reconnexion… » (vos modifications sont conservées et envoyées au retour de la connexion ; la page se reconnecte aussi tout de suite quand le navigateur annonce le retour du réseau ou quand vous revenez sur l'onglet) et, si le service de connexion est injoignable (réseau d'entreprise ou d'école), le message avec ses trois pistes et le bouton **Copier le diagnostic**. Une page web ne peut pas observer le réseau comme l'application, donc le message est un peu moins précis.
+
+**Différences avec l'application :** un invité navigateur ne peut que rejoindre (il ne peut pas héberger) ; seul le nom est gardé entre deux visites ; les images se collent (Ctrl+V) ou se déposent sur la page et sont envoyées à l'hôte comme celles d'un invité installé ; pas de pression du stylet.
+
+---
+
 ## Le curseur de l'agent MCP
 
 Si vous utilisez Inkboard avec un agent d'IA via MCP (voir [MCP.md](MCP.md)), l'agent apparaît comme un participant portant le nom du client (par défaut « Claude ») : un curseur coloré glisse vers les objets qu'il crée ou modifie, avec une courte traînée et un halo sur les objets touchés. Un simple regard sur le tableau (`render`, `describe_board`) est une pulsation discrète.
@@ -113,7 +132,7 @@ Si vous utilisez Inkboard avec un agent d'IA via MCP (voir [MCP.md](MCP.md)), l'
 
 - **Nombre de personnes** : 10 par défaut (vous compris), réglable. Conçu pour environ 20 ; les tests du protocole simulent 50 et 100 invités, mais aucune vraie session de cette taille n'a été essayée.
 - **Images et icônes pour les invités** : dans la version actuelle, un invité **ne peut pas insérer** d'images, d'icônes, de formules, de diagrammes Mermaid, ni coller ou déposer d'images (les boutons sont grisés, ou un message indique « Pas encore disponible dans une session partagée »). Les invités voient bien les images de l'hôte. L'envoi d'images par un invité est prévu.
-- **Pas encore de client navigateur** : pour rejoindre, il faut avoir Inkboard installé. Rejoindre depuis une page web sans rien installer est prévu, pas disponible.
+- **Invités navigateur** : voir [la section ci-dessus](#inviter-quelquun-qui-na-rien-dinstallé--rejoindre-depuis-un-navigateur) et [WEB.md](WEB.md). Chrome et Edge sont les cibles testées ; l'adresse de la page à donner dépend de l'endroit où elle est publiée (pas encore décidé).
 - **Un tableau à la fois** : on est soit hôte, soit invité, pas les deux. Rejoindre une session arrête votre propre partage.
 - **L'hôte doit rester en ligne.** Si l'hôte quitte ou perd le réseau plus d'une minute environ, la session s'arrête (les invités peuvent enregistrer une copie). Rien n'est hébergé pour vous.
 - **Polices** : les polices disponibles sur chaque ordinateur servent à la mise en page. Un texte peut donc passer à la ligne différemment entre deux ordinateurs qui n'ont pas les mêmes polices. Un jeu de polices commun embarqué est prévu.
@@ -193,7 +212,7 @@ Le message rend l'échec compréhensible ; **il ne fait pas fonctionner la sessi
 
 ## Questions fréquentes
 
-**Les invités ont-ils besoin d'un compte ou d'installer quelque chose ?** Pas de compte. Pour l'instant, les invités ont besoin d'Inkboard (une version navigateur est prévue).
+**Les invités ont-ils besoin d'un compte ou d'installer quelque chose ?** Pas de compte. Un invité peut utiliser l'application Inkboard ou simplement un navigateur récent (Chrome ou Edge), avec un lien web.
 
 **Est-ce payant ?** Non. Par défaut, ce sont des relais publics gratuits (débit limité, pour le développement et les loisirs). Un relais à vous est facultatif.
 

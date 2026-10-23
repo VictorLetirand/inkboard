@@ -98,6 +98,25 @@ Use **Leave the session** (blue bar, or main menu). Your own board comes back.
 
 ---
 
+## Invite someone who has nothing installed: join from a browser
+
+A guest can join **from a web page**, with nothing to install (Chrome or Edge on a computer or a phone; see [WEB.md](WEB.md) for what was tested).
+
+**The link.** It is the address of the Inkboard web page followed by `#` and the invitation ticket: `https://<address of the page>/#<ticket>`. The ticket is the part of the host's link after `inkboard://join#` (or `inkboard://join/`). It stays in the part of the address after `#`, which a browser never sends to a web server; the page also removes it from the address bar as soon as it has read it, so it does not stay in the browser history. The page address depends on where Inkboard is published (not decided yet); until then, the host can build the link by hand as above, or give the guest the page address and the native link, which the guest pastes in the **Join a session…** window of the page (the page accepts `inkboard://join#…`, `https://…#…` and the bare ticket).
+
+**For the guest:**
+
+1. Open the link. The page loads (about 5 MB the first time, then your browser keeps it) and a **Join a session** window opens with the link already in it.
+2. Type **Your name** (the name of your last visit is pre-filled; it is kept in this browser only) and click **Join** (or press Enter).
+3. Wait for the host's approval, exactly as in the application. Then you see and edit the board, with everybody's cursor and the agent's.
+4. To keep a copy: **Save** (Ctrl+S) downloads a `.inkboard` file; the export entries of the main menu download PNG, SVG and others. If the host closes the session, the red bar offers **Save a copy of the board**.
+
+**Network trouble** is reported as in the application: "Connecting / Reconnecting…" (your changes are kept and sent when the connection is back; the page also reconnects at once when the browser says the network is back or when you return to the tab), and, if the connection service cannot be reached (company or school network), the message with its three things to try and the **Copy the diagnostic** button. A web page cannot look at the network the way the application does, so the message is a little less precise.
+
+**Differences from the application:** a browser guest only joins (it cannot host a session); the name and settings are not kept between visits except the name; images can be pasted (Ctrl+V) or dropped on the page and are sent to the host like those of an installed guest; no pen pressure.
+
+---
+
 ## The MCP agent's cursor
 
 If you use Inkboard with an AI agent through MCP (see [MCP.md](MCP.md)), the agent shows up as a participant named after the client (by default "Claude"): a coloured cursor glides to the objects it creates or changes, with a short trail and a halo on the touched objects. A look at the board (`render`, `describe_board`) is a discreet pulse.
@@ -113,7 +132,7 @@ If you use Inkboard with an AI agent through MCP (see [MCP.md](MCP.md)), the age
 
 - **Number of people**: 10 by default (you included), adjustable. Designed for about 20; protocol tests simulate 50 and 100 guests, but no real session of that size has been tried.
 - **Images and icons for guests**: in the current version, a guest **cannot insert** images, icons, formulas, Mermaid diagrams, or paste/drop images (the buttons are greyed out, or a message says "Not available in a shared session yet"). Guests do see the host's images. Sending images from a guest is planned.
-- **No browser client yet**: to join, a person needs Inkboard installed. Joining from a web page without installing anything is planned, not available.
+- **Browser guests**: see [the section above](#invite-someone-who-has-nothing-installed-join-from-a-browser) and [WEB.md](WEB.md). Chrome and Edge are the tested targets; the page address to give depends on where the web page is published (not decided yet).
 - **One board at a time**: you are either hosting or a guest, not both. Joining a session stops your own sharing.
 - **The host must stay online.** If the host quits or loses the network for more than a minute or so, the session ends (guests can save a copy). Nothing is hosted for you.
 - **Fonts**: the host's fonts are used for the layout of each computer. Text can wrap differently between two computers that do not have the same fonts. A common embedded font set is planned.
@@ -193,7 +212,7 @@ The message makes the failure understandable; **it does not make the session wor
 
 ## Frequently asked questions
 
-**Do guests need an account or to install something?** No account. For now, guests need Inkboard (a browser version is planned).
+**Do guests need an account or to install something?** No account. A guest can use the Inkboard application or just a recent browser (Chrome or Edge), with a web link.
 
 **Does it cost anything?** No. By default it uses free public relays (limited speed, for development and hobby use). A relay of your own is optional.
 
