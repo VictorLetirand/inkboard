@@ -161,6 +161,9 @@ pub const MAX_BITMAP_PIXELS: u64 = 40_000_000;
 const MAX_SVG_ELEMENTS: usize = 20_000;
 const MAX_SVG_DEPTH: usize = 48;
 const MAX_SVG_USES: usize = 200;
+/// Bytes of geometry (`d`, `points`) an SVG written by somebody else may carry: drawing time grows with it (a path of 400 000 segments,
+/// 3.5 MB, takes seconds to rasterize and no filter is needed for that).
+const MAX_SVG_GEOMETRY_BYTES: usize = 1 << 20;
 
 /// Width and height a PNG, GIF, JPEG or WebP declares in its header (no decoding); `None` when unknown or unreadable.
 pub fn declared_dimensions(d: &[u8]) -> Option<(u32, u32)> {
@@ -262,6 +265,7 @@ pub fn check_untrusted_svg(svg: &str) -> Result<(), String> {
     use quick_xml::XmlVersion;
     use quick_xml::events::{BytesStart, Event};
     let (mut depth, mut elements, mut uses, mut pixels, mut style_open, mut seen_root) = (0usize, 0usize, 0usize, 0u64, false, false);
+    let mut geometry = 0usize;
     let mut reader = quick_xml::Reader::from_str(svg);
     let mut element = |e: &BytesStart<'_>, depth: usize, style_open: &mut bool, seen_root: &mut bool| -> Result<(), String> {
         let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
@@ -297,6 +301,12 @@ pub fn check_untrusted_svg(svg: &str) -> Result<(), String> {
             }
             if inert {
                 continue;
+            }
+            if matches!(key.as_str(), "d" | "points") {
+                geometry += value.len();
+                if geometry > MAX_SVG_GEOMETRY_BYTES {
+                    return Err("the SVG is too complex".into());
+                }
             }
             if key == "href" || key == "xlink:href" {
                 let v = value.trim();
