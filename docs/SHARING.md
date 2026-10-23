@@ -132,7 +132,7 @@ If you use Inkboard with an AI agent through MCP (see [MCP.md](MCP.md)), the age
 
 - **Number of people**: 10 by default (you included), adjustable. Designed for about 20; protocol tests simulate 50 and 100 guests, but no real session of that size has been tried.
 - **Images and icons for guests**: in the current version, a guest **cannot insert** images, icons, formulas, Mermaid diagrams, or paste/drop images (the buttons are greyed out, or a message says "Not available in a shared session yet"). Guests do see the host's images. Sending images from a guest is planned.
-- **Browser guests**: see [the section above](#invite-someone-who-has-nothing-installed-join-from-a-browser) and [WEB.md](WEB.md). Chrome and Edge are the tested targets; the page address to give depends on where the web page is published (not decided yet).
+- **Browser guests**: see [the section above](#invite-someone-who-has-nothing-installed-join-from-a-browser) and [WEB.md](WEB.md). Chrome, Edge and Firefox are tested (WebKit, the engine of Safari, only approximately; real Safari and iOS are not tested); the page address to give depends on where the web page is published (not decided yet).
 - **One board at a time**: you are either hosting or a guest, not both. Joining a session stops your own sharing.
 - **The host must stay online.** If the host quits or loses the network for more than a minute or so, the session ends (guests can save a copy). Nothing is hosted for you.
 - **Fonts**: the host's fonts are used for the layout of each computer. Text can wrap differently between two computers that do not have the same fonts. A common embedded font set is planned.
