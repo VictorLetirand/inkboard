@@ -18,7 +18,7 @@ use inkboard_core::history::{Author, AuthorHistories};
 use inkboard_core::model::{Asset, AssetId, Document, Id, Kind, Object, Page};
 use inkboard_session::assets::{chunks, hash_hex};
 use inkboard_session::codec::read_hello;
-use inkboard_session::crypto::{Entropy, FrameCipher, HostKeys, Link, OsEntropy, SecureChannel, SeededEntropy, verify_join_proof};
+use inkboard_session::crypto::{Entropy, FrameCipher, HostKeys, Link, OsEntropy, SecureChannel, SeededEntropy, SessionKey, verify_join_proof};
 use inkboard_session::limits::{Limits, Quota, RateLimiter, Violation, check_message, check_message_size, check_page_count};
 use inkboard_session::proto::{
     AgentEvent as WireAgent, AssetChunk, AssetInfo, ByeReason, DocMeta, Message, PROTO_VERSION, ParticipantId, ParticipantInfo, Presence, RefuseReason,
@@ -111,6 +111,9 @@ const HANDSHAKE_MS: u64 = 10_000;
 const MAX_UNAUTHENTICATED: usize = 16;
 /// A connection younger than this is never cut for being over `MAX_UNAUTHENTICATED` (its first message may still be on its way).
 const SILENT_GRACE_MS: u64 = 2_000;
+/// Revoked key sets kept for the resumption of admitted guests (the oldest go first: a guest that stayed away through this many
+/// regenerations has to ask to join again).
+const MAX_REVOKED_KEYS: usize = 16;
 const MAX_FRAMES_PER_POLL: usize = 1024;
 /// Bytes of frames read per `poll`, all connections together (what is left waits for the next `poll`): the work of one frame is
 /// proportional to its size, so this bounds how long one `poll` can take.
@@ -147,6 +150,9 @@ pub struct HostConfig {
     /// Violations (within `strike_decay_ms` of each other) after which a guest is excluded.
     pub max_strikes: u32,
     pub strike_decay_ms: u64,
+    /// Places one transport identity may hold at once (admitted guests, held places included): one more is refused with a message.
+    /// The connections it may have open at once, admitted or not, are limited to twice that (the excess is closed unread).
+    pub max_per_peer: usize,
     /// Objects the whole document may hold once guests have added theirs.
     pub max_total_objects: usize,
     /// Image chunks sent per connection and per `poll`.
@@ -172,6 +178,7 @@ impl Default for HostConfig {
             idle_ms: 120_000,
             max_strikes: 20,
             strike_decay_ms: 30_000,
+            max_per_peer: 3,
             max_total_objects: 50_000,
             send_budget: 32,
             link_base: "inkboard://join".to_owned(),
@@ -472,6 +479,9 @@ struct Conn {
     conn: Box<dyn Connection>,
     chan: Option<SecureChannel>,
     key_role: Role,
+    /// The first frame was opened with a key of a revoked link (see `regenerate_links`): only a guest already admitted may use it,
+    /// to resume its place.
+    revoked_key: Option<SessionKey>,
     state: ConnState,
     opened: u64,
     last_rx: u64,
@@ -605,6 +615,8 @@ pub struct SessionHost {
     cfg: HostConfig,
     transport: Option<Box<dyn HostTransport>>,
     keys: HostKeys,
+    /// Keys of the links the host revoked, most recent last: they only let a guest that was already admitted resume its place.
+    revoked_keys: Vec<HostKeys>,
     seqr: Sequencer,
     synced_rev: u64,
     now: u64,
@@ -657,6 +669,7 @@ impl SessionHost {
             cfg,
             transport: Some(transport),
             keys,
+            revoked_keys: Vec::new(),
             synced_rev: ed.revision(),
             now: 0,
             conns: Vec::new(),
@@ -740,13 +753,25 @@ impl SessionHost {
         Ok(Link { base: self.cfg.link_base.clone(), ticket }.to_url())
     }
 
-    /// New keys: the previous links stop working for newcomers (guests already in keep their connection).
+    /// New keys: the previous links stop working at once for everybody who is not in yet. Requests waiting for an answer are refused;
+    /// a newcomer with an old link gets no answer at all. Guests already admitted keep their connection and, if it drops, can
+    /// resume their place with the old key (their transport identity must match that of the place); to cut one of them off, remove
+    /// them (their identity is then refused for the rest of the session and no link, old or new, gives them a place back).
     pub fn regenerate_links(&mut self) -> Result<(), Error> {
         let mut entropy: Box<dyn Entropy> = match self.cfg.entropy_seed {
             Some(s) => Box::new(SeededEntropy::new(s ^ 0x5eed ^ self.next_request)),
             None => Box::new(OsEntropy),
         };
-        self.keys = HostKeys::generate(entropy.as_mut())?;
+        let fresh = HostKeys::generate(entropy.as_mut())?;
+        self.revoked_keys.push(std::mem::replace(&mut self.keys, fresh));
+        if self.revoked_keys.len() > MAX_REVOKED_KEYS {
+            self.revoked_keys.remove(0);
+        }
+        for r in std::mem::take(&mut self.requests) {
+            if let Some(i) = self.conn_index(r.conn) {
+                self.refuse(i, RefuseReason::BadProof);
+            }
+        }
         Ok(())
     }
 
@@ -887,6 +912,12 @@ impl SessionHost {
                 conn.close();
                 continue;
             }
+            // one transport identity cannot fill the host with connections (nothing is known of it yet, so nothing can be said to it)
+            let open_from_peer = self.conns.iter().filter(|c| !matches!(c.state, ConnState::Closing { .. }) && c.conn.peer() == conn.peer()).count();
+            if open_from_peer >= self.cfg.max_per_peer.max(1) * 2 {
+                conn.close();
+                continue;
+            }
             let id = self.next_conn;
             self.next_conn += 1;
             self.conns.push(Conn {
@@ -894,6 +925,7 @@ impl SessionHost {
                 conn,
                 chan: None,
                 key_role: Role::View,
+                revoked_key: None,
                 state: ConnState::New,
                 opened: self.now,
                 last_rx: self.now,
@@ -1051,11 +1083,16 @@ impl SessionHost {
                 self.dropped_frames += 1;
                 return self.drop_conn(i);
             }
-            let Ok((role, cipher, plain)) = self.keys.open_first(frame) else {
+            // the current keys first, then those of revoked links (they only serve the resumption of a place, see `on_hello`)
+            let current = self.keys.open_first(frame).map(|(r, c, p)| (r, c, p, None));
+            let opened = current
+                .or_else(|e| self.revoked_keys.iter().rev().find_map(|k| k.open_first(frame).ok().map(|(r, c, p)| (r, c, p, Some(k.key(r).clone())))).ok_or(e));
+            let Ok((role, cipher, plain, revoked_key)) = opened else {
                 self.dropped_frames += 1;
                 return self.drop_conn(i);
             };
             self.conns[i].key_role = role;
+            self.conns[i].revoked_key = revoked_key;
             let channel = self.new_channel(cipher);
             self.conns[i].chan = Some(channel);
             match read_hello(&JsonCodec, &plain) {
@@ -1108,7 +1145,8 @@ impl SessionHost {
             ConnState::Closing { .. } => return,
             ConnState::New => {}
         }
-        if !verify_join_proof(self.keys.key(key_role), &h.name, h.role_requested, &h.join_proof) {
+        let proof_key = self.conns[i].revoked_key.as_ref().unwrap_or_else(|| self.keys.key(key_role));
+        if !verify_join_proof(proof_key, &h.name, h.role_requested, &h.join_proof) {
             return self.refuse(i, RefuseReason::BadProof);
         }
         let peer = self.conns[i].conn.peer().to_owned();
@@ -1127,6 +1165,14 @@ impl SessionHost {
             }
             self.conns[i].state = ConnState::Member(pid);
             return self.welcome(i, pid, Some(r.last_seq));
+        }
+        if self.conns[i].revoked_key.is_some() {
+            // a revoked link never lets a newcomer in (nor a removed guest back): it is not even answered
+            self.dropped_frames += 1;
+            return self.drop_conn(i);
+        }
+        if self.members.values().filter(|m| m.peer == peer).count() >= self.cfg.max_per_peer.max(1) {
+            return self.refuse(i, RefuseReason::TooManyFromPeer);
         }
         if !self.capacity_left() || self.requests.len() >= self.cfg.max_pending {
             return self.refuse(i, RefuseReason::Full);
