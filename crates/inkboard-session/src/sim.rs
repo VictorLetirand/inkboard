@@ -148,6 +148,15 @@ impl SimNet {
         g.in_flight.len() + g.inboxes.values().map(VecDeque::len).sum::<usize>()
     }
 
+    /// Drops the frames still queued for connections that are closed (a real network frees them when the socket closes): lets a test
+    /// measure what a host itself holds after a flood.
+    pub fn forget_closed(&self) {
+        let mut g = self.lock();
+        let open = g.open.clone();
+        g.inboxes.retain(|(c, _), _| open.contains(c));
+        g.in_flight.retain(|_, ((c, _), _)| open.contains(c));
+    }
+
     /// Changes the faults from now on (e.g. `NetConfig::ideal()` to let the network heal).
     pub fn set_config(&self, cfg: NetConfig) {
         self.lock().cfg = cfg;

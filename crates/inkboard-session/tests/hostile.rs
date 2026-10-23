@@ -175,7 +175,10 @@ fn rich_object(kind: u8, id: &str) -> Object {
         1 => Object::new_pen(vec![Pt::new(0.0, 0.0), Pt::new(5.0, 9.0), Pt::new(7.0, 1.0)], false, Style::default()),
         2 => Object::new(Kind::Table(Table::new(Pt::new(1.0, 2.0), 2, 3)), Style::default()),
         3 => Object::new(Kind::Connector(Connector::new(End::bound(Id("a".into())), End::free(Pt::new(50.0, 50.0)))), Style::default()),
-        4 => Object::new(Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("0".repeat(64)), latex: None, mono: false }), Style::default()),
+        4 => Object::new(
+            Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("0".repeat(64)), latex: None, mono: false }),
+            Style::default(),
+        ),
         _ => {
             let mut b = boxed(id, 0.0);
             if let Kind::Box(x) = &mut b.kind {
@@ -345,10 +348,10 @@ fn hostile_object(r: [u8; 8]) -> Object {
         1 => Object::new_pen((0..(r[2] % 4)).map(|i| Pt::new(num(r[3].wrapping_add(i)), num(r[4])).to_owned()).collect(), false, Style::default()),
         2 => {
             let mut t = Table::new(Pt::new(num(r[2]), num(r[3])), 1 + usize::from(r[4] % 3), 1 + usize::from(r[5] % 3));
-            if r[6] % 5 == 0 {
+            if r[6].is_multiple_of(5) {
                 t.cells.pop();
             }
-            if r[6] % 7 == 0 {
+            if r[6].is_multiple_of(7) {
                 t.col_w[0] = num(r[7]);
             }
             Object::new(Kind::Table(t), Style::default())
@@ -367,7 +370,7 @@ fn hostile_object(r: [u8; 8]) -> Object {
         _ => {
             let mut b = boxed(id.as_str(), 1.0);
             b.layer = Id(["main", "l2", "ghost"][usize::from(r[2] % 3)].into());
-            b.locked = r[3] % 2 == 0;
+            b.locked = r[3].is_multiple_of(2);
             b
         }
     };
@@ -384,14 +387,21 @@ fn hostile_op(r: [u8; 8]) -> WireOp {
         4 => WireOp::Order { page, ids: ids(r[3]) },
         5 => WireOp::SetLayers {
             page,
-            layers: (0..(r[3] % 4)).map(|i| Layer { id: Id(["main", "l2", "ghost"][usize::from(r[4].wrapping_add(i) % 3)].into()), name: "n".into(), visible: true, locked: r[5] % 2 == 0 }).collect(),
+            layers: (0..(r[3] % 4))
+                .map(|i| Layer {
+                    id: Id(["main", "l2", "ghost"][usize::from(r[4].wrapping_add(i) % 3)].into()),
+                    name: "n".into(),
+                    visible: true,
+                    locked: r[5].is_multiple_of(2),
+                })
+                .collect(),
         },
         6 => {
             // a page that is not what it should be: id that exists already, objects that share an id, layers that do
             let mut p = Page::new("x");
             p.id = pid(r[2]);
             p.objects = (0..(r[3] % 4)).map(|i| hostile_object([r[4], r[5].wrapping_add(i % 2), r[6], r[7], 1, 1, 1, 1])).collect();
-            if r[6] % 3 == 0 {
+            if r[6].is_multiple_of(3) {
                 p.layers.push(Layer::main());
             }
             WireOp::AddPage { index: usize::from(r[7]) * usize::from(r[4]), page: Box::new(p) }
@@ -537,10 +547,9 @@ fn play(c: &mut Client, m: HostMove, now: &mut u64) {
             let seq = if extreme { u64::MAX - seq_delta.unsigned_abs() as u64 } else { c.last_seq().saturating_add_signed(i64::from(seq_delta) + 1) };
             Some(Message::Applied(Applied { seq, author: ParticipantId(1), client_seq: Some(1), ops, superseded: vec![] }))
         }
-        HostMove::Rejected(cs, dup) => Some(Message::Rejected {
-            client_seq: cs,
-            reason: if dup { RejectReason::Duplicate { host_seq: u64::MAX } } else { RejectReason::Quota },
-        }),
+        HostMove::Rejected(cs, dup) => {
+            Some(Message::Rejected { client_seq: cs, reason: if dup { RejectReason::Duplicate { host_seq: u64::MAX } } else { RejectReason::Quota } })
+        }
         HostMove::Misc(k) => Some(match k {
             0 => Message::Bye { reason: inkboard_session::proto::ByeReason::HostLeft },
             1 => Message::Kick { participant: ParticipantId(1) },
@@ -570,13 +579,13 @@ fn play(c: &mut Client, m: HostMove, now: &mut u64) {
             None
         }
     };
-    if let Some(msg) = msg {
-        if let Err(e) = c.handle(msg, *now) {
-            if matches!(e, inkboard_session::Error::Invalid(_)) {
-                assert_eq!(c.phase(), Phase::Closed, "an invalid host message must close the session");
-            }
-            assert_eq!(doc_hash(c.doc()), before.0, "a refused host message changed the document");
+    if let Some(msg) = msg
+        && let Err(e) = c.handle(msg, *now)
+    {
+        if matches!(e, inkboard_session::Error::Invalid(_)) {
+            assert_eq!(c.phase(), Phase::Closed, "an invalid host message must close the session");
         }
+        assert_eq!(doc_hash(c.doc()), before.0, "a refused host message changed the document");
     }
     c.take_outbox();
     c.take_events();
