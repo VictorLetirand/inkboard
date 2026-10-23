@@ -155,7 +155,8 @@ fn cmd_run(a: &Args) -> Result<(), String> {
     let exe = a.get("host-exe").ok_or("--host-exe PATH (the test executable of inkboard-app) is required")?.to_owned();
     let out = PathBuf::from(a.get("out").ok_or("--out DIR is required")?);
     let guests: usize = a.or("guests", 10)?;
-    let procs: usize = a.or("procs", 1)?.max(1);
+    // `--procs 0 --external 1`: no local guests, one process of guests elsewhere (see scripts/crowd-remote.sh)
+    let procs: usize = a.or("procs", 1)?;
     let duration: f64 = a.or("duration", 60.0)?;
     let settle: f64 = a.or("settle", 10.0)?;
     let mode = a.get("mode").unwrap_or("loopback").to_owned();
@@ -238,6 +239,22 @@ fn cmd_run(a: &Args) -> Result<(), String> {
     }
     for mut c in children {
         let _ = c.wait();
+    }
+    // guests started elsewhere (another machine): wait for their reports to be copied into the folder
+    let external: usize = a.or("external", 0)?;
+    if external > 0 {
+        eprintln!("[crowd] host ready: t0={}, links in {}; waiting for {external} report(s) guests-*.json in that folder", t0.trim(), out.display());
+        let limit = Instant::now() + Duration::from_secs_f64(a.or("duration", 60.0)? + a.or("settle", 10.0)? + 600.0);
+        let count = || {
+            std::fs::read_dir(&out).map_or(0, |d| {
+                d.filter_map(Result::ok)
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("guests-") && e.file_name().to_string_lossy().ends_with(".json"))
+                    .count()
+            })
+        };
+        while count() < procs + external && Instant::now() < limit {
+            std::thread::sleep(Duration::from_secs(1));
+        }
     }
     std::fs::write(out.join("stop"), b"stop").map_err(|e| e.to_string())?;
     let waited = Instant::now();

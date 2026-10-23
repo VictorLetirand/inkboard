@@ -232,8 +232,10 @@ fn fill_page(
             o
         } else if roll < 0.61 && anchors.len() > 2 {
             // connector between two shapes already on the page
-            let a = anchors[rng.below(anchors.len())].0;
-            let b = anchors[rng.below(anchors.len())].0;
+            // a connector links shapes of the same area (the last few made), like in a real diagram
+            let near = anchors.len().min(12);
+            let a = anchors[anchors.len() - 1 - rng.below(near)].0;
+            let b = anchors[anchors.len() - 1 - rng.below(near)].0;
             let (ida, idb) = (page.objects[a].id.clone(), page.objects[b].id.clone());
             let mut c = Connector::new(End::bound(ida), End::bound(idb));
             c.route = *rng.pick(&[Route::Straight, Route::Elbow, Route::Curve]);

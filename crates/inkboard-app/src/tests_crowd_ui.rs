@@ -108,6 +108,11 @@ fn measure(doc: &Document, participants: usize, frames: usize, view: Option<View
             times.push(started.elapsed().as_secs_f64() * 1000.0);
         }
     }
+    let (rev, build, n) = {
+        let a = t.app();
+        (a.ed.revision(), a.caches.build_ms, a.ed.page().objects.len())
+    };
+    eprintln!("[ui] revision {rev} / index rebuild {build:.1} ms / {n} objects on the page");
     Summary::of(&times)
 }
 
@@ -235,15 +240,41 @@ pub fn run_guest() {
     }
 }
 
+/// `CROWD_ONLY=box|pen|connector|table|image`: keeps one kind of object (to find what a frame spends its time on).
+fn only(mut doc: Document) -> Document {
+    use inkboard_core::model::Kind;
+    let Ok(kind) = std::env::var("CROWD_ONLY") else { return doc };
+    for p in &mut doc.pages {
+        p.objects.retain(|o| {
+            matches!(
+                (kind.as_str(), &o.kind),
+                ("box" | "boxconn", Kind::Box(_))
+                    | ("boxconn", Kind::Connector(_))
+                    | ("boxpen", Kind::Box(_) | Kind::Pen(_))
+                    | ("boximg", Kind::Box(_) | Kind::Image(_))
+                    | ("pen", Kind::Pen(_))
+                    | ("connector", Kind::Connector(_))
+                    | ("table", Kind::Table(_))
+                    | ("image", Kind::Image(_))
+            )
+        });
+    }
+    doc
+}
+
 pub fn run() {
     let objects: usize = env_or("CROWD_OBJECTS", 5_000);
     let frames: usize = env_or("CROWD_FRAMES", 300);
     let counts: Vec<usize> =
         std::env::var("CROWD_PARTICIPANTS").unwrap_or_else(|_| "0,5,10,20,50".to_owned()).split(',').filter_map(|s| s.trim().parse().ok()).collect();
-    let doc = seed_document(&BoardSpec::sized(objects, 1));
+    let doc = only(seed_document(&BoardSpec::sized(objects, 1)));
     let fit = fit_all(&doc);
     println!("\n| board | view | participants | frame ms p50 | p95 | p99 | max |\n|---|---|---|---|---|---|---|");
-    for (name, view) in [("cluster at 100 %", None), ("whole page", Some(fit))] {
+    let mut views = vec![("cluster at 100 %", None)];
+    if env_or("CROWD_WHOLE_PAGE", 0) != 0 {
+        views.push(("whole page", Some(fit))); // decodes every photo of the board: slow, off by default
+    }
+    for (name, view) in views {
         for &n in &counts {
             let s = measure(&doc, n, frames, view, 7);
             println!("| {objects} objects | {name} | {n} | {:.2} | {:.2} | {:.2} | {:.2} |", s.p50, s.p95, s.p99, s.max);

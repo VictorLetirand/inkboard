@@ -114,6 +114,8 @@ pub struct SimGuest {
     images_total: u64,
     images_got: u64,
     seen_markers: HashSet<String>,
+    /// When the last welcome arrived (ms).
+    live_since: u64,
     pub(crate) sent_at: HashMap<u64, u64>,
     last_sent_ms: u64,
     pub(crate) quiet: bool,
@@ -178,6 +180,7 @@ impl SimGuest {
             images_total: 0,
             images_got: 0,
             seen_markers: HashSet::new(),
+            live_since: 0,
             sent_at: HashMap::new(),
             last_sent_ms: 0,
             quiet: false,
@@ -403,6 +406,7 @@ impl SimGuest {
                         if let inkboard_session::WireOp::Put { object, .. } = op {
                             if let Some((m, us)) = parse_marker(object.id.as_str())
                                 && m == self.env.machine
+                                && now.saturating_sub(self.live_since) > 3_000 // what arrives right after a (re)join is catch-up, not live work
                                 && self.seen_markers.insert(object.id.0.clone())
                             {
                                 self.rep.visible_ms.add(epoch.saturating_sub(us) as f64 / 1000.0);
@@ -489,6 +493,7 @@ impl SimGuest {
         for ev in self.client.take_events() {
             match ev {
                 ClientEvent::Joined { .. } => {
+                    self.live_since = now;
                     self.rep.joins += 1;
                     let since = self.hello_ms.unwrap_or(now);
                     if self.rep.welcome_ms.is_none() {
