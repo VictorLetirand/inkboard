@@ -367,9 +367,16 @@ pub fn check_message(l: &Limits, m: &Message) -> Result<(), Violation> {
             too_many("participants", list.len(), MAX_PARTICIPANTS_LISTED)?;
             list.iter().try_for_each(|p| check_name(l, &p.name))
         }
+        Message::Assets { list } => {
+            too_many("images", list.len(), MAX_ANNOUNCED_ASSETS)?;
+            check_manifest(l, list)
+        }
         _ => Ok(()),
     }
 }
+
+/// Most images one `Assets` message announces.
+pub const MAX_ANNOUNCED_ASSETS: usize = 1_000;
 
 /// Longest list of participants a guest accepts.
 pub const MAX_PARTICIPANTS_LISTED: usize = 1_000;

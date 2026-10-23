@@ -55,6 +55,8 @@ fn all_messages() -> Vec<Message> {
         Message::Redo,
         Message::Refused { reason: RefuseReason::Version { host_proto: 7 } },
         Message::Refused { reason: RefuseReason::Full },
+        Message::Refused { reason: RefuseReason::TooManyFromPeer },
+        Message::Assets { list: vec![AssetInfo { id: id("host-img"), hash: "cd".repeat(32), size: 99, mime: "image/png".into() }] },
         Message::Snapshot(Snapshot::new(&doc, 5, vec![AssetInfo { id: id("img"), hash: "ab".repeat(32), size: 1234, mime: "image/png".into() }])),
         Message::SnapshotPart(SnapshotPart {
             seq: 5,

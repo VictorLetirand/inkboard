@@ -376,7 +376,8 @@ impl Client {
             | Message::Kick { .. }
             | Message::RoleChange { .. }
             | Message::AssetChunk(_)
-            | Message::AssetAck { .. }) => {
+            | Message::AssetAck { .. }
+            | Message::Assets { .. }) => {
                 // a display-only message that does not pass the bounds is dropped (it never touches the board)
                 if check_message(&self.limits, &m).is_ok() {
                     self.events.push(ClientEvent::Relay(Box::new(m)));

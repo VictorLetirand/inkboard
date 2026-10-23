@@ -55,17 +55,61 @@ pub enum CatchUp {
 pub struct Sequencer {
     doc: Document,
     seq: Seq,
-    log: VecDeque<Applied>,
+    /// The last `Applied`, each with an estimate of the bytes it holds.
+    log: VecDeque<(usize, Applied)>,
     log_cap: usize,
+    log_bytes: usize,
+    log_budget: usize,
     /// Last change of each object: when and by whom.
     changed: HashMap<Id, (Seq, ParticipantId)>,
+    changed_cap: usize,
     seen: HashMap<ParticipantId, SeqWindow>,
 }
 
 impl Sequencer {
+    /// Bytes (estimated: JSON size of the operations) the log of `Applied` may hold; the oldest entries go first, and a guest that
+    /// needs one of them is given a snapshot instead.
+    pub const DEFAULT_LOG_BYTES: usize = 64 << 20;
+    /// Objects whose last change is remembered (it only tells a guest that somebody changed the same object meanwhile).
+    pub const DEFAULT_CHANGED_CAP: usize = 200_000;
+
     /// `log_cap`: number of `Applied` kept to catch guests up (the plan suggests 1 000).
     pub fn new(doc: Document, log_cap: usize) -> Self {
-        Self { doc, seq: 0, log: VecDeque::new(), log_cap, changed: HashMap::new(), seen: HashMap::new() }
+        Self {
+            doc,
+            seq: 0,
+            log: VecDeque::new(),
+            log_cap,
+            log_bytes: 0,
+            log_budget: Self::DEFAULT_LOG_BYTES,
+            changed: HashMap::new(),
+            changed_cap: Self::DEFAULT_CHANGED_CAP,
+            seen: HashMap::new(),
+        }
+    }
+
+    /// Changes the budgets: bytes of the log and objects whose last change is remembered.
+    pub fn set_budgets(&mut self, log_bytes: usize, changed_cap: usize) {
+        self.log_budget = log_bytes;
+        self.changed_cap = changed_cap;
+        self.trim_log();
+    }
+
+    /// Entries of the log and their estimated bytes.
+    pub fn log_stats(&self) -> (usize, usize) {
+        (self.log.len(), self.log_bytes)
+    }
+
+    /// Objects whose last change is remembered.
+    pub fn tracked_objects(&self) -> usize {
+        self.changed.len()
+    }
+
+    fn trim_log(&mut self) {
+        while self.log.len() > self.log_cap || self.log_bytes > self.log_budget {
+            let Some((cost, _)) = self.log.pop_front() else { break };
+            self.log_bytes -= cost;
+        }
     }
 
     pub fn doc(&self) -> &Document {
@@ -100,11 +144,22 @@ impl Sequencer {
         for id in ops.iter().flat_map(WireOp::object_ids) {
             self.changed.insert(id.clone(), (self.seq, author));
         }
-        let applied = Applied { seq: self.seq, author, client_seq, ops, superseded };
-        self.log.push_back(applied.clone());
-        while self.log.len() > self.log_cap {
-            self.log.pop_front();
+        if self.changed.len() > self.changed_cap {
+            // eviction: the older half goes (by sequence number); a very large tie at the cut empties the table, which is also bounded
+            let keep = self.changed_cap / 2;
+            let mut seqs: Vec<Seq> = self.changed.values().map(|(s, _)| *s).collect();
+            seqs.sort_unstable();
+            let threshold = seqs.get(seqs.len().saturating_sub(keep)).copied().unwrap_or(Seq::MAX);
+            self.changed.retain(|_, (s, _)| *s >= threshold);
+            if self.changed.len() > self.changed_cap {
+                self.changed.clear();
+            }
         }
+        let applied = Applied { seq: self.seq, author, client_seq, ops, superseded };
+        let cost = serde_json::to_vec(&applied.ops).map_or(0, |b| b.len()) + 64;
+        self.log.push_back((cost, applied.clone()));
+        self.log_bytes += cost;
+        self.trim_log();
         applied
     }
 
@@ -131,7 +186,7 @@ impl Sequencer {
             return CatchUp::Applied(Vec::new());
         }
         match self.log.front() {
-            Some(first) if first.seq <= last_seq + 1 => CatchUp::Applied(self.log.iter().filter(|a| a.seq > last_seq).cloned().collect()),
+            Some((_, first)) if first.seq <= last_seq + 1 => CatchUp::Applied(self.log.iter().map(|(_, a)| a).filter(|a| a.seq > last_seq).cloned().collect()),
             _ => CatchUp::Snapshot(self.snapshot(assets)),
         }
     }

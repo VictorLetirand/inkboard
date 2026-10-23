@@ -93,6 +93,7 @@ fn end_message(r: &EndReason) -> String {
         EndReason::Refused(RefuseReason::Full) => t("The session is full."),
         EndReason::Refused(RefuseReason::Declined) => t("The host declined your request."),
         EndReason::Refused(RefuseReason::Banned) => t("You were removed from this session."),
+        EndReason::Refused(RefuseReason::TooManyFromPeer) => t("This device already has as many places in the session as the host allows."),
     }
 }
 

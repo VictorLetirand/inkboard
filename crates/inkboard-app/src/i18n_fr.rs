@@ -361,6 +361,10 @@ pub const FR: &[(&str, &str)] = &[
     ("Thickness", "Épaisseur"),
     ("Thickness {}", "Épaisseur {}"),
     ("This board has unsaved changes. Start a new board anyway?", "Ce tableau a des modifications non enregistrées. Créer quand même un nouveau tableau ?"),
+    (
+        "This device already has as many places in the session as the host allows.",
+        "Cet appareil a déjà autant de places dans la session que l'hôte en autorise.",
+    ),
     ("This invitation link is not valid any more: ask for a new one.", "Ce lien d'invitation n'est plus valable : demandez-en un nouveau."),
     ("This is not an Inkboard invitation link.", "Ce n'est pas un lien d'invitation Inkboard."),
     (
@@ -432,6 +436,7 @@ pub const FR: &[(&str, &str)] = &[
     ("\"{}\" is reserved (escape, arrows, copy/cut/paste)", "« {} » est réservé (échappement, flèches, copier/couper/coller)"),
     ("\"{}\" opened", "« {} » ouvert"),
     ("\"{}\" opened — {}", "« {} » ouvert — {}"),
+    ("a guest who left", "un invité parti"),
     ("barrel button:", "bouton latéral :"),
     ("editing", "édite"),
     ("egui pressure (touch force):", "pression egui (force tactile) :"),
@@ -454,6 +459,7 @@ pub const FR: &[(&str, &str)] = &[
     ("touch", "tactile"),
     ("yes", "oui"),
     ("you", "vous"),
+    ("{} (agent)", "{} (agent)"),
     ("{} icons", "{} icônes"),
     ("{} icons in {} sets", "{} icônes dans {} jeux"),
     ("{} is typing…", "{} écrit…"),

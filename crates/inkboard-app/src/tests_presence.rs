@@ -50,6 +50,7 @@ impl Room {
         let mut host = T::new();
         host.app().share.net = Some(Box::new(Net(net.clone())));
         host.app().share.test_clock = Some(clock.clone());
+        host.app().agent.remote.freeze_clock(); // presence timers follow the virtual time only, whatever the load of the machine
         crate::share_ui::start(host.app());
         assert!(host.app().share.is_running());
         Room { net, clock, host, guests: Vec::new(), dirs: Vec::new(), frozen: Vec::new() }
@@ -82,6 +83,7 @@ impl Room {
         let k = self.guests.len() as u64;
         let dir = std::env::temp_dir().join(format!("inkboard-presence-{}", Id::new()));
         let mut t = T::new();
+        t.app().agent.remote.freeze_clock();
         let (n, c) = (self.net.clone(), self.clock.clone());
         t.app().join.factory = Some(Box::new(move |ticket, name| {
             let link = Box::new(n.transport(&format!("guest-{k}")));
@@ -137,6 +139,18 @@ impl Room {
     fn button(&mut self, guest: usize, at: (f64, f64), pressed: bool) {
         let pos = self.guests[guest].at(at.0, at.1);
         self.guests[guest].h.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        self.pump(1);
+    }
+
+    fn host_move_to(&mut self, at: (f64, f64)) {
+        let p = self.host.at(at.0, at.1);
+        self.host.h.event(Event::PointerMoved(p));
+        self.pump(1);
+    }
+
+    fn host_button(&mut self, at: (f64, f64), pressed: bool) {
+        let pos = self.host.at(at.0, at.1);
+        self.host.h.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
         self.pump(1);
     }
 
@@ -214,6 +228,56 @@ fn a_move_in_progress_is_visible_to_the_host_and_the_other_guest() {
     r.pump(6);
     assert!(r.host.app().agent.remote.ghosts.is_empty(), "the ghost goes away with the gesture");
     let (h, g) = (r.host.frame(&id).x, r.guests[b].frame(&id).x);
+    assert!(h > start_x + 20.0 && (h - g).abs() < 0.01, "validated: host {h}, guest {g}");
+}
+
+#[test]
+fn a_stroke_of_the_host_in_progress_is_seen_by_the_guests_then_replaced_by_the_object() {
+    let mut r = Room::new();
+    let a = r.join("Anna", Role::Edit);
+    let b = r.join("Marc", Role::Edit);
+    r.host.tool(Tool::Pen);
+    // to the right of the Share window, which opened on the join requests
+    r.host_move_to((400.0, -60.0));
+    r.host_button((400.0, -60.0), true);
+    for k in 1..=8 {
+        r.host_move_to((400.0 + 20.0 * f64::from(k), -60.0 + 8.0 * f64::from(k)));
+    }
+    r.pump(3);
+    for guest in [a, b] {
+        let strokes = &r.guests[guest].app().agent.remote.strokes;
+        assert_eq!(strokes.len(), 1, "guest {guest} sees the host's stroke in progress");
+        let s = strokes.values().next().unwrap();
+        assert_eq!(s.author, ParticipantId::HOST.0);
+        assert!(s.pts.len() >= 5, "{} points", s.pts.len());
+        assert_eq!(pen_objects(&mut r.guests[guest]), 0, "nothing is in their board yet");
+    }
+    r.host_button((560.0, 4.0), false);
+    r.pump(6);
+    for guest in [a, b] {
+        assert!(r.guests[guest].app().agent.remote.strokes.is_empty(), "the temporary drawing goes away with the object");
+        assert_eq!(pen_objects(&mut r.guests[guest]), 1);
+    }
+    assert_eq!(pen_objects(&mut r.host), 1);
+}
+
+#[test]
+fn a_move_of_the_host_in_progress_is_seen_by_a_guest_then_validated() {
+    let mut r = Room::new();
+    let id = r.host.add_rect(-60.0, -40.0, 120.0, 80.0);
+    r.pump(2);
+    let a = r.join("Anna", Role::Edit);
+    let start_x = r.guests[a].frame(&id).x;
+    r.host_button((0.0, 0.0), true);
+    for k in 1..=8 {
+        r.host_move_to((12.0 * f64::from(k), 0.0));
+    }
+    r.pump(3);
+    let seen = r.guests[a].frame(&id).x;
+    assert!(seen > start_x + 20.0, "the guest sees the object moving: {seen} vs {start_x}");
+    r.host_button((96.0, 0.0), false);
+    r.pump(6);
+    let (h, g) = (r.host.frame(&id).x, r.guests[a].frame(&id).x);
     assert!(h > start_x + 20.0 && (h - g).abs() < 0.01, "validated: host {h}, guest {g}");
 }
 
@@ -445,7 +509,7 @@ fn the_agent_of_the_host_is_seen_acting_by_the_guests() {
     r.host.app().agent.record(ev, Pt::ZERO, now);
     r.pump(4);
     let g = r.guests[a].app();
-    assert_eq!(g.agent.state.participant.name, "Claude");
+    assert_eq!(g.agent.state.participant.name, "Claude (agent)", "S-14: always shown as an agent");
     assert!(g.agent.state.cursor.is_some(), "the agent's cursor is shown");
     assert!(g.agent.state.halo_count() > 0, "with a halo on the object it created");
     assert!(g.ed.page().get(&id).is_some());

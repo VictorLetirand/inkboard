@@ -305,17 +305,26 @@ pub struct RemotePresence {
     follow_set: Option<(Id, inkboard_core::View)>,
     /// Added to the clock by [`Self::now`]: tests make time pass with it instead of waiting.
     pub skew: Duration,
+    /// Tests: when set, [`Self::now`] is this instant plus `skew` and the real clock plays no part (a loaded machine cannot make a
+    /// presence message look older than the virtual time that has really passed).
+    frozen_origin: Option<Instant>,
 }
 
 impl RemotePresence {
     /// Forgets everything (the session is over).
     pub fn clear(&mut self) {
-        *self = Self { skew: self.skew, ..Self::default() };
+        *self = Self { skew: self.skew, frozen_origin: self.frozen_origin, ..Self::default() };
+    }
+
+    /// Tests: time only moves with `skew` from now on.
+    #[cfg(test)]
+    pub fn freeze_clock(&mut self) {
+        self.frozen_origin = Some(Instant::now());
     }
 
     /// The instant presence is timed with.
     pub fn now(&self) -> Instant {
-        Instant::now() + self.skew
+        self.frozen_origin.unwrap_or_else(Instant::now) + self.skew
     }
 
     /// Is something drawn that changes with time (the caller then asks for a repaint)?

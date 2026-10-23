@@ -100,11 +100,15 @@ pub struct Welcome {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "why", rename_all = "snake_case")]
 pub enum RefuseReason {
-    Version { host_proto: u32 },
+    Version {
+        host_proto: u32,
+    },
     BadProof,
     Full,
     Declined,
     Banned,
+    /// This device already holds as many places as the host allows.
+    TooManyFromPeer,
 }
 
 impl RefuseReason {
@@ -118,6 +122,7 @@ impl RefuseReason {
             RefuseReason::Full => "the session is full".into(),
             RefuseReason::Declined => "the host declined the request".into(),
             RefuseReason::Banned => "you were removed from this session".into(),
+            RefuseReason::TooManyFromPeer => "this device already holds as many places in the session as the host allows".into(),
         }
     }
 }
@@ -307,6 +312,11 @@ pub enum Message {
         hash: String,
         have: u64,
         status: UploadStatus,
+    },
+    /// Host -> guests: images the board has gained since the snapshot (the host's own: their identifier is not a hash), so that the
+    /// guests already in can ask for them by hash. Additive: a peer that does not know it drops the frame.
+    Assets {
+        list: Vec<AssetInfo>,
     },
     // modifications
     Submit(Submit),

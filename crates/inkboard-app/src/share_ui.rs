@@ -10,9 +10,10 @@ use crate::session_host::{
     world_point,
 };
 use crate::theme;
+use crate::tools::Drag;
 use eframe::egui::{self, Align2, Color32, RichText, Sense, vec2};
-use inkboard_core::Id;
 use inkboard_core::geom::{Pt, Rect};
+use inkboard_core::{Id, Object};
 use inkboard_session::proto::{ParticipantId, Presence, Role};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -26,6 +27,8 @@ use std::time::{Duration, Instant};
 const PRESENCE_EVERY: Duration = Duration::from_millis(50);
 /// An unchanged presence is still repeated this often: it keeps the cursor, the "is typing" badge and the gestures of the host alive.
 const PRESENCE_KEEPALIVE: Duration = Duration::from_secs(2);
+/// Minimum delay between two sends of the host's own gesture in progress.
+const GESTURE_EVERY_MS: u64 = 50;
 /// At most this many ghosts (objects being moved by guests) are kept.
 const MAX_GHOSTS: usize = 256;
 
@@ -36,6 +39,18 @@ struct Remote {
 
 /// What the host's own presence message said last: cursor, selection, page, visible area, object being edited.
 type SentPresence = (Option<Pt>, Vec<Id>, Id, Option<Rect>, Option<Id>);
+
+/// What the host last sent of its own gesture in progress (a move, a resize, a stroke), so that the guests see it as it happens.
+#[derive(Default)]
+struct HostGesture {
+    last_ms: u64,
+    /// Objects as last sent, to send only what changed.
+    last_sent: Vec<Object>,
+    /// Where the round-robin over the objects of a group gesture goes on (one object per tick).
+    turn: usize,
+    /// The stroke being drawn: its identifier and how many points were sent.
+    stroke: Option<(Id, usize)>,
+}
 
 /// A "Start sharing" running on a thread (binding the endpoint and waiting for the relay take up to seconds): the interface stays
 /// usable, and "Cancel" drops it.
@@ -74,6 +89,7 @@ pub struct Share {
     remote: HashMap<ParticipantId, Remote>,
     started: Instant,
     last_presence: Option<(Instant, SentPresence)>,
+    gesture: HostGesture,
 }
 
 impl Share {
@@ -101,6 +117,7 @@ impl Share {
             remote: HashMap::new(),
             started: Instant::now(),
             last_presence: None,
+            gesture: HostGesture::default(),
         }
     }
 
@@ -230,8 +247,51 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
         on_event(app, ev, &members);
     }
     send_own_presence(app, ctx);
+    send_host_gesture(app, now_ms);
     refresh_remote(app, &members);
     ctx.request_repaint_after(PRESENCE_EVERY);
+}
+
+/// The intermediate state of the host's own gesture (like `GuestSession` does for a guest): at most one object and the new points of
+/// a stroke every 50 ms. Nothing is written to the board; the validated result goes out as an ordinary modification, which ends it.
+fn send_host_gesture(app: &mut App, now: u64) {
+    let Share { host, gesture, .. } = &mut app.share;
+    let Some(host) = host.as_mut().filter(|h| h.is_running()) else { return };
+    if now.saturating_sub(gesture.last_ms) < GESTURE_EVERY_MS {
+        return;
+    }
+    let ids: Vec<Id> = match &app.drag {
+        Some(Drag::Move { orig, .. } | Drag::Resize { orig, .. } | Drag::Rotate { orig, .. }) => orig.iter().map(|o| o.id.clone()).collect(),
+        Some(Drag::Endpoint { orig, .. } | Drag::Via { orig, .. }) => vec![orig.id.clone()],
+        _ => app.prop_edit.as_ref().map(|v| v.iter().map(|o| o.id.clone()).collect()).unwrap_or_default(),
+    };
+    if ids.is_empty() {
+        gesture.last_sent.clear();
+    } else {
+        let page = app.ed.page();
+        let current: Vec<Object> = ids.iter().filter_map(|i| page.get(i).cloned()).collect();
+        let n = current.len();
+        // one object per tick (a group gesture takes turns), as the guests do: the limits of the receivers are the same
+        if let Some(i) = (0..n).map(|k| (gesture.turn + k) % n).find(|i| !gesture.last_sent.iter().any(|l| *l == current[*i])) {
+            let o = &current[i];
+            host.send_host_transient(o.id.clone(), o.clone());
+            gesture.last_sent.retain(|l| l.id != o.id);
+            gesture.last_sent.push(o.clone());
+            gesture.turn = i + 1;
+            gesture.last_ms = now;
+        }
+    }
+    match &app.drag {
+        Some(Drag::Draw { pts, .. }) => {
+            let (id, sent) = gesture.stroke.get_or_insert_with(|| (Id::new(), 0));
+            if pts.len() > *sent {
+                host.send_host_stroke(id.clone(), pts[*sent..].to_vec());
+                *sent = pts.len();
+                gesture.last_ms = now;
+            }
+        }
+        _ => gesture.stroke = None,
+    }
 }
 
 fn on_event(app: &mut App, ev: HostEvent, members: &[MemberView]) {
