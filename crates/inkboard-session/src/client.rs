@@ -6,7 +6,7 @@
 //! (`now`, in milliseconds, any monotonic origin), and sends what [`Client::take_outbox`] returns.
 
 use crate::error::{Error, Result};
-use crate::limits::{Limits, Violation, check_id, check_manifest, check_message, check_name, check_ops, check_pages, check_snapshot_shape};
+use crate::limits::{Limits, Violation, check_id, check_manifest, check_message, check_name, check_ops, check_pages, check_seq, check_snapshot_shape};
 use crate::proto::{
     Applied, ByeReason, Hello, Message, PROTO_VERSION, ParticipantId, RefuseReason, RejectReason, Resume, Role, Seq, Snapshot, SnapshotPart, Submit, Welcome,
     check_proto,
@@ -72,6 +72,7 @@ pub enum ClientEvent {
 
 /// Bounds of one part of a snapshot (the document as a whole is checked when the last part arrives).
 fn check_part(l: &Limits, p: &SnapshotPart) -> std::result::Result<(), Violation> {
+    check_seq(p.seq)?;
     if p.part as usize >= MAX_PARTS {
         return Err(Violation::TooMany { what: "snapshot parts", count: p.part as usize, max: MAX_PARTS });
     }
@@ -301,7 +302,8 @@ impl Client {
             }
             Message::Snapshot(s) => {
                 let l = &self.limits;
-                let checked = check_name(l, &s.name)
+                let checked = check_seq(s.seq)
+                    .and_then(|()| check_name(l, &s.name))
                     .and_then(|()| check_pages(l, &s.pages))
                     .and_then(|_| check_snapshot_shape(l, &s.pages, Self::MAX_SNAPSHOT_OBJECTS))
                     .and_then(|()| check_manifest(l, &s.assets));
@@ -313,7 +315,7 @@ impl Client {
             Message::Applied(a) => {
                 if a.seq > self.last_seq {
                     let l = &self.limits;
-                    let checked = check_ops(l, &a.ops).and_then(|()| {
+                    let checked = check_seq(a.seq).and_then(|()| check_ops(l, &a.ops)).and_then(|()| {
                         (a.superseded.len() <= l.max_ids_per_message).then_some(()).ok_or(Violation::TooMany {
                             what: "identifiers",
                             count: a.superseded.len(),

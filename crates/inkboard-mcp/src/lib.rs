@@ -12,6 +12,10 @@ use serde_json::{Value, json};
 /// Protocol versions this server can speak; the most recent one is offered by default.
 const PROTOCOL_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
 
+/// Resources a client may be subscribed to at once, and the longest URI it may use (the watcher looks at each one every 600 ms).
+const MAX_SUBSCRIPTIONS: usize = 256;
+const MAX_URI_LEN: usize = 4096;
+
 /// Execution context: optional root that confines all file paths.
 #[derive(Clone, Debug, Default)]
 pub struct Server {
@@ -83,6 +87,9 @@ impl Server {
                 let uri = msg.pointer("/params/uri").and_then(Value::as_str).unwrap_or("").to_owned();
                 let mut subs = self.subs.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if method == "resources/subscribe" {
+                    if uri.len() > MAX_URI_LEN || (subs.len() >= MAX_SUBSCRIPTIONS && !subs.contains(&uri)) {
+                        return Some(err(id, -32602, &format!("too many subscriptions (at most {MAX_SUBSCRIPTIONS}) or URI too long")));
+                    }
                     subs.insert(uri);
                 } else {
                     subs.remove(&uri);
