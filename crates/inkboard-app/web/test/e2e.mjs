@@ -727,9 +727,7 @@ try {
       const clip = await E.evaluate(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return `error: ${e}`; } });
       check('"Copy the diagnostic" (read back from the browser clipboard)', /Connection service: .*iroh\.link/.test(clip), clip.split('\n').slice(0, 2).join(' | '));
     } else skip('"Copy the diagnostic" read back from the clipboard', 'this engine does not let automation read the clipboard');
-    check('DNS block: the copied diagnostic states the facts and does not claim the relay is reachable', /Reachable: no/.test(handed) && /Cause retained: relay unreachable/.test(handed) && /HTTPS probe[^
-]*failed/i.test(handed) && /Browser: /.test(handed), handed.split('
-').slice(0, 14).join(' | '));
+    check('DNS block: the copied diagnostic states the facts and does not claim the relay is reachable', /Reachable: no/.test(handed) && /Cause retained: relay unreachable/.test(handed) && /HTTPS probe[^\n]*failed/i.test(handed) && /Browser: /.test(handed), handed.split('\n').slice(0, 14).join(' | '));
     await press(E, 'issue_retry');
     await until(E, 'the new attempt to start', (s) => s.state === 'joining', { timeout: 30000 });
     await until(E, 'the failure again', (s) => s.state === 'failed', { timeout: 120000 });
