@@ -98,6 +98,8 @@ pub const FR: &[(&str, &str)] = &[
     ("Color the code", "Colorer le code"),
     ("Conflict: {} is used by \"{}\" and \"{}\"", "Conflit : {} est utilisé par « {} » et « {} »"),
     ("Copy", "Copier"),
+    ("Copy web link", "Copier le lien web"),
+    ("For a guest who joins from a browser, with nothing installed.", "Pour un invité qui rejoint depuis un navigateur, sans rien installer."),
     ("Copy as image", "Copier comme image"),
     ("Copy image to clipboard", "Copier l'image dans le presse-papiers"),
     ("Copy the diagnostic", "Copier le diagnostic"),

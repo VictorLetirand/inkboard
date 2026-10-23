@@ -128,6 +128,21 @@ impl Share {
 
 /* ------------------------------------------------------------------------------------------------------- start / stop */
 
+/// Address of the Inkboard web page a browser guest opens (published on GitHub Pages); `INKBOARD_WEB_URL` replaces it (tests on a local network).
+const DEFAULT_WEB_PAGE: &str = "https://victorletirand.github.io/inkboard/";
+
+/// The link a browser guest opens for the native link `inkboard://join/<ticket>`: `<page>#<ticket>` (the ticket stays after the `#`, which a
+/// browser never sends to the server).
+fn web_link(native: &str) -> Option<String> {
+    let page = std::env::var("INKBOARD_WEB_URL").ok().filter(|u| !u.trim().is_empty()).unwrap_or_else(|| DEFAULT_WEB_PAGE.to_owned());
+    web_link_on(&page, native)
+}
+
+fn web_link_on(page: &str, native: &str) -> Option<String> {
+    let ticket = native.strip_prefix("inkboard://join/").or_else(|| native.strip_prefix("inkboard://join#"))?;
+    Some(format!("{}#{ticket}", page.trim().trim_end_matches('#')))
+}
+
 /// The address as given to the links: with "relays only", the direct (IP) addresses of this computer are left out.
 pub fn published_address(addr: &HostAddress, relays_only: bool) -> HostAddress {
     let relays = addr.relays.iter().filter(|h| !relays_only || h.parse::<std::net::SocketAddr>().is_err()).cloned().collect();
@@ -610,6 +625,11 @@ fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
                         if ui.button(t("Copy")).clicked() {
                             acts.push(Act::Copy(url.clone()));
                         }
+                        if let Some(web) = web_link(url)
+                            && ui.button(t("Copy web link")).on_hover_text(t("For a guest who joins from a browser, with nothing installed.")).clicked()
+                        {
+                            acts.push(Act::Copy(web));
+                        }
                     });
                 }
                 if ui.button(if share.links_shown { t("Hide") } else { t("Show") }).clicked() {
@@ -738,5 +758,17 @@ fn apply(app: &mut App, ctx: &egui::Context, act: Act) {
             ctx.copy_text(url);
             app.share.copied = Some(Instant::now());
         }
+    }
+}
+
+#[cfg(test)]
+mod web_link_tests {
+    use super::web_link_on;
+
+    #[test]
+    fn the_web_link_is_the_page_address_then_the_ticket_after_a_hash() {
+        assert_eq!(web_link_on("https://x.test/app/", "inkboard://join/abc"), Some("https://x.test/app/#abc".to_owned()));
+        assert_eq!(web_link_on("https://x.test/app/#", "inkboard://join#abc"), Some("https://x.test/app/#abc".to_owned()));
+        assert_eq!(web_link_on("https://x.test/", "https://other/#abc"), None);
     }
 }
