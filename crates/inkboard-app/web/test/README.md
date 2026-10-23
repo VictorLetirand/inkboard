@@ -67,7 +67,14 @@ Scenarios (each prints PASS / FAIL lines; a failing scenario does not stop the o
 | g | invalid link: the join window opens with the error and the link editable; a valid link pasted afterwards joins |
 | m | emulated phone (touch, virtual keyboard focus, touch-size targets, fits the width, joins with a finger) |
 | e1 | relay unreachable (Chrome / Edge `--host-resolver-rules`; Firefox / WebKit: the bench proxy answers 403): the enterprise message, its 3 tips, "Copy the diagnostic" (clipboard), "Try again", "Close"; in French; on the phone |
+| e3 | relay blocked **silently** (a local port that accepts and never answers; then a non-routable address): after short time-outs, the enterprise message (class `Unreachable`) and a diagnostic holding the facts (HTTPS probe timed out, no relay connection, URLs, browser, time, cause) |
+| e4 | **HTTPS passes, WebSocket does not** (a local HTTPS look-alike of the relay: `/ping` answered with CORS like a relay, WebSocket upgrade refused with 403, or never answered): class `WebSocketBlocked`, its message and tips (first: allow WebSocket to `*.relay.n0.iroh.link`, port 443), in French, on the phone |
 | z | the host ends the session: banner, "Save a copy of the board" downloads the board |
+| y | after z, the real relay and a host that is gone: "the service answers, the host cannot be reached", diagnostic with the relay connection established |
+
+`--only e3,e4,y` runs the scenarios whose names start with one of the prefixes (the host and the browsers are still started). The silent-block scenarios shorten the
+page's time-outs through `window.__inkboard_test.set_timeouts(connect_ms, probe_ms, probe_delay_ms)` (web-test build only); no check asserts a duration.
+e4 needs `openssl` (self-signed certificate; Git for Windows brings one) and Chrome's `--ignore-certificate-errors`.
 
 A phone is emulated by Chrome / Edge (`page.emulate`, Pixel 5) in a browser started with `--force-device-scale-factor=2`: the canvas is sized from the REAL pixels of the
 screen, so an emulation whose scale factor differs from the real one would draw the interface at the wrong size. Firefox gets the same through the

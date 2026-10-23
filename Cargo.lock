@@ -2720,10 +2720,13 @@ dependencies = [
  "getrandom 0.3.4",
  "inkboard-session",
  "iroh",
+ "js-sys",
  "n0-future",
  "rustls",
  "tokio",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "webpki-roots",
 ]
 

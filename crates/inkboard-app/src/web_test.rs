@@ -3,6 +3,7 @@
 //! - `join(link, name)`: what the "Join" window does when its button is clicked (an error shown by the window is `join_error` of `state()`);
 //! - `leave()`: leaves the session;
 //! - `copy_image()`: "Copy as image" of the selection (or of the board);
+//! - `set_timeouts(connect_ms, probe_ms, probe_delay_ms)`: shorter network time-outs for the sessions joined afterwards (silent-block scenarios);
 //! - `state()`: a JSON string describing the session and the board on screen (see [`status`]).
 //!
 //! The session windows tell where their widgets are (`marks` of `state()`, in CSS pixels): the bench clicks them with the mouse or the
@@ -76,6 +77,11 @@ pub fn install(ctx: &egui::Context) {
     let copy_image = Closure::<dyn Fn()>::new(|| push(Command::CopyImage));
     set("copy_image", copy_image.as_ref().unchecked_ref());
     copy_image.forget();
+    let set_timeouts = Closure::<dyn Fn(f64, f64, f64)>::new(|connect_ms, probe_ms, probe_delay_ms| {
+        crate::session_net::set_timeouts(connect_ms as u64, probe_ms as u64, probe_delay_ms as u64);
+    });
+    set("set_timeouts", set_timeouts.as_ref().unchecked_ref());
+    set_timeouts.forget();
     let state = Closure::<dyn Fn() -> String>::new(|| HOOK.with(|h| h.borrow().status.clone()));
     set("state", state.as_ref().unchecked_ref());
     state.forget();
@@ -120,7 +126,12 @@ fn status(app: &App) -> serde_json::Value {
         GuestState::Joining => ("joining", None),
         GuestState::Live => ("live", None),
         GuestState::Reconnecting => ("reconnecting", None),
-        GuestState::Failed(i) => ("failed", Some(json!({ "class": format!("{:?}", i.class), "headline": i.headline(), "tips": i.tips(), "detail": i.detail }))),
+        GuestState::Failed(i) => (
+            "failed",
+            Some(
+                json!({ "class": format!("{:?}", i.class), "headline": i.headline(), "tips": i.tips(), "detail": i.detail, "diagnostic": i.diagnostic_text() }),
+            ),
+        ),
         GuestState::Ended(r) => ("ended", Some(json!({ "reason": format!("{r:?}") }))),
     };
     let mirror = app.guest_active();

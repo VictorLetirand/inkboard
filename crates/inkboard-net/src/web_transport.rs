@@ -9,26 +9,31 @@
 //! - Errors carry the same [`NetCause`]s as natively, so the interface shows the same diagnosis: `RelayUnreachable` (no relay
 //!   connection: blocked, offline or a security gateway), `HostUnreachable`, `TimedOut` (120 s idle timeout, `NetConfig`), `Refused`;
 //!   an invalid ticket is `Error::BadTicket` (see `ticket_to_addr`).
+//! - [`WebTransport::connect_ticket_observed`] adds, to a failed attempt, what the page could observe about the relay (an HTTPS probe
+//!   and iroh's real relay connection state, see [`crate::relay_signals`]) to tell a blocked relay from a blocked WebSocket from an
+//!   absent host.
 
 use crate::cancel::CancelToken;
 use crate::config::NetConfig;
+use crate::relay_signals::{Probe, Signals, other_spelling, without_final_dot};
 use crate::wire::{
     CLOSE_NORMAL, FLUSH_TIMEOUT, FrameError, GuestRelays, MAX_QUEUED_BYTES, QUEUE, bind_guest, dial_failure, dial_plan, net, open_stream, read_fault,
-    read_frame, ticket_addr, write_fault, write_frame,
+    read_frame, relay_link_of, ticket_addr, write_fault, write_frame,
 };
 use inkboard_session::crypto::Ticket;
 use inkboard_session::error::{Error, NetCause, Result};
 use inkboard_session::limits::Violation;
 use inkboard_session::transport::Connection;
-use iroh::Endpoint;
 use iroh::endpoint::{Connection as QuicConn, RecvStream, SendStream, VarInt};
-use n0_future::future::or;
-use n0_future::time::{sleep, timeout};
+use iroh::{Endpoint, RelayUrl, TransportAddr};
+use n0_future::future::{or, zip};
+use n0_future::time::{Instant, sleep, timeout};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
-use wasm_bindgen_futures::spawn_local;
+use wasm_bindgen::JsCast as _;
+use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 /// How long closing the endpoint waits for the last frames to be delivered.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -207,6 +212,66 @@ async fn write_loop(mut send: SendStream, mut queue: mpsc::Receiver<Vec<u8>>, sh
     conn.close(VarInt::from_u32(CLOSE_NORMAL), b"bye");
 }
 
+/* ------------------------------------------------------------------------------------------------------------------ relay probe */
+
+/// Where the probe of a failed attempt stands.
+#[derive(Clone, Default)]
+enum ProbeSlot {
+    #[default]
+    Idle,
+    Running,
+    Done((Probe, Option<(String, Probe)>)),
+}
+
+/// Runs the probes (see [`probe_pair`]) and leaves the result in `slot`; `Running` is set at once, before the first suspension.
+async fn probe_into(slot: &RefCell<ProbeSlot>, used: &RelayUrl, probe_timeout: Duration) {
+    *slot.borrow_mut() = ProbeSlot::Running;
+    let done = probe_pair(used, probe_timeout).await;
+    *slot.borrow_mut() = ProbeSlot::Done(done);
+}
+
+/// Probes the relay as the browser uses it and, at the same time, with the other spelling of its name (final dot or not): when only one
+/// of them gets through, the report shows it.
+async fn probe_pair(used: &RelayUrl, probe_timeout: Duration) -> (Probe, Option<(String, Probe)>) {
+    let other = other_spelling(used);
+    match other {
+        Some(other) => {
+            let (probe, other_probe) = zip(probe_relay(used.as_str(), probe_timeout), probe_relay(&other, probe_timeout)).await;
+            (probe, Some((other, other_probe)))
+        }
+        None => (probe_relay(used.as_str(), probe_timeout).await, None),
+    }
+}
+
+/// One HTTPS request to the relay (`GET <relay>/generate_204`, `no-cors`, no cookie, never cached): the page cannot read the answer
+/// (it is opaque) but any answer, whatever its status, proves that the network leads to the service; an error or silence until
+/// `probe_timeout` proves the opposite. The request carries nothing secret.
+pub async fn probe_relay(relay: &str, probe_timeout: Duration) -> Probe {
+    let started = Instant::now();
+    let ms = || started.elapsed().as_millis() as u64;
+    let Some(window) = web_sys::window() else { return Probe::NotRun };
+    let abort = web_sys::AbortController::new().ok();
+    let init = web_sys::RequestInit::new();
+    init.set_method("GET");
+    init.set_mode(web_sys::RequestMode::NoCors);
+    init.set_cache(web_sys::RequestCache::NoStore);
+    init.set_credentials(web_sys::RequestCredentials::Omit);
+    if let Some(a) = &abort {
+        init.set_signal(Some(&a.signal()));
+    }
+    let url = format!("{}/generate_204", relay.trim_end_matches('/'));
+    match timeout(probe_timeout, JsFuture::from(window.fetch_with_str_and_init(&url, &init))).await {
+        Ok(Ok(_)) => Probe::Answered { ms: ms() },
+        Ok(Err(e)) => Probe::Failed { ms: ms(), error: e.dyn_ref::<js_sys::Error>().map_or_else(|| format!("{e:?}"), |e| String::from(e.to_string())) },
+        Err(_) => {
+            if let Some(a) = abort {
+                a.abort();
+            }
+            Probe::TimedOut { ms: ms() }
+        }
+    }
+}
+
 /// Browser transport of a guest: one iroh endpoint (relay only), kept for the whole session so that the host recognizes the guest
 /// when it reconnects. Share it with an `Rc`; every method takes `&self`.
 pub struct WebTransport {
@@ -263,8 +328,71 @@ impl WebTransport {
         }
     }
 
+    /// Like [`WebTransport::connect_ticket_cancellable`], and when the attempt fails on the network also returns what was observed
+    /// about the relay (see [`crate::relay_signals`]): an HTTPS probe of the relay, started `probe_delay` into the attempt (an attempt
+    /// that succeeds first costs none), crossed with iroh's own relay connection state.
+    pub async fn connect_ticket_observed(&self, ticket: &Ticket, cancel: &CancelToken) -> (Result<WebConn>, Option<Signals>) {
+        let started = Instant::now();
+        let relays = self.relay_urls(ticket);
+        let slot: Rc<RefCell<ProbeSlot>> = Rc::default();
+        let finished = Rc::new(Cell::new(false));
+        if let Some((_, used)) = relays.clone() {
+            let (slot, finished, cfg) = (Rc::clone(&slot), Rc::clone(&finished), self.cfg.clone());
+            spawn_local(async move {
+                sleep(cfg.probe_delay).await;
+                if !finished.get() {
+                    probe_into(&slot, &used, cfg.probe_timeout).await;
+                }
+            });
+        }
+        let result = self.dial(ticket, Some(cancel)).await;
+        finished.set(true);
+        let Err(Error::Network { cause, .. }) = &result else { return (result, None) };
+        let dial = *cause;
+        let gave_up_after_ms = started.elapsed().as_millis() as u64;
+        let (probe, other_spelling) = match &relays {
+            None => (Probe::NotRun, None),
+            Some((_, used)) => {
+                let state = std::mem::take(&mut *slot.borrow_mut());
+                match state {
+                    ProbeSlot::Done(done) => done,
+                    ProbeSlot::Running => {
+                        // the probe has its own time-out: wait for it (bounded, in case the page never wakes the task)
+                        let wait = self.cfg.probe_timeout + Duration::from_secs(1);
+                        let waited = timeout(wait, async {
+                            loop {
+                                if let ProbeSlot::Done(done) = &*slot.borrow() {
+                                    break done.clone();
+                                }
+                                sleep(Duration::from_millis(30)).await;
+                            }
+                        })
+                        .await;
+                        waited.unwrap_or((Probe::TimedOut { ms: wait.as_millis() as u64 }, None))
+                    }
+                    ProbeSlot::Idle => probe_pair(used, self.cfg.probe_timeout).await,
+                }
+            }
+        };
+        let link = self.guest.borrow().as_ref().map(|(_, e)| relay_link_of(e)).unwrap_or_default();
+        let (relay_in_link, relay_used) = relays.map_or_else(Default::default, |(l, u)| (l.to_string(), u.to_string()));
+        let user_agent = web_sys::window().and_then(|w| w.navigator().user_agent().ok()).unwrap_or_default();
+        (result, Some(Signals { dial, probe, other_spelling, link, user_agent, relay_in_link, relay_used, gave_up_after_ms }))
+    }
+
+    /// The relay of the ticket as the link carries it and as this browser uses it (see [`without_final_dot`]).
+    fn relay_urls(&self, ticket: &Ticket) -> Option<(RelayUrl, RelayUrl)> {
+        let addr = ticket_addr(&self.cfg, ticket).ok()?;
+        let in_link = addr.relay_urls().next()?.clone();
+        Some((in_link.clone(), without_final_dot(&in_link)))
+    }
+
     async fn dial(&self, ticket: &Ticket, cancel: Option<&CancelToken>) -> Result<WebConn> {
-        let (addr, relays) = dial_plan(&self.cfg, ticket_addr(&self.cfg, ticket)?)?;
+        let mut addr = ticket_addr(&self.cfg, ticket)?;
+        // the browser has no search list to skip: the relay's name is used without its final dot (see `without_final_dot`)
+        addr.addrs =
+            addr.addrs.into_iter().map(|a| if let TransportAddr::Relay(url) = a { TransportAddr::Relay(without_final_dot(&url)) } else { a }).collect();
+        let (addr, relays) = dial_plan(&self.cfg, addr)?;
         let relays_on = relays != GuestRelays::Off;
         let endpoint = self.endpoint(&relays).await?;
         let attempt = async { Some(timeout(self.cfg.connect_timeout, open_stream(&endpoint, addr, relays_on)).await) };
