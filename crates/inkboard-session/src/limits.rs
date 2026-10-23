@@ -202,6 +202,26 @@ fn walk(l: &Limits, v: &Value, key: &str, depth: usize, chars: &mut usize) -> Re
     Ok(())
 }
 
+/// Highest sequence number a peer may claim (2^53: what a JSON number carries exactly). A host that claims more is broken or hostile,
+/// and arithmetic on `seq` never has to cope with the edge of `u64`.
+pub const MAX_SEQ: u64 = 1 << 53;
+
+pub fn check_seq(seq: u64) -> Result<(), Violation> {
+    if seq > MAX_SEQ { Err(Violation::OutOfBounds { field: "sequence number", max: MAX_SEQ }) } else { Ok(()) }
+}
+
+/// Identifiers that must be unique inside one page: its layers and its objects (a document with a repeated one is ambiguous: every
+/// lookup finds the first, and the host's comparison of its board with the authoritative copy never settles).
+fn check_unique_ids<'a>(what: &'static str, ids: impl Iterator<Item = &'a Id>) -> Result<(), Violation> {
+    let mut seen = std::collections::HashSet::new();
+    if ids.into_iter().all(|id| seen.insert(id)) { Ok(()) } else { Err(Violation::Malformed(what)) }
+}
+
+fn check_page_shape(p: &Page) -> Result<(), Violation> {
+    check_unique_ids("layer identifier used twice on a page", p.layers.iter().map(|l| &l.id))?;
+    check_unique_ids("object identifier used twice on a page", p.objects.iter().map(|o| &o.id))
+}
+
 /// Validates one object: ids, bounds, text length, structural consistency (what the renderer indexes without checking).
 pub fn check_object(l: &Limits, o: &Object) -> Result<(), Violation> {
     check_id(l, &o.id)?;
@@ -280,6 +300,7 @@ pub fn check_ops(l: &Limits, ops: &[WireOp]) -> Result<(), Violation> {
                     check_id(l, &layer.id)?;
                     check_name(l, &layer.name)?;
                 }
+                check_unique_ids("layer identifier used twice on a page", layers.iter().map(|x| &x.id))?;
             }
             WireOp::AddPage { page, .. } => {
                 check_id(l, &page.id)?;
@@ -288,6 +309,8 @@ pub fn check_ops(l: &Limits, ops: &[WireOp]) -> Result<(), Violation> {
                 objects += page.objects.len();
                 too_many("objects", objects, l.max_objects_per_message)?;
                 page.objects.iter().try_for_each(|o| check_object(l, o))?;
+                page.layers.iter().try_for_each(|x| check_id(l, &x.id).and_then(|()| check_name(l, &x.name)))?;
+                check_page_shape(page)?;
             }
             WireOp::RenamePage { page, name } => {
                 check_id(l, page)?;
@@ -405,14 +428,8 @@ pub fn check_snapshot_shape(l: &Limits, pages: &[Page], max_objects: usize) -> R
     too_many("pages", pages.len(), l.max_pages)?;
     let total: usize = pages.iter().map(|p| p.objects.len()).sum();
     too_many("objects", total, max_objects)?;
-    let mut seen = std::collections::HashSet::new();
-    for p in pages {
-        seen.clear();
-        if !p.objects.iter().all(|o| seen.insert(&o.id)) {
-            return Err(Violation::Malformed("object identifier used twice on a page"));
-        }
-    }
-    Ok(())
+    check_unique_ids("page identifier used twice", pages.iter().map(|p| &p.id))?;
+    pages.iter().try_for_each(check_page_shape)
 }
 
 /// Validates the list of images of a snapshot.

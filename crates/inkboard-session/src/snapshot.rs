@@ -15,6 +15,9 @@ use std::collections::BTreeMap;
 pub const PART_BYTES: usize = 192 << 10;
 /// Most parts a guest keeps for one snapshot.
 pub const MAX_PARTS: usize = 4096;
+/// Bytes (estimated from the JSON form) a guest keeps while it puts a snapshot together: the number of parts and of objects is bounded
+/// too, but a part can be a megabyte of text, so without this a hostile host could make a guest hold gigabytes.
+pub const MAX_ASSEMBLY_BYTES: usize = 256 << 20;
 
 fn json_len<T: serde::Serialize>(v: &T) -> usize {
     serde_json::to_vec(v).map_or(0, |b| b.len())
@@ -65,6 +68,8 @@ pub struct SnapshotAssembler {
     parts: BTreeMap<u32, SnapshotPart>,
     last: Option<u32>,
     objects: usize,
+    bytes: usize,
+    byte_budget: usize,
 }
 
 fn bad(why: &'static str) -> Error {
@@ -73,7 +78,12 @@ fn bad(why: &'static str) -> Error {
 
 impl SnapshotAssembler {
     pub fn new(seq: Seq) -> Self {
-        Self { seq, parts: BTreeMap::new(), last: None, objects: 0 }
+        Self::with_byte_budget(seq, MAX_ASSEMBLY_BYTES)
+    }
+
+    /// Like [`SnapshotAssembler::new`], with another ceiling for the bytes held (tests).
+    pub fn with_byte_budget(seq: Seq, byte_budget: usize) -> Self {
+        Self { seq, parts: BTreeMap::new(), last: None, objects: 0, bytes: 0, byte_budget }
     }
 
     pub fn seq(&self) -> Seq {
@@ -103,6 +113,10 @@ impl SnapshotAssembler {
         self.objects += p.pages.iter().map(|q| q.objects.len()).sum::<usize>();
         if self.objects > max_objects {
             return Err(Violation::TooMany { what: "objects", count: self.objects, max: max_objects }.into());
+        }
+        self.bytes = self.bytes.saturating_add(json_len(&p.pages));
+        if self.bytes > self.byte_budget {
+            return Err(Violation::MessageTooLarge { size: self.bytes, max: self.byte_budget }.into());
         }
         self.parts.insert(p.part, p);
         match self.last {
