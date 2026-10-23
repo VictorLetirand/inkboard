@@ -18,7 +18,11 @@ inkboard-net = { path = "../inkboard-net" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 [lints]
 workspace = true
+
+# Process statistics: Windows and Linux only (other systems get zeros). Kept off the other targets so that a build or an offline
+# `cargo tree` for macOS does not need the crates sysinfo uses there.
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }

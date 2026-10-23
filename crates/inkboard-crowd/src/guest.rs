@@ -368,6 +368,17 @@ impl SimGuest {
 
     fn on_message(&mut self, msg: Message, frame_len: usize, now: u64) {
         let epoch = self.env.clock.epoch_us();
+        // the board may come compressed (protocol v3)
+        let msg = match msg {
+            Message::Packed { data } => match inkboard_session::pack::unpack(&data, MAX_FRAME) {
+                Ok(inner) => inner,
+                Err(e) => {
+                    self.rep.closed = Some(e.to_string());
+                    return;
+                }
+            },
+            other => other,
+        };
         match &msg {
             Message::Snapshot(s) => {
                 self.manifest.clone_from(&s.assets);

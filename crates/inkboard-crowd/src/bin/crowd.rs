@@ -305,24 +305,24 @@ impl Run {
         self.guests.iter().flat_map(|f| f.per_guest.iter())
     }
 
-    /// (converged, diverged, absent). "Absent": a guest that ended gone (refused, removed, never in), or on a degraded link that is
+    /// (converged, diverged, away). "Absent": a guest that ended gone (refused, removed, never in), or on a degraded link that is
     /// still receiving (no board yet, or behind the host's last modification): it is late, not wrong. "Diverged" is a guest that
     /// has caught up with the host's last modification (or is on a good link) and holds another board: a bug.
     fn convergence(&self) -> (usize, usize, usize) {
         let (digest, seq) = self.host.as_ref().map(|h| (h.digest.as_str(), h.seq_final)).unwrap_or_default();
-        let (mut ok, mut bad, mut absent) = (0, 0, 0);
+        let (mut ok, mut bad, mut away) = (0, 0, 0);
         for g in self.all() {
             let in_session = g.joins > 0 && !g.digest.is_empty() && g.end != "left" && !g.end.starts_with("closed") && !g.end.starts_with("refused");
             let late = !g.link.is_perfect() && (g.objects == 0 || g.last_seq < seq);
             if !in_session || (late && g.digest != digest) {
-                absent += 1;
+                away += 1;
             } else if g.digest == digest && g.pending == 0 {
                 ok += 1;
             } else {
                 bad += 1;
             }
         }
-        (ok, bad, absent)
+        (ok, bad, away)
     }
 
     fn merged(&self, f: impl Fn(&FleetReport) -> Summary, weight: impl Fn(&FleetReport) -> usize) -> Summary {
@@ -352,8 +352,8 @@ impl Run {
 }
 
 fn row(dir: &Path, run: &Run) -> String {
-    let (ok, bad, absent) = run.convergence();
-    let total = ok + bad + absent;
+    let (ok, bad, away) = run.convergence();
+    let total = ok + bad + away;
     let h = run.host.clone().unwrap_or_default();
     let rtt = run.merged(|r| r.rtt_ms, |r| r.edits_confirmed as usize);
     let vis = run.merged(|r| r.visible_ms, |r| r.visible_ms.n);
@@ -401,10 +401,10 @@ const HEADER: &str = "| run | objects | participants (peak) | snapshot ms p50 / 
 
 fn cmd_report(dir: &Path) -> Result<(), String> {
     let run = load(dir)?;
-    let (ok, bad, absent) = run.convergence();
+    let (ok, bad, away) = run.convergence();
     let mut md = format!("# Crowd run `{}`\n\n{HEADER}\n{}\n\n", dir.display(), row(dir, &run));
     md += &format!(
-        "Convergence: {ok} guests hold the host's board (same digest, nothing pending), {bad} diverged, {absent} are not in the session at the end (left, removed, never joined) or are late (degraded link, still receiving).\n\n"
+        "Convergence: {ok} guests hold the host's board (same digest, nothing pending), {bad} diverged, {away} are not in the session at the end (left, removed, never joined) or are late (degraded link, still receiving).\n\n"
     );
     if let Some(h) = &run.host {
         md += &format!(
@@ -504,6 +504,27 @@ fn cmd_board(a: &Args) -> Result<(), String> {
         json as f64 / 1_048_576.0,
         doc.assets.len(),
         asset_bytes(&doc) as f64 / 1_048_576.0,
+        started.elapsed().as_secs_f64()
+    );
+    // what actually travels: the snapshot cut in parts, packed (protocol v3)
+    let started = Instant::now();
+    let snap = inkboard_session::proto::Snapshot::new(&doc, 1, Vec::new());
+    let parts = inkboard_session::snapshot::into_messages(snap, inkboard_session::snapshot::PART_BYTES);
+    let (mut plain, mut packed) = (0usize, 0usize);
+    for m in &parts {
+        let j = serde_json::to_vec(m).map_err(|e| e.to_string())?;
+        plain += j.len();
+        packed += match inkboard_session::pack::pack(m) {
+            Some(p) => serde_json::to_vec(&p).map_err(|e| e.to_string())?.len(),
+            None => j.len(),
+        };
+    }
+    println!(
+        "snapshot: {} parts, {:.1} MiB plain, {:.1} MiB packed (x{:.1}); cut and packed in {:.2} s",
+        parts.len(),
+        plain as f64 / 1_048_576.0,
+        packed as f64 / 1_048_576.0,
+        plain as f64 / packed.max(1) as f64,
         started.elapsed().as_secs_f64()
     );
     Ok(())

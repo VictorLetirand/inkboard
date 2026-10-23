@@ -2757,6 +2757,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hkdf",
  "inkboard-core",
+ "miniz_oxide 0.8.9",
  "proptest",
  "serde",
  "serde_json",

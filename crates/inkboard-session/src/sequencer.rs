@@ -177,6 +177,21 @@ impl Sequencer {
         self.seen.remove(&p);
     }
 
+    /// The `Applied`s after `last_seq` (possibly none), or `None` when they are not all retained or `last_seq` is in the future: the
+    /// guest needs the whole document. Unlike [`Sequencer::catch_up`] it builds no snapshot.
+    pub fn applied_since(&self, last_seq: Seq) -> Option<Vec<Applied>> {
+        if last_seq > self.seq {
+            return None;
+        }
+        if last_seq == self.seq {
+            return Some(Vec::new());
+        }
+        match self.log.front() {
+            Some((_, first)) if first.seq <= last_seq + 1 => Some(self.log.iter().map(|(_, a)| a).filter(|a| a.seq > last_seq).cloned().collect()),
+            _ => None,
+        }
+    }
+
     /// The `Applied`s after `last_seq`, or a `Snapshot` when they are not all retained (or `last_seq` is in the future).
     pub fn catch_up(&self, last_seq: Seq, assets: Vec<crate::proto::AssetInfo>) -> CatchUp {
         if last_seq > self.seq {

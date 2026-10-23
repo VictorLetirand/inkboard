@@ -395,7 +395,7 @@ fn run_host(b: &Bench) {
             queue_worst.add(worst as f64 / 1024.0);
             r.peak_cpu_cores = r.peak_cpu_cores.max(p.cpu_cores);
             r.peak_rss_mib = r.peak_rss_mib.max(p.rss_mib);
-            if (started.elapsed().as_secs() % 10) == 0 {
+            if started.elapsed().as_secs().is_multiple_of(10) {
                 eprintln!(
                     "[host] t={:.0}s members={} conns={} cpu={:.2} rss={:.0} MiB tx={txs:.1} MiB/s rx={rxs:.1} MiB/s turn p99={:.1} ms queue worst={:.0} KiB seq={}",
                     started.elapsed().as_secs_f64(),
@@ -501,4 +501,13 @@ fn crowd_host() {
 #[ignore = "measuring tool: see context/mcp-remote/test-charge.md"]
 fn crowd_ui_frames() {
     crate::tests_crowd_ui::run();
+}
+
+/// Cost of one frame of a GUEST application on a seed board while other guests work (real transport on the loopback interface, the host
+/// is the real application in the same process): the mirror of the board is refreshed as modifications arrive. `CROWD_OBJECTS` (5000),
+/// `CROWD_PARTICIPANTS` (other guests at work, default `0,10,20`), `CROWD_FRAMES` (300).
+#[test]
+#[ignore = "measuring tool: see context/mcp-remote/test-charge.md"]
+fn crowd_guest_frames() {
+    crate::tests_crowd_ui::run_guest();
 }

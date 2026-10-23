@@ -227,6 +227,10 @@ impl Connection for IrohConn {
         self.shared.mark_closed(None);
         self.stop_writing();
     }
+
+    fn queued_bytes(&self) -> usize {
+        self.shared.out_bytes.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for IrohConn {

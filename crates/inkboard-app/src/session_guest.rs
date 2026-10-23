@@ -1285,6 +1285,14 @@ impl GuestSession {
     }
 
     fn on_message(&mut self, msg: Message, now: u64) {
+        // the board may come compressed (protocol v3): expanded here, under a ceiling, so that the list of images it carries is read
+        let msg = match msg {
+            Message::Packed { data } => match inkboard_session::pack::unpack(&data, MAX_FRAME) {
+                Ok(inner) => inner,
+                Err(e) => return self.end(EndReason::Protocol(e.to_string())),
+            },
+            other => other,
+        };
         match &msg {
             Message::Welcome(w) => {
                 // what the host says about people is cleaned like what a person types (the host may be hostile)

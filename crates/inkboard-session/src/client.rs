@@ -310,6 +310,18 @@ impl Client {
                 Ok(())
             }
             Message::SnapshotPart(p) => self.on_snapshot_part(p, now),
+            Message::Packed { data } => {
+                // the board, compressed: expanded under a ceiling (a hostile host cannot make a small frame expand without limit)
+                let inner = crate::pack::unpack(&data, self.limits.max_message_bytes);
+                match inner {
+                    Ok(m) => self.handle(m, now),
+                    Err(e) => {
+                        self.phase = Phase::Closed;
+                        self.events.push(ClientEvent::Closed(ByeReason::ProtocolError { detail: e.to_string() }));
+                        Err(e)
+                    }
+                }
+            }
             Message::Applied(a) => {
                 if a.seq > self.last_seq {
                     let l = &self.limits;

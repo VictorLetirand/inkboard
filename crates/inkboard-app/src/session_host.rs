@@ -16,21 +16,22 @@ use inkboard_core::editor::Editor;
 use inkboard_core::geom::Pt;
 use inkboard_core::history::{Author, AuthorHistories};
 use inkboard_core::model::{Asset, AssetId, Document, Id, Kind, Object, Page};
-use inkboard_session::assets::{chunks, hash_hex};
-use inkboard_session::codec::read_hello;
+use inkboard_session::assets::hash_hex;
+use inkboard_session::codec::{Codec, read_hello};
 use inkboard_session::crypto::{Entropy, FrameCipher, HostKeys, Link, OsEntropy, SecureChannel, SeededEntropy, SessionKey, verify_join_proof};
 use inkboard_session::limits::{Limits, Quota, RateLimiter, Violation, check_message, check_message_size, check_page_count};
 use inkboard_session::proto::{
     AgentEvent as WireAgent, AssetChunk, AssetInfo, ByeReason, DocMeta, Message, PROTO_VERSION, ParticipantId, ParticipantInfo, Presence, RefuseReason,
     RejectReason, Role, Seq, Snapshot, Submit, UploadStatus, Welcome,
 };
-use inkboard_session::sequencer::{CatchUp, Sequencer, Submitted};
+use inkboard_session::sequencer::{Sequencer, Submitted};
 use inkboard_session::snapshot::{PART_BYTES, into_messages};
 use inkboard_session::transport::{Connection, Transport};
 use inkboard_session::wire::{WireOp, apply_wire_all, ops_to_wire};
 use inkboard_session::{Error, JsonCodec};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 /* ------------------------------------------------------------------------------------------------------------------ seams */
 
@@ -104,6 +105,11 @@ const PALETTE: [(u8, u8, u8); 12] = [
 ];
 /// A closed connection stays readable this long (virtual or real milliseconds) so that the last message (refusal, removal) arrives.
 const CLOSE_LINGER_MS: u64 = 2_000;
+/// Cursors that move at once before the host starts relaying each of them less often, and by how much for each more (ms between two
+/// relays of one cursor, at most `PRESENCE_MAX_INTERVAL_MS`): 30 active cursors are relayed every 120 ms, 60 every 240 ms.
+const PRESENCE_FREE_CURSORS: u64 = 20;
+const PRESENCE_MS_PER_CURSOR: u64 = 4;
+const PRESENCE_MAX_INTERVAL_MS: u64 = 500;
 /// A connection that has not sent its first message after this long is dropped.
 const HANDSHAKE_MS: u64 = 10_000;
 /// Connections that have not sent anything yet are counted apart: only this many are kept (the oldest go first), so that connections
@@ -126,6 +132,16 @@ const UPLOAD_POOL: usize = 32;
 const UPLOAD_POOL_BYTES: usize = 64 << 20;
 /// Bytes of image pieces waiting to be sent to one guest.
 const MAX_QUEUED_ASSET_BYTES: usize = 32 << 20;
+/// Bytes of image pieces handed to the transports per `poll`, all guests together; and the encoded pieces kept for the next guests.
+const ASSET_BYTES_PER_POLL: usize = 4 << 20;
+const PIECE_CACHE_BYTES: usize = 96 << 20;
+/// A guest whose transport already holds this much is not given more for now (it reads slowly): the rest waits in the host's memory,
+/// shared with the other guests.
+const TRANSPORT_LOW_WATER: usize = 1 << 20;
+/// Modifications and other messages that wait behind a snapshot for one guest (bytes) before it is considered too slow and dropped.
+const MAX_BACKLOG_BYTES: usize = 32 << 20;
+/// A guest whose transport queue is at least this big and has not shrunk for `HostConfig::stall_ms` is not reading.
+const STALL_MIN_BYTES: usize = 1 << 20;
 pub const MAX_NAME_CHARS: usize = crate::names::NAME_MAX;
 
 #[derive(Clone, Debug)]
@@ -159,6 +175,15 @@ pub struct HostConfig {
     pub max_total_objects: usize,
     /// Image chunks sent per connection and per `poll`.
     pub send_budget: usize,
+    /// From this many objects, the snapshot of the board is encoded on a thread and kept for `snapshot_ttl_ms` for the guests that
+    /// arrive meanwhile (a smaller board is encoded on the spot for each: that is cheap and exact).
+    pub snapshot_thread_min_objects: usize,
+    pub snapshot_ttl_ms: u64,
+    /// Bytes of board (and of what follows it) the host seals and hands to the transports per `poll`, all guests together: a whole
+    /// board is never encrypted in one frame time, however many people arrive at once.
+    pub ordered_bytes_per_poll: usize,
+    /// A connection whose queue holds at least a megabyte that has not shrunk for this long is closed (the guest does not read).
+    pub stall_ms: u64,
     /// `<base>#<ticket>`: the web page, or `inkboard://join`.
     pub link_base: String,
     /// Tests only: deterministic randomness (keys, nonces). Never set in the application.
@@ -183,6 +208,10 @@ impl Default for HostConfig {
             max_per_peer: 3,
             max_total_objects: 50_000,
             send_budget: 32,
+            snapshot_thread_min_objects: 1_500,
+            snapshot_ttl_ms: 3_000,
+            ordered_bytes_per_poll: 4 << 20,
+            stall_ms: 30_000,
             link_base: "inkboard://join".to_owned(),
             entropy_seed: None,
         }
@@ -376,6 +405,11 @@ fn object_count(doc: &Document) -> usize {
     doc.pages.iter().map(|p| p.objects.len()).sum()
 }
 
+/// The board as encoded frames (see `inkboard_session::snapshot`): done once, then sealed for each guest.
+fn encode_parts(s: Snapshot) -> Vec<Arc<Vec<u8>>> {
+    into_messages(s, PART_BYTES).into_iter().map(|m| Arc::new(JsonCodec.encode(&inkboard_session::pack::pack(&m).unwrap_or(m)))).collect()
+}
+
 /// Operations that turn `old` into `new` (what the host did on its own), index-free. Page order changes are not expressed (the
 /// application never reorders pages); the `view` of a page is local and ignored.
 pub fn diff_documents(old: &Document, new: &Document) -> Vec<WireOp> {
@@ -493,9 +527,50 @@ struct Conn {
     opened: u64,
     last_rx: u64,
     /// Image chunks waiting to be sent (a few per `poll`, so that one big image does not block everything).
-    out: VecDeque<Message>,
+    out: VecDeque<Piece>,
+    /// Frames (already encoded, shared between guests) that must arrive in order: the board being sent and everything said after it.
+    /// While it is not empty, whatever is sent to this guest goes behind it (a guest never sees a modification before its board).
+    ordered: VecDeque<Ordered>,
+    /// Bytes of the `Ordered` entries that are not snapshot.
+    backlog: usize,
+    /// The snapshot is being encoded on a thread: the entries of `ordered` go behind it.
+    awaiting_snapshot: bool,
+    /// Smallest size the transport queue had since `queue_since` (stall detection).
+    queue_floor: usize,
+    queue_since: u64,
     /// Frames per second before the guest is admitted (afterwards its `Member` limiters apply).
     rl: RateLimiter,
+}
+
+/// A piece of an image waiting to be sent to a guest: which image (by hash), which piece, how many bytes of the image it carries.
+struct Piece {
+    hash: String,
+    idx: usize,
+    raw: usize,
+}
+
+/// An encoded message waiting for its turn (see `Conn::ordered`).
+struct Ordered {
+    plain: Arc<Vec<u8>>,
+    /// Part of the board (not counted in the backlog bound).
+    snapshot: bool,
+}
+
+/// The board encoded as frames, ready for the guests that arrive (see `HostConfig::snapshot_thread_min_objects`).
+#[derive(Clone)]
+struct Built {
+    seq: Seq,
+    /// Images known when it was made: a newer list makes it obsolete (the guests would not find the images).
+    assets: usize,
+    at: u64,
+    parts: Arc<Vec<Arc<Vec<u8>>>>,
+}
+
+enum SnapState {
+    Empty,
+    /// Being encoded on a thread: the guests that arrive wait for it.
+    Building(Receiver<Built>),
+    Ready(Built),
 }
 
 /// What `poll` read from a connection: a frame to decode, or one dropped unread because its sender is over its rate.
@@ -528,6 +603,9 @@ struct Member {
     last_strike: u64,
     uploads: HashMap<String, Vec<u8>>,
     presence: Option<Presence>,
+    /// When this guest's cursor was last relayed, and the newer one waiting for its turn (see `SessionHost::presence_interval_ms`).
+    presence_at: u64,
+    held_presence: Option<Presence>,
 }
 
 struct Request {
@@ -616,7 +694,8 @@ pub enum HostEvent {
     },
 }
 
-/// Sizes of what a running host keeps (see [`SessionHost::stats`]).
+/// Sizes of what a running host keeps (see [`SessionHost::stats`]); for the load tests.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HostStats {
     pub seq: Seq,
@@ -630,6 +709,8 @@ pub struct HostStats {
     /// Image pieces waiting to be sent, all connections together.
     pub queued_messages: usize,
     pub dropped_frames: u64,
+    /// Big boards encoded so far (one serves all the guests who arrive within `HostConfig::snapshot_ttl_ms`).
+    pub snapshots_built: u64,
 }
 
 /* ----------------------------------------------------------------------------------------------------------- the host */
@@ -667,6 +748,15 @@ pub struct SessionHost {
     frame_len: usize,
     /// Where the next `poll` starts reading, so that no connection is always served last.
     rr: usize,
+    snap: SnapState,
+    /// Encoded pieces of images (shared by the guests who fetch the same image), oldest first, and their total size.
+    piece_cache: HashMap<(String, usize), Arc<Vec<u8>>>,
+    piece_order: VecDeque<(String, usize)>,
+    piece_bytes: usize,
+    /// Boards encoded for the big-board path (the cache of `HostConfig::snapshot_ttl_ms` makes it far fewer than the arrivals).
+    snapshots_built: u64,
+    /// Least delay between two relays of one guest's cursor (0 up to a dozen active cursors).
+    presence_interval_ms: u64,
 }
 
 fn describe(v: &Violation) -> RejectReason {
@@ -714,6 +804,12 @@ impl SessionHost {
             dropped_frames: 0,
             frame_len: 0,
             rr: 0,
+            snap: SnapState::Empty,
+            piece_cache: HashMap::new(),
+            piece_order: VecDeque::new(),
+            piece_bytes: 0,
+            snapshots_built: 0,
+            presence_interval_ms: 0,
         })
     }
 
@@ -749,7 +845,8 @@ impl SessionHost {
         std::mem::take(&mut self.events)
     }
 
-    /// Sizes of what the host keeps (load tests, diagnostics).
+    /// Sizes of what the host keeps (load tests).
+    #[cfg(test)]
     pub fn stats(&self) -> HostStats {
         let (log_entries, log_bytes) = self.seqr.log_stats();
         HostStats {
@@ -761,6 +858,7 @@ impl SessionHost {
             members: self.members.len(),
             queued_messages: self.conns.iter().map(|c| c.out.len()).sum(),
             dropped_frames: self.dropped_frames,
+            snapshots_built: self.snapshots_built,
         }
     }
 
@@ -860,7 +958,7 @@ impl SessionHost {
         let bye = Message::Bye { reason: ByeReason::HostLeft };
         for i in 0..self.conns.len() {
             if matches!(self.conns[i].state, ConnState::Member(_)) {
-                self.send(i, &bye);
+                self.deliver(i, &JsonCodec.encode(&bye));
             }
             self.conns[i].conn.close();
         }
@@ -907,6 +1005,7 @@ impl SessionHost {
         }
         self.now = now;
         self.accept_connections();
+        self.poll_build();
         self.flush_host(ed);
         self.process_decisions();
         // Frames are counted (rate, bytes) before anything is decoded, and only a budget of bytes is read per poll: what is over
@@ -942,6 +1041,8 @@ impl SessionHost {
                 Inbound::Flood => self.on_flood(cid),
             }
         }
+        self.relay_held_presence();
+        self.drain_ordered();
         self.drain_outgoing();
         self.housekeeping();
         if self.roster_dirty {
@@ -978,6 +1079,11 @@ impl SessionHost {
                 opened: self.now,
                 last_rx: self.now,
                 out: VecDeque::new(),
+                ordered: VecDeque::new(),
+                backlog: 0,
+                awaiting_snapshot: false,
+                queue_floor: usize::MAX,
+                queue_since: self.now,
                 rl: RateLimiter::new(10, 20),
             });
         }
@@ -1011,9 +1117,37 @@ impl SessionHost {
     /// Sends `msg` on connection `i`. `false` when it could not be sent (frame too large for the transport, a guest that does not read,
     /// a dead link): the connection is then closed (see `fail_conn`), never left half working.
     fn send(&mut self, i: usize, msg: &Message) -> bool {
+        if self.conns[i].ordered.is_empty() && !self.conns[i].awaiting_snapshot {
+            return self.deliver(i, &JsonCodec.encode(msg));
+        }
+        let plain = Arc::new(JsonCodec.encode(msg));
+        self.send_plain(i, &plain)
+    }
+
+    /// Like `send` for a message already encoded (a broadcast is encoded once, then sealed for each guest): it goes behind the board
+    /// being sent to this guest, if any, so that a guest never sees a modification before the document it applies to.
+    fn send_plain(&mut self, i: usize, plain: &Arc<Vec<u8>>) -> bool {
+        let c = &mut self.conns[i];
+        if c.ordered.is_empty() && !c.awaiting_snapshot {
+            return self.deliver(i, plain);
+        }
+        if matches!(c.state, ConnState::Closing { .. }) {
+            return false;
+        }
+        c.backlog += plain.len();
+        c.ordered.push_back(Ordered { plain: Arc::clone(plain), snapshot: false });
+        if c.backlog > MAX_BACKLOG_BYTES {
+            self.fail_conn(i, "the guest is too slow to receive the board and what follows".to_owned());
+            return false;
+        }
+        true
+    }
+
+    /// Seals and hands the encoded message to the transport.
+    fn deliver(&mut self, i: usize, plain: &[u8]) -> bool {
         let c = &mut self.conns[i];
         let Some(ch) = c.chan.as_mut() else { return true };
-        let failure = match ch.seal(msg).and_then(|frame| c.conn.send(&frame)) {
+        let failure = match ch.seal_encoded(plain).and_then(|frame| c.conn.send(&frame)) {
             Ok(()) => return true,
             Err(e) => e.to_string(),
         };
@@ -1045,11 +1179,159 @@ impl SessionHost {
         self.drop_conn(i);
     }
 
-    /// A snapshot, in as many messages as the transport needs (see `inkboard_session::snapshot`).
-    fn send_snapshot(&mut self, i: usize, s: Snapshot) {
-        for m in into_messages(s, PART_BYTES) {
-            if !self.send(i, &m) {
-                break;
+    /// The board for connection `i`, in as many frames as the transport needs (see `inkboard_session::snapshot`). The frames wait in
+    /// the connection's ordered queue and leave a few megabytes per `poll` (see `drain_ordered`), so that arrivals never freeze the
+    /// host; a big board is encoded on a thread, once for all the guests who arrive within a few seconds.
+    fn queue_snapshot(&mut self, i: usize) {
+        let objects = object_count(self.seqr.doc());
+        if objects < self.cfg.snapshot_thread_min_objects {
+            let snap = self.seqr.snapshot(self.assets.manifest());
+            let parts: Vec<Ordered> = encode_parts(snap).into_iter().map(|plain| Ordered { plain, snapshot: true }).collect();
+            self.conns[i].ordered.extend(parts);
+            return;
+        }
+        if let SnapState::Ready(b) = &self.snap
+            && self.now.saturating_sub(b.at) <= self.cfg.snapshot_ttl_ms
+            && b.assets == self.assets.info.len()
+        {
+            let b = b.clone();
+            if self.attach_built(i, &b, false) {
+                return;
+            }
+        }
+        self.conns[i].awaiting_snapshot = true;
+        if !matches!(self.snap, SnapState::Building(_)) {
+            self.start_build();
+        }
+    }
+
+    /// Starts encoding the board for the guests that wait for it.
+    fn start_build(&mut self) {
+        self.snapshots_built += 1;
+        let snap = self.seqr.snapshot(self.assets.manifest());
+        let (seq, assets, at) = (snap.seq, self.assets.info.len(), self.now);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new().name("inkboard-snapshot".to_owned()).spawn({
+                let snap = snap.clone();
+                move || {
+                    let _ = tx.send(Built { seq, assets, at, parts: Arc::new(encode_parts(snap)) });
+                }
+            });
+            if spawned.is_ok() {
+                self.snap = SnapState::Building(rx);
+                return;
+            }
+        }
+        let b = Built { seq, assets, at, parts: Arc::new(encode_parts(snap)) };
+        self.snap = SnapState::Ready(b.clone());
+        self.fulfil(&b);
+    }
+
+    /// Gives the board that was being encoded to the guests that waited for it.
+    fn poll_build(&mut self) {
+        let SnapState::Building(rx) = &self.snap else { return };
+        match rx.try_recv() {
+            Ok(mut b) => {
+                b.at = self.now; // the time to live counts from the moment it is ready, not from the start of a long encoding
+                self.snap = SnapState::Ready(b.clone());
+                self.fulfil(&b);
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                // the thread died: encode it here
+                self.snap = SnapState::Empty;
+                if self.conns.iter().any(|c| c.awaiting_snapshot) {
+                    self.start_build_inline();
+                }
+            }
+        }
+    }
+
+    fn start_build_inline(&mut self) {
+        self.snapshots_built += 1;
+        let snap = self.seqr.snapshot(self.assets.manifest());
+        let b = Built { seq: snap.seq, assets: self.assets.info.len(), at: self.now, parts: Arc::new(encode_parts(snap)) };
+        self.snap = SnapState::Ready(b.clone());
+        self.fulfil(&b);
+    }
+
+    fn fulfil(&mut self, b: &Built) {
+        for i in 0..self.conns.len() {
+            if !self.conns[i].awaiting_snapshot {
+                continue;
+            }
+            self.conns[i].awaiting_snapshot = false;
+            if !self.attach_built(i, b, true) {
+                // the log no longer reaches back to this board (a very slow build): encode a fresh one here
+                self.conns[i].awaiting_snapshot = true;
+                self.start_build_inline();
+                return;
+            }
+        }
+    }
+
+    /// Queues an encoded board and the modifications made since for connection `i` (`front`: before what already waits there, for a
+    /// guest that arrived while the board was being encoded). `false` when the log cannot bridge the gap.
+    fn attach_built(&mut self, i: usize, b: &Built, front: bool) -> bool {
+        let Some(applied) = self.seqr.applied_since(b.seq) else { return false };
+        let mut items: Vec<Ordered> = b.parts.iter().map(|p| Ordered { plain: Arc::clone(p), snapshot: true }).collect();
+        let c = &mut self.conns[i];
+        for a in applied {
+            let plain = Arc::new(JsonCodec.encode(&Message::Applied(a)));
+            c.backlog += plain.len();
+            items.push(Ordered { plain, snapshot: false });
+        }
+        if front {
+            for it in items.into_iter().rev() {
+                c.ordered.push_front(it);
+            }
+        } else {
+            c.ordered.extend(items);
+        }
+        true
+    }
+
+    /// Sets how often each cursor is relayed from the number of cursors that move (no delay up to `PRESENCE_FREE_CURSORS`, then a few
+    /// milliseconds more for each), and relays the cursors that waited for their turn.
+    fn relay_held_presence(&mut self) {
+        let now = self.now;
+        let active = self.members.values().filter(|m| m.held_presence.is_some() || now.saturating_sub(m.presence_at) < 1_000).count() as u64;
+        self.presence_interval_ms = if active <= PRESENCE_FREE_CURSORS { 0 } else { (active * PRESENCE_MS_PER_CURSOR).min(PRESENCE_MAX_INTERVAL_MS) };
+        let interval = self.presence_interval_ms;
+        let due: Vec<ParticipantId> =
+            self.members.values().filter(|m| m.held_presence.is_some() && now.saturating_sub(m.presence_at) >= interval).map(|m| m.id).collect();
+        for pid in due {
+            if let Some(m) = self.members.get_mut(&pid) {
+                m.presence_at = now;
+                if let Some(p) = m.held_presence.take() {
+                    self.broadcast(&Message::Presence(p), Some(pid));
+                }
+            }
+        }
+    }
+
+    /// Seals and hands to the transports a few megabytes of what waits behind boards, all guests together; a guest whose transport
+    /// still holds a lot is skipped (it reads slowly).
+    fn drain_ordered(&mut self) {
+        let n = self.conns.len();
+        let mut budget = self.cfg.ordered_bytes_per_poll;
+        for k in 0..n {
+            let i = (self.rr.wrapping_add(k)) % n;
+            while budget > 0 {
+                let c = &mut self.conns[i];
+                if matches!(c.state, ConnState::Closing { .. }) || c.awaiting_snapshot || c.conn.queued_bytes() >= TRANSPORT_LOW_WATER {
+                    break;
+                }
+                let Some(item) = c.ordered.pop_front() else { break };
+                if !item.snapshot {
+                    c.backlog = c.backlog.saturating_sub(item.plain.len());
+                }
+                budget = budget.saturating_sub(item.plain.len());
+                if !self.deliver(i, &item.plain) {
+                    break;
+                }
             }
         }
     }
@@ -1063,11 +1345,13 @@ impl SessionHost {
 
     /// To every guest (all of them have been admitted), except `except`.
     fn broadcast(&mut self, msg: &Message, except: Option<ParticipantId>) {
+        // encoded once: only the encryption is done for each guest
+        let plain = Arc::new(JsonCodec.encode(msg));
         for i in 0..self.conns.len() {
             if let ConnState::Member(pid) = self.conns[i].state
                 && Some(pid) != except
             {
-                self.send(i, msg);
+                self.send_plain(i, &plain);
             }
         }
     }
@@ -1078,21 +1362,75 @@ impl SessionHost {
 
     fn drop_conn(&mut self, i: usize) {
         self.conns[i].conn.close();
+        self.conns[i].ordered.clear();
+        self.conns[i].backlog = 0;
+        self.conns[i].awaiting_snapshot = false;
         self.conns[i].state = ConnState::Closing { until: self.now };
     }
 
     fn refuse(&mut self, i: usize, reason: RefuseReason) {
-        self.send(i, &Message::Refused { reason });
+        self.deliver(i, &JsonCodec.encode(&Message::Refused { reason }));
         self.close_later(i);
     }
 
+    /// Hands to the transports pieces of images: a few per guest, a few megabytes in all per `poll`, and nothing to a guest whose
+    /// transport still holds a lot. The text of a piece is made once and shared by all the guests who fetch that image.
     fn drain_outgoing(&mut self) {
-        for i in 0..self.conns.len() {
+        let n = self.conns.len();
+        let mut budget = ASSET_BYTES_PER_POLL;
+        for k in 0..n {
+            let i = self.rr.wrapping_add(k) % n;
             for _ in 0..self.cfg.send_budget {
-                let Some(m) = self.conns[i].out.pop_front() else { break };
-                self.send(i, &m);
+                let c = &self.conns[i];
+                if budget == 0 {
+                    return;
+                }
+                if c.out.is_empty()
+                    || !c.ordered.is_empty()
+                    || c.awaiting_snapshot
+                    || matches!(c.state, ConnState::Closing { .. })
+                    || c.conn.queued_bytes() >= TRANSPORT_LOW_WATER
+                {
+                    break;
+                }
+                let Some(p) = self.conns[i].out.pop_front() else { break };
+                let Some(plain) = self.piece_plain(&p.hash, p.idx) else { continue };
+                budget = budget.saturating_sub(p.raw);
+                if !self.deliver(i, &plain) {
+                    break;
+                }
             }
         }
+    }
+
+    /// The encoded message of piece `idx` of the image with this hash (cached: 100 guests fetching the same photo cost one encoding).
+    fn piece_plain(&mut self, hash: &str, idx: usize) -> Option<Arc<Vec<u8>>> {
+        let key = (hash.to_owned(), idx);
+        if let Some(p) = self.piece_cache.get(&key) {
+            return Some(Arc::clone(p));
+        }
+        let size = self.cfg.limits.max_asset_chunk_bytes.max(1);
+        let plain = {
+            let id = self.assets.by_hash.get(hash)?;
+            let data = &self.seqr.doc().assets.get(id)?.data;
+            let from = idx.checked_mul(size)?;
+            if from > data.len() || (from == data.len() && idx > 0) {
+                return None;
+            }
+            let to = (from + size).min(data.len());
+            let chunk = AssetChunk { hash: hash.to_owned(), offset: from as u64, data: data[from..to].to_vec(), last: to >= data.len() };
+            Arc::new(JsonCodec.encode(&Message::AssetChunk(chunk)))
+        };
+        self.piece_bytes += plain.len();
+        self.piece_cache.insert(key.clone(), Arc::clone(&plain));
+        self.piece_order.push_back(key);
+        while self.piece_bytes > PIECE_CACHE_BYTES {
+            let Some(old) = self.piece_order.pop_front() else { break };
+            if let Some(p) = self.piece_cache.remove(&old) {
+                self.piece_bytes -= p.len();
+            }
+        }
+        Some(plain)
     }
 
     /* --------------------------------------------------------------------------------------------------- the host's changes */
@@ -1224,6 +1562,12 @@ impl SessionHost {
             self.dropped_frames += 1;
             return self.drop_conn(i);
         }
+        // A guest that starts again without resuming (it never got the whole board, or it lost its state) does not need the places it
+        // left held: they are freed, so that a guest on a bad link that keeps retrying does not use up the places of the session.
+        let held: Vec<ParticipantId> = self.members.values().filter(|m| m.peer == peer && m.conn.is_none()).map(|m| m.id).collect();
+        for pid in held {
+            self.leave(pid);
+        }
         if self.members.values().filter(|m| m.peer == peer).count() >= self.cfg.max_per_peer.max(1) {
             return self.refuse(i, RefuseReason::TooManyFromPeer);
         }
@@ -1290,6 +1634,8 @@ impl SessionHost {
             last_strike: 0,
             uploads: HashMap::new(),
             presence: None,
+            presence_at: 0,
+            held_presence: None,
         };
         self.members.insert(pid, member);
         self.conns[i].state = ConnState::Member(pid);
@@ -1318,20 +1664,15 @@ impl SessionHost {
             participants: self.roster(),
         };
         self.send(i, &Message::Welcome(welcome));
-        let manifest = self.assets.manifest();
-        match last_seq.map(|s| self.seqr.catch_up(s, manifest.clone())) {
-            Some(CatchUp::Applied(v)) => {
+        match last_seq.and_then(|s| self.seqr.applied_since(s)) {
+            Some(v) => {
                 for a in v {
                     if !self.send(i, &Message::Applied(a)) {
                         break;
                     }
                 }
             }
-            Some(CatchUp::Snapshot(s)) => self.send_snapshot(i, s),
-            None => {
-                let s = self.seqr.snapshot(manifest);
-                self.send_snapshot(i, s);
-            }
+            None => self.queue_snapshot(i),
         }
     }
 
@@ -1341,7 +1682,7 @@ impl SessionHost {
         let Some(m) = self.members.remove(&pid) else { return };
         self.banned.insert(m.peer.clone());
         if let Some(i) = m.conn.and_then(|c| self.conn_index(c)) {
-            self.send(i, &Message::Kick { participant: pid });
+            self.deliver(i, &JsonCodec.encode(&Message::Kick { participant: pid }));
             self.close_later(i);
         }
         self.seqr.forget(pid);
@@ -1445,7 +1786,15 @@ impl SessionHost {
                 p.participant = Some(pid);
                 m.presence = Some(p.clone());
                 self.events.push(HostEvent::Presence { id: pid, presence: Box::new(p.clone()) });
-                self.broadcast(&Message::Presence(p), Some(pid));
+                // With many people each cursor is relayed less often (the latest position always gets there): the work of the host
+                // and the traffic of every guest would otherwise grow with the square of the number of participants.
+                if now.saturating_sub(m.presence_at) >= self.presence_interval_ms {
+                    m.presence_at = now;
+                    m.held_presence = None;
+                    self.broadcast(&Message::Presence(p), Some(pid));
+                } else {
+                    m.held_presence = Some(p);
+                }
             }
             Message::Resync { last_seq } => {
                 // one of the few requests that makes the host send a lot: its own budget, for readers as well
@@ -1453,17 +1802,16 @@ impl SessionHost {
                     return self.violation(pid, &Violation::RateExceeded { what: "resynchronizations" }, 0);
                 }
                 m.confirmed = true;
-                let manifest = self.assets.manifest();
                 let Some(i) = self.members.get(&pid).and_then(|m| m.conn).and_then(|c| self.conn_index(c)) else { return };
-                match self.seqr.catch_up(last_seq, manifest) {
-                    CatchUp::Applied(v) => {
+                match self.seqr.applied_since(last_seq) {
+                    Some(v) => {
                         for a in v {
                             if !self.send(i, &Message::Applied(a)) {
                                 break;
                             }
                         }
                     }
-                    CatchUp::Snapshot(s) => self.send_snapshot(i, s),
+                    None => self.queue_snapshot(i),
                 }
             }
             Message::AssetRequest { hash } => {
@@ -1597,12 +1945,14 @@ impl SessionHost {
         let Some(id) = self.assets.by_hash.get(hash).cloned() else { return };
         let Some(data) = self.seqr.doc().assets.get(&id).map(|a| Arc::clone(&a.data)) else { return };
         let Some(i) = self.members.get(&pid).and_then(|m| m.conn).and_then(|c| self.conn_index(c)) else { return };
-        let queued: usize = self.conns[i].out.iter().map(|m| if let Message::AssetChunk(c) = m { c.data.len() } else { 0 }).sum();
+        let queued: usize = self.conns[i].out.iter().map(|p| p.raw).sum();
         if queued + data.len() > MAX_QUEUED_ASSET_BYTES {
             return; // the guest asked for more than it can take: it asks again later
         }
-        let chunk = self.cfg.limits.max_asset_chunk_bytes;
-        self.conns[i].out.extend(chunks(&data, hash, chunk).into_iter().map(Message::AssetChunk));
+        let size = self.cfg.limits.max_asset_chunk_bytes.max(1);
+        let n = data.len().div_ceil(size).max(1);
+        let pieces = (0..n).map(|idx| Piece { hash: hash.to_owned(), idx, raw: size.min(data.len().saturating_sub(idx * size)) });
+        self.conns[i].out.extend(pieces);
     }
 
     /// An image uploaded by a guest, chunk by chunk, before the modification that uses it.
@@ -1683,6 +2033,26 @@ impl SessionHost {
     fn housekeeping(&mut self) {
         let now = self.now;
         let (idle, hold) = (self.cfg.idle_ms, self.cfg.place_hold_ms);
+        // a guest that does not read: its transport queue holds a lot and has not shrunk for a long time
+        let mut stalled: Vec<usize> = Vec::new();
+        for (i, c) in self.conns.iter_mut().enumerate() {
+            if !matches!(c.state, ConnState::Member(_)) {
+                continue;
+            }
+            let q = c.conn.queued_bytes();
+            if q < STALL_MIN_BYTES {
+                c.queue_floor = usize::MAX;
+                c.queue_since = now;
+            } else if q < c.queue_floor {
+                c.queue_floor = q;
+                c.queue_since = now;
+            } else if now.saturating_sub(c.queue_since) >= self.cfg.stall_ms {
+                stalled.push(i);
+            }
+        }
+        for i in stalled {
+            self.fail_conn(i, "the guest does not read what is sent to it".to_owned());
+        }
         // a request nobody answered expires, even if the guest keeps sending `Ping`s
         let stale: Vec<(u64, u64)> = self.requests.iter().filter(|r| now.saturating_sub(r.at) >= self.cfg.pending_ms).map(|r| (r.id, r.conn)).collect();
         for (rid, cid) in stale {

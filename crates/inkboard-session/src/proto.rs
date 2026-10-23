@@ -1,4 +1,4 @@
-//! Messages of the session protocol (version 2). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
+//! Messages of the session protocol (version 3). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
 
 use crate::error::{Error, Result};
 use crate::wire::WireOp;
@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 /// Version of the protocol, carried by the first message (`Hello`) and by `Welcome`.
 /// v2: a snapshot too large for one frame travels as numbered `SnapshotPart`s (see `snapshot`).
-pub const PROTO_VERSION: u32 = 2;
+/// v3: the host may send a snapshot (part) compressed, as `Packed` (see `pack`).
+pub const PROTO_VERSION: u32 = 3;
 
 /// Fails with a clear message when the peer speaks another version of the protocol.
 pub fn check_proto(theirs: u32) -> Result<()> {
@@ -302,6 +303,11 @@ pub enum Message {
     Snapshot(Snapshot),
     /// A snapshot too large for one frame, in pieces (see [`SnapshotPart`]).
     SnapshotPart(SnapshotPart),
+    /// Host -> guest: a `Snapshot` or `SnapshotPart` compressed (see `pack`). A host never accepts one.
+    Packed {
+        #[serde(with = "b64")]
+        data: Vec<u8>,
+    },
     // images
     AssetRequest {
         hash: String,

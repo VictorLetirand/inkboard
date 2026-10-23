@@ -253,6 +253,12 @@ impl SecureChannel {
         self.cipher.seal(&self.codec.encode(msg), self.entropy.as_mut())
     }
 
+    /// Encrypts bytes the channel's codec already wrote (same as `seal`, without encoding again): a broadcast is encoded once and
+    /// sealed for each recipient, which has its own key and nonces.
+    pub fn seal_encoded(&mut self, encoded: &[u8]) -> Result<Vec<u8>> {
+        self.cipher.seal(encoded, self.entropy.as_mut())
+    }
+
     /// Frame -> message. The size is checked first; nothing here panics on hostile bytes.
     pub fn open(&self, frame: &[u8]) -> Result<Message> {
         if frame.len() > self.max_frame {

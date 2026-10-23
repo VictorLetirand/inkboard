@@ -111,6 +111,130 @@ fn measure(doc: &Document, participants: usize, frames: usize, view: Option<View
     Summary::of(&times)
 }
 
+/// Frames of a GUEST application (the one that is measured) on `doc`, while `participants` other guests work (real iroh transport on the
+/// loopback interface, the host is the real application in the same process): the mirror of the board is refreshed as modifications arrive.
+fn measure_guest(doc: &Document, participants: usize, frames: usize) -> Summary {
+    use crate::i18n::{Lang, set_for_thread};
+    use crate::session_guest::GuestConfig;
+    use crate::session_net::{GuestNet, IrohHostNet, NetDiagnoser};
+    use inkboard_crowd::fleet::{FleetConfig, run_fleet};
+    use inkboard_crowd::link::RealClock;
+    use inkboard_crowd::net::{IrohDialer, Mode};
+    use inkboard_net::NetConfig as IrohCfg;
+    set_for_thread(Some(Lang::En));
+    let mut host = T::new();
+    host.app().ed = Editor::new(doc.clone());
+    host.app().share.net = Some(Box::new(IrohHostNet::new(IrohCfg::loopback())));
+    host.app().share.max_participants = participants + 5;
+    crate::share_ui::start(host.app());
+    for _ in 0..2000 {
+        host.h.step();
+        if host.app().share.is_running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(host.app().share.is_running(), "sharing did not start: {:?}", host.app().share.error);
+    let link = {
+        let a = host.app();
+        a.share.host.as_ref().expect("a session").link(Role::Edit, a.share.addr.as_ref().expect("an address")).expect("a link")
+    };
+    host.app().share.host.as_mut().expect("a session").config_mut().max_pending = participants + 8;
+
+    let dir = std::env::temp_dir().join(format!("inkboard-crowd-ui-{}", std::process::id()));
+    let mut guest = T::new();
+    let net = GuestNet {
+        net: IrohCfg { connect_timeout: std::time::Duration::from_secs(10), ..IrohCfg::loopback() },
+        session: GuestConfig::default(),
+        diagnoser: Arc::new(NetDiagnoser { timeout: std::time::Duration::from_secs(3), trusted: Vec::new(), allow_private: true, relays_dir: None }),
+        relays_dir: None,
+        watch_network: false,
+    };
+    guest.app().join.factory = Some(net.into_factory());
+    guest.app().join.name_dir = Some(dir.clone());
+    guest.app().open_join_window(Some(link.clone()));
+    if let Some(w) = guest.app().join.window.as_mut() {
+        w.name = "Measured".to_owned();
+    }
+    guest.app().submit_join();
+
+    // the other guests, in threads of this process
+    let fleet = (participants > 0).then(|| {
+        let ticket = Link::parse(&link).expect("a link").ticket;
+        let profile = Profile { ramp_s: 2.0, slow_fraction: 0.0, viewer_fraction: 0.0, fetch_images: false, ..Profile::busy() };
+        let env = Arc::new(GuestEnv {
+            clock: Arc::new(RealClock::default()),
+            profile,
+            machine: 3,
+            edit_ticket: ticket.clone(),
+            view_ticket: None,
+            deterministic: false,
+            seed: 11,
+        });
+        let cfg = FleetConfig {
+            guests: participants,
+            first_index: 1000,
+            threads: 2,
+            machine_name: "ui".to_owned(),
+            t0_epoch_ms: None,
+            duration_s: 60.0,
+            settle_s: 0.0,
+            out_dir: None,
+            raw: false,
+            transport: "loopback".to_owned(),
+        };
+        std::thread::spawn(move || {
+            let make: Arc<dyn Fn(usize) -> Box<dyn Dialer> + Send + Sync> =
+                Arc::new(move |_| Box::new(IrohDialer::new(Mode::Loopback, ticket.clone()).expect("an endpoint")));
+            run_fleet(&cfg, env, make)
+        })
+    });
+
+    let mut times = Vec::with_capacity(frames);
+    let mut turns = 0usize;
+    let mut joined_at = None;
+    while times.len() < frames && turns < 20_000 {
+        turns += 1;
+        host.h.step();
+        if let Some(h) = host.app().share.host.as_mut() {
+            for p in h.pending() {
+                h.accept(p.request, Role::Edit);
+            }
+        }
+        let started = Instant::now();
+        guest.h.step();
+        let took = started.elapsed().as_secs_f64() * 1000.0;
+        let ready = guest.app().guest.as_ref().is_some_and(|g| g.mirror_ready());
+        if ready {
+            let at = *joined_at.get_or_insert(turns);
+            if turns > at + 300 {
+                times.push(took); // after the first 300 turns: the board is in, the others are at work
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+    drop(guest);
+    drop(host);
+    if let Some(f) = fleet {
+        let _ = f.join();
+    }
+    let _ = std::fs::remove_dir_all(dir);
+    Summary::of(&times)
+}
+
+pub fn run_guest() {
+    let objects: usize = env_or("CROWD_OBJECTS", 5_000);
+    let frames: usize = env_or("CROWD_FRAMES", 300);
+    let counts: Vec<usize> =
+        std::env::var("CROWD_PARTICIPANTS").unwrap_or_else(|_| "0,10,20".to_owned()).split(',').filter_map(|s| s.trim().parse().ok()).collect();
+    let doc = seed_document(&BoardSpec::sized(objects, 1));
+    println!("\n| board | other participants at work | guest frame ms p50 | p95 | p99 | max |\n|---|---|---|---|---|---|");
+    for &n in &counts {
+        let s = measure_guest(&doc, n, frames);
+        println!("| {objects} objects | {n} | {:.2} | {:.2} | {:.2} | {:.2} |", s.p50, s.p95, s.p99, s.max);
+    }
+}
+
 pub fn run() {
     let objects: usize = env_or("CROWD_OBJECTS", 5_000);
     let frames: usize = env_or("CROWD_FRAMES", 300);
