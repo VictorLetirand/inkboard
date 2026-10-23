@@ -9,20 +9,24 @@ The test `third_party_licenses_list_every_crate_embedded_in_the_binaries` checks
 
 ## Installers
 
-One installer per system, produced by [`cargo-packager`](https://github.com/crabnebula-dev/cargo-packager) from [`Packager.toml`](../Packager.toml):
+One installer per system, produced by [`cargo-packager`](https://github.com/crabnebula-dev/cargo-packager) from [`Packager.toml`](../Packager.toml), except the Windows `.exe`, built by [Installway](https://github.com/Tooltip-Focus/Installway) from [`installway.toml`](../installway.toml):
 
 | System | Formats | Status |
 |---|---|---|
-| Windows | `.exe` (NSIS) and `.msi` (WiX) | **built and tested**: silent install, Start menu shortcut, "Installed apps" entry, launching the installed application, clean uninstall (see below) |
+| Windows | `.exe` (Installway) | built by the release workflow, **not yet tested**: silent install, Start menu shortcut, "Installed apps" entry, launching the installed application, clean uninstall (see below) |
 | Linux | `.deb`, `.AppImage` (and PKGBUILD) | configured, **never built or launched** |
 | macOS | `.dmg` (and `.app`), Intel and Apple Silicon | configured, **never built or launched** |
 
 The installer installs the application, the `ink` conversion CLI and the `inkboard-mcp` MCP server side by side, along with the README and licenses. Locally (Windows):
 
 ```bash
-cargo install cargo-packager --locked
 cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp
-cargo packager --release -c Packager.toml --formats nsis     # or wix
+```
+
+The Windows `.exe` needs a Windows Docker host (Windows containers): copy `target/release/{inkboard,ink,inkboard-mcp}.exe`, `README.md`, `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD_PARTY_LICENSES.md` to `dist/installway/`, then:
+
+```powershell
+docker run --rm -v "${PWD}:C:\work" ghcr.io/tooltip-focus/installway:latest --to-version 0.1.0 --out dist/inkboard_0.1.0_x64-setup.exe
 ```
 
 Installers are written to `dist/`. The version comes from `Packager.toml`: it must stay equal to the one in `Cargo.toml` (a test checks this).
@@ -38,16 +42,15 @@ GitHub Release. It can also be started by hand (nothing is published then; it on
 
 ## The Windows install, in detail
 
-The `.exe` installer is the recommended one:
+The `.exe` installer:
 
-- **Per-user, no administrator prompt.** It installs to `%LOCALAPPDATA%\Inkboard`, adds a Start menu shortcut and an entry in *Settings → Apps* (with the publisher, version and icon), and its uninstaller removes everything it installed. Your boards are never touched; the uninstaller offers (unchecked by default) to delete the application data folder `%APPDATA%\Inkboard` (custom shortcuts, language, autosaves).
-- **File association.** `Packager.toml` declares the `.inkboard` extension (`[[file-associations]]`, MIME type `application/x-inkboard`): the installers register it so that a double-click runs `inkboard <file>`; the `.deb` also installs a shared-mime-info definition and the macOS bundle lists it in `CFBundleDocumentTypes`. Files saved by earlier builds (`.inkboard.json`, `.tableau.json`) are not associated (`.json` belongs to other programs) but still open from the application. Known gap in cargo-packager 0.11.8, worked around: its WiX template reads `association.ext` and the uninstall part of its NSIS template does the same, while the field is `extensions`; the repository therefore carries corrected copies of both templates (`packaging/wix/main.wxs`, `packaging/nsis/installer.nsi`, wired through `[wix] template` / `[nsis] template` in `Packager.toml`; the header of each file says how to update it after a cargo-packager upgrade, and `release_metadata.rs` checks the fix offline). Checked without installing anything: the `.msi` contains the `Extension`, `ProgId` and `Verb` (open) tables, and the NSIS uninstaller removes the `.inkboard` class and extension keys. **Not yet verified**: a real double-click, the file icon and "Open with" after an installation.
-- **Silent install:** `inkboard_*_x64-setup.exe /S` (and `uninstall.exe /S` in the install folder).
+- **Per-user, no administrator prompt.** It installs to `%LOCALAPPDATA%\Programs\Inkboard` (or a folder chosen in the wizard), adds a Start menu shortcut and an entry in *Settings → Apps* (with the publisher, version and icon), and its uninstaller removes everything it installed. Your boards and the application data folder `%APPDATA%\Inkboard` (custom shortcuts, language, autosaves) are never touched.
+- **File association.** `Packager.toml` declares the `.inkboard` extension (`[[file-associations]]`, MIME type `application/x-inkboard`): the installers register it so that a double-click runs `inkboard <file>`; the `.deb` also installs a shared-mime-info definition and the macOS bundle lists it in `CFBundleDocumentTypes`. Files saved by earlier builds (`.inkboard.json`, `.tableau.json`) are not associated (`.json` belongs to other programs) but still open from the application. The Installway `.exe` declares it in `installway.toml` (`assoc`, ProgID `inkboard.inkboard`); its uninstaller removes it only if `.inkboard` still points at Inkboard. **Not yet verified**: a real double-click, the file icon and "Open with" after an installation.
+- **Silent install:** `inkboard_*_x64-setup.exe --silent` (uninstall: the `QuietUninstallString` of the *Settings → Apps* entry, `uninstall.exe --silent` in `%LOCALAPPDATA%\Inkboard\Uninstall\inkboard`).
+- **Coming from a 0.1.0 pre-release** (NSIS installer): uninstall it first, otherwise its files stay behind.
 - **English or French**, following the language of Windows.
 - **Self-contained.** The executables link the C runtime statically and only import Windows system libraries, so nothing needs to be installed first (no Visual C++ redistributable). They carry an icon, version information and an application manifest (no elevation, UTF-8, long paths, per-monitor DPI), and the application is a GUI program: no console window opens behind it.
 - **Works without a good GPU.** The application uses OpenGL and falls back to Direct3D 12 / Vulkan (with a software fallback) when OpenGL is missing or too old (remote desktop, virtual machines). `INKBOARD_RENDERER=wgpu` (or `glow`) forces one of them. If the window cannot be opened at all, a message explains why; if the application crashes, it writes `%APPDATA%\Inkboard\crash.log` and says so.
-
-The `.msi` is the classic Windows Installer package (machine-wide, administrator rights required), for managed environments. It has not been exercised as much as the `.exe`.
 
 ### winget
 
@@ -82,7 +85,7 @@ secrets are set, and produces unsigned installers otherwise.**
 2. Create a **certificate profile** (type *Public Trust*).
 3. Create an **app registration** (a service principal) and give it the role *Artifact Signing Certificate Profile Signer* on the account.
 4. In the GitHub repository settings add the **secrets** `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` and the **variables** `SIGNING_ENDPOINT` (the regional endpoint of the account, for example `https://weu.codesigning.azure.net`), `SIGNING_ACCOUNT` and `SIGNING_PROFILE`.
-5. Push a tag: the executables (`inkboard.exe`, `ink.exe`, `inkboard-mcp.exe`) are signed and timestamped before packaging, then the `.exe` and `.msi` installers are signed.
+5. Push a tag: the executables (`inkboard.exe`, `ink.exe`, `inkboard-mcp.exe`) are signed and timestamped before packaging, then the `.exe` installer is signed.
 
 A freshly signed application may still trigger SmartScreen for a while: its reputation builds with the number of downloads, and signing is what lets it build instead of starting from zero on every release.
 
