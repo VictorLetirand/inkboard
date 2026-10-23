@@ -509,7 +509,7 @@ fn the_agent_of_the_host_is_seen_acting_by_the_guests() {
     r.host.app().agent.record(ev, Pt::ZERO, now);
     r.pump(4);
     let g = r.guests[a].app();
-    assert_eq!(g.agent.state.participant.name, "Claude");
+    assert_eq!(g.agent.state.participant.name, "Claude (agent)", "S-14: always shown as an agent");
     assert!(g.agent.state.cursor.is_some(), "the agent's cursor is shown");
     assert!(g.agent.state.halo_count() > 0, "with a halo on the object it created");
     assert!(g.ed.page().get(&id).is_some());

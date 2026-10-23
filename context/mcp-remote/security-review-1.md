@@ -3,6 +3,8 @@
 *Branche `feat/remote-s` (base `35d806d`). Code lu : `inkboard-session/src/**`, `inkboard-net/src/**`, `inkboard-app/src/{session_host,session_guest,session_net,share_ui,join_ui,main}.rs`, `inkboard-core/src/{editor,history}.rs`, plus le chemin de rendu des images (`render.rs`, `inkboard-formats/src/raster.rs`) car il traite les octets envoyés par les invités. Aucun code du dépôt n'a été modifié.*
 *Tests d'attaque : écrits et lancés dans une copie jetable hors du dépôt (`%TEMP%\atk`), non conservés. Mention « vérifié : oui » = exécuté ; « lecture » = déduit du code seulement ; « hypothèse » = non établi.*
 
+**Statut à jour (lot S4) : voir la section « Statut des constats » en fin de document.** Le texte ci-dessous est celui de la revue d'origine (base `35d806d`).
+
 ## Synthèse
 
 19 constats : **0 critique, 5 élevés, 9 moyens, 5 faibles.** Le chiffrement du lien, les rôles par clé, la validation des opérations et la séparation hôte/invité sont solides (section « bien fait »). Les faiblesses sont ailleurs : (1) le **traitement des images** reçues d'un invité (SVG qui lit des fichiers locaux, SVG qui gèle l'interface, bitmap qui fait planter l'affichage), (2) l'**absence de limite sur `Resync`/`Hello`**, (3) un **plafond de trame de 1 Mio** incompatible avec l'instantané d'un tableau de plus de ~3 900 objets, (4) l'**URL de relais du ticket** traitée comme digne de confiance (requêtes sortantes et message d'erreur qui conseille d'ouvrir un domaine choisi par l'auteur du lien).
@@ -55,6 +57,32 @@
 ## Non vérifié
 
 Plantage réel d'`egui_glow`/`wgpu` sur texture trop grande (S-03) ; fuite NTLM par chemin UNC (S-01) ; effet d'un `GET` réel vers un hôte interne par iroh/`diagnose_relay` (S-06) ; abandon effectif d'une trame trop grande par `IrohConn` en bout en bout (S-04, seulement lu) ; consommation mémoire/CPU chiffrée (S-10, S-13) ; comportement d'iroh/relais (ce que le relais voit exactement, rejeu QUIC, limites côté relais n0) ; installeurs et gestionnaires d'URL réels, passage de `"` par des clients de messagerie (S-16) ; comportement Linux/macOS ; client web (`wasm32`, lots F) ; Firefox/Safari ; faux positifs possibles sur S-09 à S-11, S-14 (hypothèses de charge ou d'usage).
+
+## Statut des constats (mis à jour au lot S4, branche `feat/remote-s4`)
+
+Commits : SF1 `5af4b5a` (images, URL de relais) · SF2 `ff3d145` (hôte et protocole) · SF3 `064a067` (constats faibles) · S4 : `9dce2dd` (mémoire de l'historique), `f3d91e2` (liens révoqués, plafond par identité), `b3605c4` (S-14).
+
+| Id | Statut | Commit(s) | Reste / décision |
+|---|---|---|---|
+| S-01 | corrigé | `5af4b5a` | — |
+| S-02 | corrigé | `5af4b5a` | liste blanche pour les SVG des invités ; les SVG de l'hôte lui-même ne sont pas filtrés (accepté : c'est son tableau). Voir S-09 pour un hôte hostile. |
+| S-03 | corrigé | `5af4b5a` | plantage GPU réel jamais exécuté (assertion lue dans la source), borne vérifiée par test. |
+| S-04 | corrigé | `ff3d145` | instantané en parties (protocole v2). Une trame isolée > 1 Mio (un objet énorme de l'hôte, un `Applied` énorme) échoue encore : l'invité est coupé puis reprend par instantané (ouvert, faible). |
+| S-05 | corrigé | `ff3d145` | — |
+| S-06 | corrigé | `5af4b5a` | ouvert (faible) : un nom DNS public qui résout vers une adresse privée n'est pas bloqué pour la connexion `iroh` elle-même (seulement pour le diagnostic) ; chemin TLS « relais inconnu » du diagnostic non testé. |
+| S-07 | corrigé | `5af4b5a` | — |
+| S-08 | corrigé | `ff3d145` | — |
+| S-09 | partiel | `ff3d145` | validation du protocole côté invité : corrigée. **Ouvert** : un hôte hostile peut encore envoyer un SVG à filtre lourd que l'invité rend sans borne de temps (le lien est le consentement ; faible tant que l'invité ne rejoint que des hôtes connus). |
+| S-10 | corrigé | `ff3d145`, `9dce2dd` | files en octets, réserve et quotas (SF2) ; piles d'annulation par auteur (32 Mio/auteur, 128 Mio au total), mémoire « dernier auteur » (100 000 objets) et journal du séquenceur (64 Mio, 200 000 objets) bornés avec éviction du plus ancien (S4). Pile d'annulation de l'hôte lui-même (`History`, 500 pas) non bornée en octets : accepté (c'est l'hôte). |
+| S-11 | corrigé | `ff3d145`, `f3d91e2` | connexions muettes à part, expiration des demandes (SF2) ; plafond par identité de transport : 3 places, 6 connexions ouvertes (S4). **Pas de plafond par adresse IP** : le transport n'expose que l'identité authentifiée (le relais cache l'IP). Pas de bouton « tout refuser » (ouvert, cosmétique). |
+| S-12 | corrigé | `ff3d145` | — |
+| S-13 | corrigé | `ff3d145` | — |
+| S-14 | corrigé | `064a067`, `b3605c4` | refus des accès fichier pendant qu'un invité peut éditer (SF3) ; `untrusted_text` et `author {guest, untrusted}` dans `describe_board`/`board_changes`/`find_objects`/`batch`, nom d'agent toujours affiché « nom (agent) » côté invité (S4). Le marquage suit le dernier auteur : un texte d'invité déplacé ensuite par l'hôte n'est plus marqué (d'où la consigne générale `untrusted_text`). |
+| S-15 | corrigé | `064a067`, `f3d91e2` | affichage du type de lien et de l'identité (SF3) ; nouveaux liens : demandes en attente refusées, ancien lien sans réponse, invités déjà admis reprennent leur place avec l'ancienne clé (identité de transport identique) ; exclu : identité refusée, rien ne lui est envoyé, aucune clé ne lui rend sa place (S4). **Accepté** : un exclu qui garde le lien et change d'identité peut redemander l'accès (l'hôte voit une nouvelle demande) tant que les liens ne sont pas régénérés ; « Exclure » ne régénère pas les liens tout seul (décision de produit : cela casserait les invitations en cours). |
+| S-16 | corrigé | `064a067` | — |
+| S-17 | corrigé | `064a067` | homoglyphes visibles (cyrillique) acceptés : l'hôte voit l'identifiant court dans la demande. |
+| S-18 | corrigé | `064a067` | — |
+| S-19 | corrigé | `064a067` | — |
 
 ## Classement des correctifs à faire d'abord
 
