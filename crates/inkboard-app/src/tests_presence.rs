@@ -50,6 +50,7 @@ impl Room {
         let mut host = T::new();
         host.app().share.net = Some(Box::new(Net(net.clone())));
         host.app().share.test_clock = Some(clock.clone());
+        host.app().agent.remote.freeze_clock(); // presence timers follow the virtual time only, whatever the load of the machine
         crate::share_ui::start(host.app());
         assert!(host.app().share.is_running());
         Room { net, clock, host, guests: Vec::new(), dirs: Vec::new(), frozen: Vec::new() }
@@ -82,6 +83,7 @@ impl Room {
         let k = self.guests.len() as u64;
         let dir = std::env::temp_dir().join(format!("inkboard-presence-{}", Id::new()));
         let mut t = T::new();
+        t.app().agent.remote.freeze_clock();
         let (n, c) = (self.net.clone(), self.clock.clone());
         t.app().join.factory = Some(Box::new(move |ticket, name| {
             let link = Box::new(n.transport(&format!("guest-{k}")));

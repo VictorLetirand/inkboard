@@ -152,8 +152,10 @@ impl IrohConn {
     /// Host side: closes the connection and tells the peer that it was refused (it sees `Network { Refused }`).
     pub fn refuse(&mut self) {
         self.shared.mark_closed(None);
-        self.stop_writing();
+        // The connection is closed BEFORE the writer is told to stop: the writer finishes the stream when it stops, and a peer that saw
+        // that end of stream first would read a plain `Closed` instead of the refusal (a race the loaded machines showed).
         self.conn.close(VarInt::from_u32(CLOSE_REFUSED), b"refused");
+        self.stop_writing();
     }
 }
 
