@@ -9,7 +9,7 @@ use crate::theme;
 use crate::tools::Tool;
 use eframe::egui::{self, Align2, Color32, Context, FontId, Sense, Stroke, Ui, vec2};
 use inkboard_core::editor::Order;
-use inkboard_core::*;
+use inkboard_core::{BgPreset, BoxGeom, FontFamily, Id, Kind, Pattern, Pt, View};
 use std::time::Duration;
 
 /// Window width below which the toolbar moves under the title bar (`@media (max-width:1180px)`).
@@ -303,6 +303,85 @@ fn key(app: &App, a: Action) -> String {
     app.keymap.label(a)
 }
 
+/// Export entries of the main menu.
+fn export_items(app: &mut App, ui: &mut Ui) {
+    theme::menu_sep(ui);
+    let sel = !app.sel.is_empty();
+    if mi(ui, "download", if sel { "Export selection as PNG" } else { "Export as PNG" }, "") {
+        app.export("png");
+    }
+    if mi(ui, "download", "Export as SVG", "") {
+        app.export("svg");
+    }
+    if mi(ui, "download", "Export as PDF", "") {
+        app.export("pdf");
+    }
+    if mi(ui, "copy", "Copy image to clipboard", "") {
+        app.copy_as_image();
+    }
+    theme::menu_label(ui, "Exchange with other tools");
+    if mi(ui, "download", "Export as draw.io (.drawio)", "") {
+        app.export("drawio");
+    }
+    if mi(ui, "download", "Export as Excalidraw", "") {
+        app.export("excalidraw");
+    }
+    if mi(ui, "download", "Export as JSON Canvas (.canvas)", "") {
+        app.export("canvas");
+    }
+}
+
+/// Background color, pattern and grid snapping.
+fn background_items(app: &mut App, ui: &mut Ui, p: &theme::Palette) {
+    theme::menu_label(ui, "Background");
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for preset in BgPreset::ALL {
+            let on = app.ed.doc.background.preset == preset;
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+            let (cr, cg, cb) = preset.rgb();
+            ui.painter().circle_filled(r.center(), 11.0, Color32::from_rgb(cr, cg, cb));
+            ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(2.0_f32, if on { p.ac } else { p.bd }));
+            if on {
+                ui.painter().circle_stroke(r.center(), 14.0, Stroke::new(2.0_f32, p.acbg));
+            }
+            if resp.on_hover_text(t(preset.label())).clicked() {
+                let mut bg = app.ed.doc.background;
+                bg.preset = preset;
+                app.ed.set_background(bg);
+            }
+        }
+    });
+    ui.add_space(4.0);
+    for (label, pat) in [("No pattern", Pattern::None), ("Dots", Pattern::Dots), ("Grid", Pattern::Grid), ("Lines", Pattern::Lines)] {
+        if theme::menu_item(ui, Some("grid"), label, "", app.ed.doc.background.pattern == pat, true) {
+            let mut bg = app.ed.doc.background;
+            bg.pattern = pat;
+            app.ed.set_background(bg);
+        }
+    }
+    if theme::menu_item(ui, Some("grid"), "Snap to grid", "", app.snap, true) {
+        app.snap = !app.snap;
+    }
+}
+
+/// Interface language.
+fn language_items(app: &mut App, ui: &mut Ui) {
+    theme::menu_label(ui, "Language");
+    for (label, pref) in [
+        ("Automatic (system language)", crate::i18n::Pref::Auto),
+        ("English", crate::i18n::Pref::Lang(crate::i18n::Lang::En)),
+        ("Français", crate::i18n::Pref::Lang(crate::i18n::Lang::Fr)),
+    ] {
+        if theme::menu_item(ui, Some("page"), label, "", app.lang_pref == pref, true) {
+            app.lang_pref = pref;
+            crate::i18n::save_pref(pref);
+            crate::i18n::set(crate::i18n::resolve(pref));
+        }
+    }
+}
+
 fn main_menu(app: &mut App, ui: &mut Ui) {
     // opening the menu validates the text being typed (saving or exporting from it must include it)
     app.commit_editing();
@@ -331,30 +410,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         if mi(ui, "save", "Save as…", &key(app, Action::SaveAs)) {
             app.save_as();
         }
-        theme::menu_sep(ui);
-        let sel = !app.sel.is_empty();
-        if mi(ui, "download", if sel { "Export selection as PNG" } else { "Export as PNG" }, "") {
-            app.export("png");
-        }
-        if mi(ui, "download", "Export as SVG", "") {
-            app.export("svg");
-        }
-        if mi(ui, "download", "Export as PDF", "") {
-            app.export("pdf");
-        }
-        if mi(ui, "copy", "Copy image to clipboard", "") {
-            app.copy_as_image();
-        }
-        theme::menu_label(ui, "Exchange with other tools");
-        if mi(ui, "download", "Export as draw.io (.drawio)", "") {
-            app.export("drawio");
-        }
-        if mi(ui, "download", "Export as Excalidraw", "") {
-            app.export("excalidraw");
-        }
-        if mi(ui, "download", "Export as JSON Canvas (.canvas)", "") {
-            app.export("canvas");
-        }
+        export_items(app, ui);
         theme::menu_sep(ui);
         theme::menu_label(ui, "Insert");
         if mi(ui, "image", "Image…", "") {
@@ -367,8 +423,11 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
             app.insert_code_block();
         }
         if mi(ui, "formula", "Formula (LaTeX)…", "") {
-            app.dialog =
-                Some(Dialog::Formula { src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into(), editing: None, preview: Default::default() });
+            app.dialog = Some(Dialog::Formula {
+                src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into(),
+                editing: None,
+                preview: crate::app::FormulaPreview::default(),
+            });
         }
         if mi(ui, "vote", "Vote dot", "") {
             app.set_tool(Tool::Vote);
@@ -390,37 +449,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
             app.layers_open = !app.layers_open;
         }
         theme::menu_sep(ui);
-        theme::menu_label(ui, "Background");
-        ui.horizontal(|ui| {
-            ui.add_space(4.0);
-            ui.spacing_mut().item_spacing.x = 6.0;
-            for preset in BgPreset::ALL {
-                let on = app.ed.doc.background.preset == preset;
-                let (r, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
-                let (cr, cg, cb) = preset.rgb();
-                ui.painter().circle_filled(r.center(), 11.0, Color32::from_rgb(cr, cg, cb));
-                ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(2.0_f32, if on { p.ac } else { p.bd }));
-                if on {
-                    ui.painter().circle_stroke(r.center(), 14.0, Stroke::new(2.0_f32, p.acbg));
-                }
-                if resp.on_hover_text(t(preset.label())).clicked() {
-                    let mut bg = app.ed.doc.background;
-                    bg.preset = preset;
-                    app.ed.set_background(bg);
-                }
-            }
-        });
-        ui.add_space(4.0);
-        for (label, pat) in [("No pattern", Pattern::None), ("Dots", Pattern::Dots), ("Grid", Pattern::Grid), ("Lines", Pattern::Lines)] {
-            if theme::menu_item(ui, Some("grid"), label, "", app.ed.doc.background.pattern == pat, true) {
-                let mut bg = app.ed.doc.background;
-                bg.pattern = pat;
-                app.ed.set_background(bg);
-            }
-        }
-        if theme::menu_item(ui, Some("grid"), "Snap to grid", "", app.snap, true) {
-            app.snap = !app.snap;
-        }
+        background_items(app, ui, &p);
         theme::menu_sep(ui);
         theme::menu_label(ui, "View");
         if mi(ui, "play", "Present full screen", &key(app, Action::Present)) {
@@ -435,18 +464,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         }
         timer_menu(app, ui);
         theme::menu_sep(ui);
-        theme::menu_label(ui, "Language");
-        for (label, pref) in [
-            ("Automatic (system language)", crate::i18n::Pref::Auto),
-            ("English", crate::i18n::Pref::Lang(crate::i18n::Lang::En)),
-            ("Français", crate::i18n::Pref::Lang(crate::i18n::Lang::Fr)),
-        ] {
-            if theme::menu_item(ui, Some("page"), label, "", app.lang_pref == pref, true) {
-                app.lang_pref = pref;
-                crate::i18n::save_pref(pref);
-                crate::i18n::set(crate::i18n::resolve(pref));
-            }
-        }
+        language_items(app, ui);
         theme::menu_sep(ui);
         if mi(ui, "keyboard", "Keyboard shortcuts…", "") {
             app.dialog = Some(Dialog::Shortcuts { filter: String::new(), recording: None });
@@ -552,11 +570,11 @@ pub fn selection_menu(app: &mut App, ui: &mut Ui) {
 
 /// Operations on the row / column under the right click, when a table is selected.
 fn table_menu(app: &mut App, ui: &mut Ui, sel: &[Id]) {
+    type Op = fn(&mut inkboard_core::Table, usize, usize);
     let [id] = sel else { return };
     let Some((r, c)) = app.ed.page().get(id).and_then(|o| if let Kind::Table(t) = &o.kind { t.cell_at(app.ctx_pos) } else { None }) else { return };
     theme::menu_sep(ui);
     theme::menu_label_raw(ui, &tr!("Cell row {} · column {}", r + 1, c + 1));
-    type Op = fn(&mut inkboard_core::Table, usize, usize);
     let ops: [(&str, Op); 6] = [
         ("Insert row above", |t, r, _| t.insert_row(r)),
         ("Insert row below", |t, r, _| t.insert_row(r + 1)),

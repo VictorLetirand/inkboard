@@ -8,6 +8,7 @@
 use super::{Res, find, obj, page_prop, path_prop, s};
 use inkboard_core::{ApproxMeasurer, Color, Editor, Kind as ObjKind, Object, RichText, Span, SpanStyle};
 use serde_json::{Value, json};
+use std::fmt::Write;
 
 /// Tools exposed by this module.
 pub(super) const NAMES: &[&str] = &["format_text"];
@@ -122,12 +123,11 @@ impl Parser {
     fn close_tag(&mut self, at: usize) {
         let pos = self.active.iter().rposition(|&m| matches!(self.marks[m].kind, Kind::Tag(..)));
         let m = self.mark(Kind::Tag(None, None), "{/}", at);
-        match pos {
-            Some(pos) => self.close_with(pos, m),
-            None => {
-                self.marks[m].role = Role::Literal;
-                self.warnings.push(format!("`{{/}}` at character {at} closes nothing: kept as literal text"));
-            }
+        if let Some(pos) = pos {
+            self.close_with(pos, m);
+        } else {
+            self.marks[m].role = Role::Literal;
+            self.warnings.push(format!("`{{/}}` at character {at} closes nothing: kept as literal text"));
         }
     }
 
@@ -305,7 +305,7 @@ fn tag_of(st: &SpanStyle) -> Option<String> {
     let mut sep = "";
     for (key, c) in [("color", st.color), ("bg", st.highlight)] {
         if let Some(c) = c {
-            t.push_str(&format!("{sep}{key}={}", c.to_hex()));
+            let _ = write!(t, "{sep}{key}={}", c.to_hex());
             sep = " ";
         }
     }
@@ -428,8 +428,26 @@ struct Edit {
     italic: Option<bool>,
     underline: Option<bool>,
     strike: Option<bool>,
-    color: Option<Option<Color>>,
-    highlight: Option<Option<Color>>,
+    color: ColorEdit,
+    highlight: ColorEdit,
+}
+
+/// Change of an optional color: absent from the request, `null`, or a color.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorEdit {
+    Keep,
+    Remove,
+    Set(Color),
+}
+
+impl ColorEdit {
+    fn apply(self, current: Option<Color>) -> Option<Color> {
+        match self {
+            ColorEdit::Keep => current,
+            ColorEdit::Remove => None,
+            ColorEdit::Set(c) => Some(c),
+        }
+    }
 }
 
 impl Edit {
@@ -440,10 +458,10 @@ impl Edit {
             Some(_) => Err(format!("\"{k}\" must be true or false")),
         };
         let color = |k: &str| match a.get(k) {
-            None => Ok(None),
-            Some(Value::Null) => Ok(Some(None)),
+            None => Ok(ColorEdit::Keep),
+            Some(Value::Null) => Ok(ColorEdit::Remove),
             Some(Value::String(c)) => {
-                Color::parse(c).map(|c| Some(Some(c))).ok_or_else(|| format!("invalid color \"{c}\" for \"{k}\" (expected #rrggbb or ink, or null to remove)"))
+                Color::parse(c).map(ColorEdit::Set).ok_or_else(|| format!("invalid color \"{c}\" for \"{k}\" (expected #rrggbb or ink, or null to remove)"))
             }
             Some(_) => Err(format!("\"{k}\" must be a color string or null")),
         };
@@ -456,7 +474,12 @@ impl Edit {
             color: color("color")?,
             highlight: color("highlight")?,
         };
-        let nothing = e.bold.is_none() && e.italic.is_none() && e.underline.is_none() && e.strike.is_none() && e.color.is_none() && e.highlight.is_none();
+        let nothing = e.bold.is_none()
+            && e.italic.is_none()
+            && e.underline.is_none()
+            && e.strike.is_none()
+            && e.color == ColorEdit::Keep
+            && e.highlight == ColorEdit::Keep;
         if nothing && !e.clear {
             return Err("nothing to do: give at least one of bold, italic, underline, strike, color, highlight or clear".into());
         }
@@ -471,16 +494,16 @@ impl Edit {
         st.italic = self.italic.unwrap_or(st.italic);
         st.underline = self.underline.unwrap_or(st.underline);
         st.strike = self.strike.unwrap_or(st.strike);
-        st.color = self.color.unwrap_or(st.color);
-        st.highlight = self.highlight.unwrap_or(st.highlight);
+        st.color = self.color.apply(st.color);
+        st.highlight = self.highlight.apply(st.highlight);
     }
 }
 
 /// A pair of non-negative integers (`range`, `cell`).
 fn pair(a: &Value, k: &str) -> Res<Option<(usize, usize)>> {
-    let Some(v) = a.get(k).filter(|v| !v.is_null()) else { return Ok(None) };
-    let get = |i: usize| v.get(i).and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok());
-    match (v.as_array().map(Vec::len), get(0), get(1)) {
+    let Some(value) = a.get(k).filter(|v| !v.is_null()) else { return Ok(None) };
+    let get = |i: usize| value.get(i).and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok());
+    match (value.as_array().map(Vec::len), get(0), get(1)) {
         (Some(2), Some(x), Some(y)) => Ok(Some((x, y))),
         _ => Err(format!("\"{k}\" must be a list of two non-negative integers, e.g. [0, 3]")),
     }
@@ -593,7 +616,7 @@ mod tests {
             self.0
         }
         fn below(&mut self, n: usize) -> usize {
-            (self.next() % n as u64) as usize
+            usize::try_from(self.next() % n as u64).expect("below n")
         }
         fn string(&mut self, alphabet: &[&str], max: usize) -> String {
             (0..self.below(max + 1)).map(|_| alphabet[self.below(alphabet.len())]).collect()
@@ -613,7 +636,7 @@ mod tests {
     fn plain_text_is_one_default_span() {
         let (rt, w) = from_markdown("hello\nworld");
         assert_eq!(rt, RichText::plain("hello\nworld"));
-        assert!(w.is_empty());
+        assert_eq!(w, [] as [std::string::String; 0]);
         assert_eq!(from_markdown("").0, RichText::default());
     }
 
@@ -644,7 +667,7 @@ mod tests {
     #[test]
     fn escapes_give_literal_characters() {
         let (spans, w) = parsed(r"\*not italic\* \_ \~ \{ \} \\ \n end\");
-        assert!(w.is_empty());
+        assert_eq!(w, [] as [std::string::String; 0]);
         assert_eq!(spans, vec![(r"*not italic* _ ~ { } \ \n end\".to_owned(), SpanStyle::default())]);
     }
 

@@ -5,6 +5,7 @@
 //! - [`hit`]: bounding boxes and selection.
 //! - [`history`] / [`editor`]: undoable modifications.
 //! - [`svg`]: SVG export; [`layout`]: automatic graph layout.
+//! - [`num`]: lossy numeric conversions with a documented behaviour.
 
 pub mod connector;
 pub mod editor;
@@ -14,6 +15,7 @@ pub mod history;
 pub mod hit;
 pub mod layout;
 pub mod model;
+pub mod num;
 pub mod pen;
 pub mod route;
 pub mod serial;

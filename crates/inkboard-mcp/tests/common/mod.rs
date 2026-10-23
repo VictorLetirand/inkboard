@@ -59,7 +59,9 @@ impl Client {
     pub fn request(&mut self, method: &str, params: Value) -> Value {
         let id = self.next;
         self.next += 1;
-        self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
+        let mut msg = json!({"jsonrpc": "2.0", "id": id, "method": method});
+        msg["params"] = params;
+        self.send(&msg);
         loop {
             let v = self.lines.recv_timeout(self.timeout).expect("response expected");
             if v["id"] == json!(id) {
@@ -88,7 +90,9 @@ impl Client {
 
     /// Calls a tool; returns the result JSON or the error message.
     pub fn tool(&mut self, name: &str, args: Value) -> Result<Value, String> {
-        let r = self.request("tools/call", json!({"name": name, "arguments": args}));
+        let mut params = json!({"name": name});
+        params["arguments"] = args;
+        let r = self.request("tools/call", params);
         let text = r["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned();
         if r["result"]["isError"] == json!(true) { Err(text) } else { Ok(serde_json::from_str(&text).unwrap_or(Value::String(text))) }
     }

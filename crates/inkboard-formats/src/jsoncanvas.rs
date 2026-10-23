@@ -3,7 +3,7 @@
 use crate::common::{FormatError, Imported, Report, parse_color};
 use inkboard_core::geom::Rect;
 use inkboard_core::text::Measurer;
-use inkboard_core::*;
+use inkboard_core::{Align, Anchor, Arrowhead, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, Frame, Id, Kind, Label, Object, Page, Pt, Style};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -45,6 +45,7 @@ fn side_of(frame: &Frame, p: Pt) -> &'static str {
 
 /// Exports a page. Only "box" objects and connectors linking two boxes can be represented;
 /// the second result is the number of skipped elements.
+#[must_use]
 pub fn export(page: &Page) -> (String, usize) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
@@ -107,19 +108,24 @@ pub fn export(page: &Page) -> (String, usize) {
             Kind::Box(_) => {}
         }
     }
-    (serde_json::to_string_pretty(&json!({"nodes": nodes, "edges": edges})).expect("valid JSON"), dropped)
+    (format!("{:#}", json!({"nodes": nodes, "edges": edges})), dropped)
 }
 
-pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
-    let v: Value = serde_json::from_str(content)?;
-    let nodes = v.get("nodes").and_then(Value::as_array).ok_or_else(|| FormatError::Invalid("no list of nodes".into()))?;
+/// Imports a JSON Canvas file.
+///
+/// # Errors
+///
+/// [`FormatError`] when the content is not a JSON Canvas document.
+pub fn import(content: &str, name: &str, measurer: &dyn Measurer) -> Result<Imported, FormatError> {
+    let root: Value = serde_json::from_str(content)?;
+    let nodes = root.get("nodes").and_then(Value::as_array).ok_or_else(|| FormatError::Invalid("no list of nodes".into()))?;
     let mut doc = Document::new(name);
     let mut report = Report::default();
     let mut out: Vec<Object> = Vec::new();
     let mut ids: HashMap<String, (Id, Rect)> = HashMap::new();
     for n in nodes {
-        let g = |k: &str| n.get(k).and_then(Value::as_f64).unwrap_or(0.0);
-        let (x, y, w, h) = (g("x"), g("y"), g("width").max(10.0), g("height").max(10.0));
+        let field = |k: &str| n.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+        let (x, y, w, h) = (field("x"), field("y"), field("width").max(10.0), field("height").max(10.0));
         let color = color_of(n.get("color").and_then(Value::as_str));
         let kind = n.get("type").and_then(Value::as_str).unwrap_or("text");
         let style = Style {
@@ -142,28 +148,28 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
         if matches!(kind, "file" | "link") {
             report.approximated += 1;
         }
-        let mut o =
+        let mut obj =
             Object::new_box(BoxGeom::Rect, Frame::new(x, y, w, h), style, Label::new(&text, 16.0, if kind == "text" { Align::Left } else { Align::Center }));
         if let (Some(id), true) = (n.get("id").and_then(Value::as_str), kind != "group") {
-            ids.insert(id.to_owned(), (o.id.clone(), Rect::new(x, y, w, h)));
+            ids.insert(id.to_owned(), (obj.id.clone(), Rect::new(x, y, w, h)));
         }
-        out.push(o.clone());
+        out.push(obj.clone());
         if kind == "group"
             && let Some(l) = n.get("label").and_then(Value::as_str).filter(|l| !l.is_empty())
         {
-            o = Object::new_box(
+            obj = Object::new_box(
                 BoxGeom::Text,
                 Frame::new(x + 8.0, y - 26.0, 10.0, 10.0),
                 Style { stroke: color.unwrap_or(Color::Ink), width: 0.0, ..Style::default() },
                 Label::new(l, 16.0, Align::Left),
             );
-            if let Kind::Box(b) = &mut o.kind {
-                b.fit(m);
+            if let Kind::Box(b) = &mut obj.kind {
+                b.fit(measurer);
             }
-            out.push(o);
+            out.push(obj);
         }
     }
-    for e in v.get("edges").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+    for e in root.get("edges").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
         let get = |k: &str| e.get(k).and_then(Value::as_str);
         let (Some((a, _)), Some((z, _))) = (get("fromNode").and_then(|i| ids.get(i)), get("toNode").and_then(|i| ids.get(i))) else {
             report.skipped += 1;
@@ -222,7 +228,7 @@ mod tests {
         assert_eq!(r.report.approximated, 1);
         let conns: Vec<&Connector> = p.objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
         assert_eq!(conns.len(), 2);
-        assert!(matches!(conns[0].start, End::Bound { anchor: Anchor::Frac { fx, .. }, .. } if fx == 1.0));
+        assert!(matches!(conns[0].start, End::Bound { anchor: Anchor::Frac { fx, .. }, .. } if (fx - 1.0).abs() < 1e-9));
         assert_eq!(conns[0].head_end, Arrowhead::Triangle, "toEnd by default = arrow");
         assert_eq!(conns[1].head_end, Arrowhead::None);
         assert_eq!(conns[1].head_start, Arrowhead::Triangle);

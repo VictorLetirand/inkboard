@@ -1,7 +1,7 @@
 //! Types and utilities shared by the importers / exporters.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use inkboard_core::{BgPreset, Color, Document, FontFamily};
+use inkboard_core::{Color, Document, FontFamily};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -55,6 +55,7 @@ impl IconResolver for inkboard_icons::Library {
 }
 
 impl Report {
+    #[must_use]
     pub fn summary(&self) -> String {
         let mut p = Vec::new();
         if self.approximated > 0 {
@@ -100,6 +101,7 @@ pub fn parse_color(s: &str) -> Option<Color> {
     Color::parse(named).map(ink_if_black)
 }
 
+#[must_use]
 pub fn ink_if_black(c: Color) -> Color {
     match c {
         Color::Rgb(0, 0, 0) | Color::Rgb(0x1e, 0x1e, 0x1e) | Color::Rgb(0x19, 0x19, 0x19) => Color::Ink,
@@ -107,6 +109,7 @@ pub fn ink_if_black(c: Color) -> Color {
     }
 }
 
+#[must_use]
 pub fn parse_data_url(s: &str) -> Option<(String, Vec<u8>)> {
     let rest = s.strip_prefix("data:")?;
     let (meta, payload) = rest.split_once(',')?;
@@ -122,14 +125,17 @@ pub fn parse_data_url(s: &str) -> Option<(String, Vec<u8>)> {
     }
 }
 
+#[must_use]
 pub fn data_url(mime: &str, data: &[u8]) -> String {
     format!("data:{mime};base64,{}", STANDARD.encode(data))
 }
 
+#[must_use]
 pub fn percent_decode(s: &str) -> Vec<u8> {
     percent_encoding::percent_decode_str(s).collect()
 }
 
+#[must_use]
 pub fn font_family(name: &str) -> FontFamily {
     let n = name.to_ascii_lowercase();
     if ["mono", "courier", "consolas", "cascadia"].iter().any(|k| n.contains(k)) {
@@ -143,10 +149,7 @@ pub fn font_family(name: &str) -> FontFamily {
     }
 }
 
-pub fn nearest_background(c: Color) -> BgPreset {
-    BgPreset::nearest(c.resolve(false))
-}
-
+#[must_use]
 pub fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }

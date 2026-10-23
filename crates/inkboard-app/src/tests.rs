@@ -4,6 +4,7 @@ use crate::app::App;
 use crate::tools::Tool;
 use eframe::egui::{self, Event, Key, Modifiers, PointerButton, Pos2, pos2, vec2};
 use egui_kittest::Harness;
+use inkboard_core::num;
 use inkboard_core::*;
 
 pub(super) struct T {
@@ -39,7 +40,7 @@ impl T {
     pub(super) fn at(&mut self, x: f64, y: f64) -> Pos2 {
         let r = self.app().canvas_rect;
         let v = self.app().ed.page().view;
-        pos2(r.min.x + (x * v.zoom + v.x) as f32, r.min.y + (y * v.zoom + v.y) as f32)
+        pos2(r.min.x + num::f32(x * v.zoom + v.x), r.min.y + num::f32(y * v.zoom + v.y))
     }
     pub(super) fn mv(&mut self, p: Pos2) {
         self.h.event(Event::PointerMoved(p));
@@ -56,7 +57,7 @@ impl T {
         self.mv(a);
         self.button(a, true, mods);
         for k in 1..=4 {
-            let t = k as f32 / 4.0;
+            let t = num::f32(f64::from(k)) / 4.0;
             self.mv(a.lerp(b, t));
         }
         self.button(b, false, mods);
@@ -79,8 +80,8 @@ impl T {
         self.objects().into_iter().filter_map(|o| if let Kind::Box(b) = o.kind.clone() { Some((o, b)) } else { None }).collect()
     }
     pub(super) fn add_rect(&mut self, x: f64, y: f64, w: f64, h: f64) -> Id {
-        let o = Object::new_box(BoxGeom::Rect, Frame::new(x, y, w, h), Style { fill: Some(Color::rgb(200, 220, 255)), ..Style::default() }, Label::default());
-        self.app().ed.insert(o)
+        let obj = Object::new_box(BoxGeom::Rect, Frame::new(x, y, w, h), Style { fill: Some(Color::rgb(200, 220, 255)), ..Style::default() }, Label::default());
+        self.app().ed.insert(obj)
     }
     pub(super) fn frame(&mut self, id: &Id) -> Frame {
         self.app().ed.page().get(id).and_then(Object::frame).expect("object with a frame")
@@ -100,7 +101,7 @@ impl T {
 #[test]
 fn app_starts_with_an_empty_page() {
     let mut t = T::new();
-    assert!(t.objects().is_empty());
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     assert!(t.app().canvas_rect.width() > 500.0, "the canvas fills the window");
 }
 
@@ -136,7 +137,7 @@ fn shift_makes_a_square_and_undo_removes_it() {
     let f = t.boxes()[0].1.frame;
     assert!((f.w - f.h).abs() < 1.0, "square: {f:?}");
     t.key_mod(Modifiers::COMMAND, Key::Z);
-    assert!(t.objects().is_empty());
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     t.key_mod(Modifiers::COMMAND, Key::Y);
     assert_eq!(t.objects().len(), 1);
 }
@@ -322,7 +323,7 @@ fn empty_fresh_text_is_discarded_without_polluting_history() {
     t.click((300.0, 300.0));
     assert!(t.app().editing.is_some(), "the editor opens");
     t.app().commit_editing();
-    assert!(t.objects().is_empty());
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     assert!(!t.app().ed.can_undo(), "nothing to undo: creation and abandonment cancel out");
 }
 
@@ -619,7 +620,7 @@ fn rebinding_a_tool_key_takes_effect_immediately() {
 fn removed_shortcut_does_nothing_and_remaining_one_still_works() {
     let mut t = T::new();
     let a = t.add_rect(100.0, 100.0, 50.0, 50.0);
-    t.app().keymap.remove(Action::Delete, &Shortcut::key(Key::Backspace));
+    t.app().keymap.remove(Action::Delete, Shortcut::key(Key::Backspace));
     t.app().sel = vec![a.clone()];
     t.key(Key::Backspace);
     assert!(t.app().ed.page().get(&a).is_some(), "Backspace is no longer bound");
@@ -697,7 +698,7 @@ fn menu_labels_follow_the_keymap() {
     let mut t = T::new();
     assert_eq!(t.app().keymap.label(Action::Undo), "Ctrl+Z");
     t.app().keymap.reset(Action::Undo);
-    t.app().keymap.remove(Action::Undo, &Shortcut::ctrl(Key::Z));
+    t.app().keymap.remove(Action::Undo, Shortcut::ctrl(Key::Z));
     t.app().keymap.add(Action::Undo, Shortcut::new(Key::W, true, false, true)).unwrap();
     assert_eq!(t.app().keymap.label(Action::Undo), "Ctrl+Alt+W");
 }
@@ -770,7 +771,7 @@ fn paste_marker_pastes_internal_objects_and_empty_paste_falls_back_to_them() {
 fn invalid_pixel_buffer_is_rejected_without_panicking() {
     let mut t = T::new();
     t.app().insert_rgba(10, 10, &[0; 5], Pt::ZERO);
-    assert!(t.objects().is_empty());
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     assert!(t.app().toast.is_some());
 }
 
@@ -851,7 +852,7 @@ fn spatial_index_keeps_picking_and_moving_correct_on_a_large_board() {
     let mut t = T::new();
     let mut ids = Vec::new();
     for i in 0..600 {
-        ids.push(t.add_rect((i % 30) as f64 * 150.0, (i / 30) as f64 * 130.0, 100.0, 80.0));
+        ids.push(t.add_rect(f64::from(i % 30) * 150.0, f64::from(i / 30) * 130.0, 100.0, 80.0));
     }
     t.h.step();
     assert!(t.app().caches.spatial.is_some(), "beyond 400 objects the spatial index is active");
@@ -912,7 +913,7 @@ fn dragging_a_segment_midpoint_handle_inserts_a_waypoint_in_one_undo_step() {
     let path = page.connector_path(cn).unwrap();
     assert!(path.iter().any(|p| p.y > 300.0), "the arrow goes through the new point");
     t.key_mod(Modifiers::COMMAND, Key::Z);
-    assert!(via_of(&mut t, &c).is_empty());
+    assert_eq!(via_of(&mut t, &c), [] as [inkboard_core::Pt; 0]);
 }
 
 #[test]
@@ -936,7 +937,7 @@ fn waypoints_can_be_moved_and_removed() {
     t.button(p, true, Modifiers::ALT);
     t.button(p, false, Modifiers::ALT);
     t.h.input_mut().modifiers = Modifiers::NONE;
-    assert!(via_of(&mut t, &c).is_empty());
+    assert_eq!(via_of(&mut t, &c), [] as [inkboard_core::Pt; 0]);
 }
 
 #[test]
@@ -976,7 +977,7 @@ fn code_block_is_a_dark_monospace_box_in_one_undo_step() {
     assert_eq!(b.label.align, Align::Left);
     assert!(boxes[0].0.style.fill.is_some());
     t.key_mod(Modifiers::COMMAND, Key::Z);
-    assert!(t.objects().is_empty());
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
 }
 
 #[test]
@@ -992,7 +993,7 @@ fn formula_is_composed_as_a_tinted_svg_image_that_keeps_its_source() {
     assert_eq!(asset.mime, "image/svg+xml");
     // SVG export replaces white with the stroke color (dark ink on a light background)
     let page = t.app().ed.page().clone();
-    let svg = inkboard_core::svg::export(&t.app().ed.doc, &page, None, &ApproxMeasurer, &Default::default()).unwrap();
+    let svg = inkboard_core::svg::export(&t.app().ed.doc, &page, None, &ApproxMeasurer, &inkboard_core::svg::SvgOptions::default()).unwrap();
     assert!(!String::from_utf8_lossy(&base64_payload(&svg)).contains("#ffffff"), "formula not tinted on export");
     // an invalid source creates nothing
     assert!(t.app().insert_formula(r"\notacommand", None).is_err());
@@ -1158,11 +1159,11 @@ fn open_file_reloads_when_another_program_changes_it() {
     let path = temp_board("reload");
     t.add_rect(0.0, 0.0, 50.0, 50.0);
     t.app().save_to(&path);
-    t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    t.app().last_watch = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(1)).unwrap();
     t.h.step();
     assert_eq!(t.objects().len(), 1, "no reload while nothing has changed");
     external_edit(&path, "Added by an agent");
-    t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    t.app().last_watch = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(1)).unwrap();
     t.h.step();
     assert_eq!(t.objects().len(), 2, "the board is reloaded");
     assert!(!t.app().dirty());
@@ -1177,7 +1178,7 @@ fn unsaved_local_changes_are_not_overwritten_by_an_external_change() {
     t.app().save_to(&path);
     t.add_rect(200.0, 0.0, 50.0, 50.0); // unsaved local change
     external_edit(&path, "Externe");
-    t.app().last_watch = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    t.app().last_watch = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(1)).unwrap();
     t.h.step();
     assert_eq!(t.objects().len(), 2, "the 2 local shapes are kept");
     assert!(t.app().dirty());
@@ -1201,7 +1202,8 @@ fn start_live(t: &mut T, tag: &str) -> Live {
 /// Calls an MCP tool from another thread (as `inkboard-mcp` does) while the UI runs.
 fn mcp_call(t: &mut T, live: &Live, tool: &str, args: serde_json::Value) -> (bool, serde_json::Value) {
     let srv = live.srv.clone();
-    let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}});
+    let mut msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool}});
+    msg["params"]["arguments"] = args;
     let th = std::thread::spawn(move || srv.handle(&msg).unwrap());
     let start = std::time::Instant::now();
     while !th.is_finished() {
@@ -1281,9 +1283,9 @@ fn live_server_rejects_a_wrong_token_and_cleans_up_its_discovery_file() {
     let info = inkboard_mcp::live::read_info(&live.file).expect("discovery file");
     let mut s = std::net::TcpStream::connect(("127.0.0.1", info.port)).unwrap();
     writeln!(s, "{}", serde_json::json!({"token": "faux", "tool": "describe_board", "args": {}})).unwrap();
-    let mut line = String::new();
-    BufReader::new(s).read_line(&mut line).unwrap();
-    let r: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let mut reply = String::new();
+    BufReader::new(s).read_line(&mut reply).unwrap();
+    let r: serde_json::Value = serde_json::from_str(&reply).unwrap();
     assert_eq!(r["ok"], false);
     assert!(r["error"].as_str().unwrap().contains("token"), "{r}");
     assert!(t.objects().is_empty(), "nothing is executed without a valid token");
@@ -1295,7 +1297,8 @@ fn live_server_rejects_a_wrong_token_and_cleans_up_its_discovery_file() {
 /// Sends any JSON-RPC request to the MCP server (another thread) while the UI runs.
 fn mcp_rpc(t: &mut T, live: &Live, method: &str, params: serde_json::Value) -> serde_json::Value {
     let srv = live.srv.clone();
-    let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+    let mut msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method});
+    msg["params"] = params;
     let th = std::thread::spawn(move || srv.handle(&msg).unwrap());
     let start = std::time::Instant::now();
     while !th.is_finished() {
@@ -1455,7 +1458,7 @@ fn french_mode_renders_every_dialog_and_panel_without_missing_translations() {
         Dialog::Mermaid { text: String::new(), new_board: false, error: Some("x".into()) },
         Dialog::Shortcuts { filter: String::new(), recording: None },
         Dialog::Shortcuts { filter: String::new(), recording: Some(crate::keymap::Action::Delete) },
-        Dialog::Formula { src: "x^2".into(), editing: None, preview: Default::default() },
+        Dialog::Formula { src: "x^2".into(), editing: None, preview: crate::app::FormulaPreview::default() },
     ];
     for d in dialogs {
         t.app().dialog = Some(d);
@@ -1570,7 +1573,7 @@ fn the_icon_palette_opens_filters_and_renders_thumbnails() {
 
 /// Every icon of the pack parses and rasterizes (slow: run with `cargo test --release -p inkboard-app -- --ignored`).
 #[test]
-#[ignore]
+#[ignore = "slow: rasterizes the whole icon pack"]
 fn every_library_icon_renders() {
     use inkboard_icons::{IconRef, Library};
     let lib = Library::open(include_bytes!("../assets/icons.bin")).unwrap();
@@ -1599,7 +1602,7 @@ fn svg_images_are_rasterized_at_the_size_they_are_shown() {
     let mut cache = TextureCache::default();
     // power-of-two levels: never stretched, at most halved (one request per frame: the time budget never interferes)
     let get = |cache: &mut TextureCache, px: f32| {
-        let _ = ctx.run(Default::default(), |_| {});
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
         cache.get(&ctx, &aid, &asset, px).unwrap().size()
     };
     assert_eq!(get(&mut cache, 40.0), [64, 64], "small");
@@ -1608,7 +1611,7 @@ fn svg_images_are_rasterized_at_the_size_they_are_shown() {
     assert_eq!(get(&mut cache, 40.0), [64, 64], "already cached levels are free");
     // with the frame's rasterization budget spent, a request is answered with the closest existing texture
     cache.raster_budget_ms = 0.0;
-    let _ = ctx.run(Default::default(), |_| {});
+    let _ = ctx.run(egui::RawInput::default(), |_| {});
     assert_eq!(
         cache.get(&ctx, &aid, &asset, 3000.0).unwrap().size(),
         [2048, 2048],
@@ -1618,7 +1621,7 @@ fn svg_images_are_rasterized_at_the_size_they_are_shown() {
         .app()
         .ed
         .doc
-        .add_asset("image/svg+xml", br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"##.to_vec());
+        .add_asset("image/svg+xml", br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"#.to_vec());
     let other_asset = t.app().ed.doc.assets.get(&other).unwrap().clone();
     assert!(cache.get(&ctx, &other, &other_asset, 90.0).is_some(), "first of the frame");
     assert!(cache.get(&ctx, &aid, &asset, 1500.0).unwrap().size()[0] >= 2048);
@@ -1642,7 +1645,7 @@ fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
     let mut ids = std::collections::HashSet::new();
     let mut frames = 0;
     loop {
-        let _ = ctx.run(Default::default(), |_| {});
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
         frames += 1;
         let before = cache.stats.rasterized;
         ids.clear();
@@ -1650,7 +1653,7 @@ fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
         for (id, a) in &assets {
             if let Some(t) = cache.get(&ctx, id, a, 20.0) {
                 ready += 1;
-                ids.insert(t.id);
+                ids.insert(t.id());
             }
         }
         let done = cache.stats.rasterized - before;
@@ -1667,7 +1670,7 @@ fn many_small_icons_share_atlas_pages_and_load_over_several_frames() {
     assert_eq!(cache.stats.evicted, 0);
     // asking again is free
     let before = cache.stats;
-    let _ = ctx.run(Default::default(), |_| {});
+    let _ = ctx.run(egui::RawInput::default(), |_| {});
     for (id, a) in &assets {
         assert!(cache.get(&ctx, id, a, 20.0).is_some());
     }
@@ -1908,7 +1911,7 @@ all of you",
         let rows = editor_rows(&mut t);
         let caret = t.app().editor_probe.clone().and_then(|p| p.caret).expect("a caret");
         let m = t.app().measurer.clone();
-        let w = f32::from_bits((inkboard_core::text::Measurer::width(&m, "Hello", FontFamily::Sans, 20.0, false) as f32).to_bits());
+        let w = f32::from_bits(num::f32(inkboard_core::text::Measurer::width(&m, "Hello", FontFamily::Sans, 20.0, false)).to_bits());
         let end = rows[0].0 + w;
         assert!((caret.0 - end).abs() < 3.0, "{align:?}: caret at {} but the text ends at {end}", caret.0);
     }
@@ -2038,8 +2041,8 @@ fn live_icon_text_and_edit_tools_are_one_undo_step_each() {
     assert!(!err, "{r}");
     let (err, r) = mcp_call(&mut t, &live, "arrange_objects", serde_json::json!({"ids": [a, b], "action": "align_top"}));
     assert!(!err, "{r}");
-    let top = |t: &mut T, id: &str| t.objects().iter().find(|o| o.id.0 == id).and_then(|o| o.frame()).map(|f| f.y).unwrap();
-    let left = |t: &mut T, id: &str| t.objects().iter().find(|o| o.id.0 == id).and_then(|o| o.frame()).map(|f| f.x).unwrap();
+    let top = |t: &mut T, id: &str| t.objects().iter().find(|o| o.id.0 == id).and_then(inkboard_core::Object::frame).map(|f| f.y).unwrap();
+    let left = |t: &mut T, id: &str| t.objects().iter().find(|o| o.id.0 == id).and_then(inkboard_core::Object::frame).map(|f| f.x).unwrap();
     assert_eq!(top(&mut t, &a), top(&mut t, &b), "aligned");
     let moved = left(&mut t, &a);
     t.key_mod(Modifiers::COMMAND, Key::Z);
@@ -2135,6 +2138,6 @@ fn an_unreadable_svg_is_refused_without_changing_the_board() {
     let bad = temp_file("badsvg", "bad.svg", b"<svg><path/></svg>");
     let at = t.app().view_center();
     t.app().insert_image_files(std::slice::from_ref(&bad), at);
-    assert!(t.objects().is_empty());
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     let _ = std::fs::remove_file(bad);
 }

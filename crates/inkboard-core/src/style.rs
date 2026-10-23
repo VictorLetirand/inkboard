@@ -11,11 +11,13 @@ pub enum Color {
 }
 
 impl Color {
+    #[must_use]
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Color::Rgb(r, g, b)
     }
 
     /// Parses `"ink"`, `"#rgb"` or `"#rrggbb"` (`#rrggbbaa`: the alpha is ignored).
+    #[must_use]
     pub fn parse(s: &str) -> Option<Color> {
         let s = s.trim();
         if s.eq_ignore_ascii_case("ink") {
@@ -33,6 +35,7 @@ impl Color {
         }
     }
 
+    #[must_use]
     pub fn to_hex(self) -> String {
         match self {
             Color::Ink => "ink".to_owned(),
@@ -41,6 +44,7 @@ impl Color {
     }
 
     /// Concrete color depending on whether the background is dark.
+    #[must_use]
     pub fn resolve(self, dark_bg: bool) -> (u8, u8, u8) {
         match self {
             Color::Ink if dark_bg => (0xf1, 0xf3, 0xf5),
@@ -49,6 +53,7 @@ impl Color {
         }
     }
 
+    #[must_use]
     pub fn resolve_hex(self, dark_bg: bool) -> String {
         let (r, g, b) = self.resolve(dark_bg);
         format!("#{r:02x}{g:02x}{b:02x}")
@@ -116,6 +121,7 @@ pub enum FontFamily {
 
 impl FontFamily {
     /// CSS font stack (single quotes, usable in an SVG attribute).
+    #[must_use]
     pub fn css(self) -> &'static str {
         match self {
             FontFamily::Sans => "'Segoe UI', system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif",

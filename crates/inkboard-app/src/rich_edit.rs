@@ -10,9 +10,10 @@ use crate::keymap::Action;
 use crate::render::{Cam, col, label_screen_rect};
 use eframe::egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use eframe::egui::{self, Color32, Stroke, vec2};
+use inkboard_core::num;
 use inkboard_core::style::PALETTE;
 use inkboard_core::text::Format;
-use inkboard_core::*;
+use inkboard_core::{Align, BoxGeom, BoxObj, Color, Document, FontFamily, Id, Kind, Label, Measurer, Object, Rect, RichText};
 use std::sync::Arc;
 
 /// Where the editor put the lines of text on the last frame (screen coordinates), for tests.
@@ -417,21 +418,31 @@ fn swatch(ui: &mut egui::Ui, c: Color, active: bool, tip: &str) -> egui::Respons
     resp.on_hover_text(t(tip))
 }
 
-/// Input field overlaid on the edited object, with its formatting bar.
-pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
-    app.live_fit_edited();
-    let dark = app.ed.doc.background.preset.is_dark();
-    let Some(ed) = app.editing.as_ref() else { return };
+#[derive(Debug)]
+struct EditorLayout {
+    area: egui::Rect,
+    family: FontFamily,
+    size: f32,
+    align: Align,
+    color: Color32,
+    no_wrap: bool,
+    anchor: egui::Rect,
+    bar_align: Option<Align>,
+    lay_wrap: Option<f64>,
+}
+
+fn editor_layout(app: &mut App, cam: &Cam, dark: bool) -> Option<EditorLayout> {
+    let ed = app.editing.as_ref()?;
     let page = app.ed.page();
     let Some(o) = page.get(&ed.id) else {
         app.editing = None;
-        return;
+        return None;
     };
     let (area, family, size, align, color, no_wrap): (egui::Rect, FontFamily, f32, Align, Color32, bool) = match &o.kind {
         Kind::Box(b) => {
             let color = if b.geom == BoxGeom::Sticky { Color32::from_rgb(0x1e, 0x1e, 0x1e) } else { col(o.style.stroke, dark, 1.0) };
             let area = label_screen_rect(cam, &b.frame, b.label_rect());
-            (area, b.label.family, b.label.size as f32 * cam.zoom, b.label.align, color, b.geom == BoxGeom::Text)
+            (area, b.label.family, num::f32(b.label.size) * cam.zoom, b.label.align, color, b.geom == BoxGeom::Text)
         }
         Kind::Table(t) => {
             let (r, c) = ed.cell.unwrap_or((0, 0));
@@ -439,14 +450,14 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
             (
                 cam.rect_s(Rect::new(cr.x + 8.0, cr.y + 4.0, cr.w - 16.0, cr.h - 8.0)),
                 t.family,
-                t.size as f32 * cam.zoom,
+                num::f32(t.size) * cam.zoom,
                 Align::Left,
                 col(o.style.stroke, dark, 1.0),
                 false,
             )
         }
         Kind::Connector(c) => {
-            let Some(path) = page.connector_path(c) else { return };
+            let path = page.connector_path(c)?;
             let (mid, _) = inkboard_core::connector::path_midpoint(&path);
             (
                 egui::Rect::from_center_size(cam.s(mid), vec2(160.0, 24.0)),
@@ -457,7 +468,7 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
                 false,
             )
         }
-        _ => return,
+        _ => return None,
     };
     // the formatting bar is attached to the whole edited object
     let anchor = match &o.kind {
@@ -472,18 +483,10 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         Kind::Table(_) => Some(f64::from(area.width() / cam.zoom)),
         _ => None,
     };
-    let model_size = f64::from(size / cam.zoom);
-    let zoom = cam.zoom;
-    let measurer = app.measurer.clone();
-    let ctx = ui.ctx().clone();
-    let field_id = egui::Id::new("wb-text-edit-field");
-    let halign = match align {
-        Align::Left => egui::Align::LEFT,
-        Align::Center => egui::Align::Center,
-        Align::Right => egui::Align::RIGHT,
-    };
-    let size = size.max(8.0);
+    Some(EditorLayout { area, family, size, align, color, no_wrap, anchor, bar_align, lay_wrap })
+}
 
+fn editor_formatting(app: &mut App, ctx: &egui::Context, anchor: egui::Rect, bar_align: Option<Align>) {
     // formatting shortcuts (consumed before the field sees them)
     let key_fmt = {
         let formats =
@@ -504,7 +507,7 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         (egui::Align2::LEFT_TOP, egui::pos2(anchor.left().max(12.0), anchor.bottom() + 12.0))
     };
     let mut bar_action = None;
-    egui::Area::new(egui::Id::new("wb-rich-bar")).order(egui::Order::Foreground).fade_in(false).pivot(pivot).fixed_pos(bar_pos).show(&ctx, |ui| {
+    egui::Area::new(egui::Id::new("wb-rich-bar")).order(egui::Order::Foreground).fade_in(false).pivot(pivot).fixed_pos(bar_pos).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| bar_action = format_bar(ui, app, bar_align));
     });
     match bar_action {
@@ -518,7 +521,63 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         }
         None => {}
     }
+}
 
+fn paint_editor_details(
+    ui: &egui::Ui,
+    out: &egui::text_edit::TextEditOutput,
+    ed: &mut Editing,
+    size: f32,
+    color: Color32,
+    dark: bool,
+    caret_stroke: Stroke,
+) -> EditorProbe {
+    let rich = &ed.rich;
+    let mut probe_caret = None;
+    let probe_rows =
+        out.galley.rows.iter().filter_map(|r| r.row.glyphs.first().map(|g| (out.galley_pos.x + r.pos.x + g.pos.x, out.galley_pos.y + r.pos.y))).collect();
+    // strikethrough drawn by hand (see `strike_segments`)
+    let strike: Vec<bool> = rich.0.iter().flat_map(|sp| sp.text.chars().filter(|c| *c != '\n').map(|_| sp.style.strike)).collect();
+    if strike.iter().any(|s| *s) {
+        let c = rich.0.iter().find(|sp| sp.style.strike).and_then(|sp| sp.style.color.map(|c| col(c, dark, 1.0))).unwrap_or(color);
+        for (x0, x1, y) in crate::render::strike_segments(&out.galley, &strike, size) {
+            let (p0, p1) = (out.galley_pos + vec2(x0, y), out.galley_pos + vec2(x1, y));
+            ui.painter().line_segment([p0, p1], Stroke::new((size * 0.07).max(1.0), c));
+        }
+    }
+    if let Some(r) = out.cursor_range {
+        // egui's own caret ignores the shift of the rows of a centered / right-aligned galley, so it is drawn here
+        let rc = out.galley.pos_from_cursor(r.primary);
+        let row_x = out.galley.rows.iter().find(|row| (row.min_y() - rc.min.y).abs() < 0.5).map_or(0.0, |row| row.pos.x);
+        let c = out.galley_pos + vec2(rc.min.x + row_x, rc.min.y);
+        probe_caret = Some((c.x, c.y));
+        if r.primary == r.secondary && out.response.has_focus() && (num::to_u64(ui.input(|i| i.time) * 2.0) & 1) == 0 {
+            ui.painter().line_segment([c, c + vec2(0.0, rc.height())], caret_stroke);
+        }
+        let (p, s) = (r.primary.index, r.secondary.index);
+        ed.sel = (p.min(s), p.max(s));
+    }
+    EditorProbe { rows: probe_rows, caret: probe_caret }
+}
+
+/// Input field overlaid on the edited object, with its formatting bar.
+pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
+    app.live_fit_edited();
+    let dark = app.ed.doc.background.preset.is_dark();
+    let Some(EditorLayout { area, family, size, align, color, no_wrap, anchor, bar_align, lay_wrap }) = editor_layout(app, cam, dark) else { return };
+    let model_size = f64::from(size / cam.zoom);
+    let zoom = cam.zoom;
+    let measurer = app.measurer.clone();
+    let ctx = ui.ctx().clone();
+    let field_id = egui::Id::new("wb-text-edit-field");
+    let halign = match align {
+        Align::Left => egui::Align::LEFT,
+        Align::Center => egui::Align::Center,
+        Align::Right => egui::Align::RIGHT,
+    };
+    let size = size.max(8.0);
+
+    editor_formatting(app, &ctx, anchor, bar_align);
     let Some(ed) = app.editing.as_mut() else { return };
     if let Some((a, b)) = ed.restore_sel.take() {
         let mut st = egui::text_edit::TextEditState::load(&ctx, field_id).unwrap_or_default();
@@ -536,13 +595,13 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
         ed.synced = ed.buf.clone();
     }
     let lay = inkboard_core::text::layout_rich(&ed.rich, lay_wrap, &measurer, family, model_size);
-    let y_off = ((area.height() - lay.height as f32 * zoom) / 2.0).max(0.0);
+    let y_off = ((area.height() - num::f32(lay.height) * zoom) / 2.0).max(0.0);
     // same line height as the final rendering (egui's own row height is a little larger)
-    let line_px = lay.line_h as f32 * zoom;
+    let line_px = num::f32(lay.line_h) * zoom;
     let job_align = halign;
     // egui counts the space that follows a word when deciding whether it still fits on the row, the final layout does not: allow for it so
     // that both break the lines at the same words
-    let space_px = measurer.width(" ", family, model_size, false) as f32 * zoom;
+    let space_px = num::f32(measurer.width(" ", family, model_size, false)) * zoom;
     let wrap_px = if no_wrap { f32::INFINITY } else { width + space_px };
     // egui's `TextEdit` places a galley by its left edge, but a galley laid out with a center / right alignment is anchored at the
     // middle / right of its text. So for those alignments the field is made twice as wide and shifted so that the anchor lands where
@@ -566,7 +625,7 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
                 let t = text.as_str();
                 if t != synced.as_str() {
                     rich.apply_edit(synced, t);
-                    *synced = t.to_owned();
+                    t.clone_into(synced);
                 }
                 let job = rich_job(rich, family, size, line_px, color, dark, wrap_px, job_align);
                 ui.ctx().fonts_mut(|f| f.layout_job(job))
@@ -584,33 +643,9 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
                 .lock_focus(true)
                 .layouter(&mut layouter)
                 .show(ui);
-            probe_rows = out
-                .galley
-                .rows
-                .iter()
-                .filter_map(|r| r.row.glyphs.first().map(|g| (out.galley_pos.x + r.pos.x + g.pos.x, out.galley_pos.y + r.pos.y)))
-                .collect();
-            // strikethrough drawn by hand (see `strike_segments`)
-            let strike: Vec<bool> = rich.0.iter().flat_map(|sp| sp.text.chars().filter(|c| *c != '\n').map(|_| sp.style.strike)).collect();
-            if strike.iter().any(|s| *s) {
-                let c = rich.0.iter().find(|sp| sp.style.strike).and_then(|sp| sp.style.color.map(|c| col(c, dark, 1.0))).unwrap_or(color);
-                for (x0, x1, y) in crate::render::strike_segments(&out.galley, &strike, size) {
-                    let (p0, p1) = (out.galley_pos + vec2(x0, y), out.galley_pos + vec2(x1, y));
-                    ui.painter().line_segment([p0, p1], Stroke::new((size * 0.07).max(1.0), c));
-                }
-            }
-            if let Some(r) = out.cursor_range {
-                // egui's own caret ignores the shift of the rows of a centered / right-aligned galley, so it is drawn here
-                let rc = out.galley.pos_from_cursor(r.primary);
-                let row_x = out.galley.rows.iter().find(|row| (row.min_y() - rc.min.y).abs() < 0.5).map_or(0.0, |row| row.pos.x);
-                let c = out.galley_pos + vec2(rc.min.x + row_x, rc.min.y);
-                probe_caret = Some((c.x, c.y));
-                if r.primary == r.secondary && out.response.has_focus() && ((ui.input(|i| i.time) * 2.0) as u64 & 1) == 0 {
-                    ui.painter().line_segment([c, c + vec2(0.0, rc.height())], caret_stroke);
-                }
-                let (p, s) = (r.primary.index, r.secondary.index);
-                ed.sel = (p.min(s), p.max(s));
-            }
+            let probe = paint_editor_details(ui, &out, ed, size, color, dark, caret_stroke);
+            probe_rows = probe.rows;
+            probe_caret = probe.caret;
             if !ed.focused {
                 out.response.request_focus();
                 ed.focused = true;

@@ -6,6 +6,7 @@ mod common;
 use common::{Client, temp_dir};
 use inkboard_core::{Document, Kind, Object, RichText, SpanStyle, serial};
 use serde_json::{Value, json};
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 const RED: &str = "#e03131";
@@ -69,10 +70,10 @@ fn flags(st: &SpanStyle) -> String {
         }
     }
     if let Some(c) = st.color {
-        f.push_str(&format!("c={}", c.to_hex()));
+        let _ = write!(f, "c={}", c.to_hex());
     }
     if let Some(c) = st.highlight {
-        f.push_str(&format!("h={}", c.to_hex()));
+        let _ = write!(f, "h={}", c.to_hex());
     }
     f
 }
@@ -204,18 +205,18 @@ fn without_markdown_the_text_is_unchanged() {
 
 #[test]
 fn describe_board_is_unchanged_for_plain_text() {
-    let (mut c, board) = setup("rt-describe");
-    let a = id_of(&ok(&mut c, &board, "add_shape", json!({"geom": "rect", "text": "snake_case * 2", "x": 10, "y": 20, "w": 180, "h": 90})));
-    let b = shape(&mut c, &board, "B", false);
-    let con = id_of(&ok(&mut c, &board, "add_connector", json!({"from": a, "to": b, "label": "yes"})));
-    let t = id_of(&ok(&mut c, &board, "add_table", json!({"rows": [["h1", "h2"], ["a", "b"]]})));
-    let d = ok(&mut c, &board, "describe_board", json!({}));
+    let (mut client, board) = setup("rt-describe");
+    let a = id_of(&ok(&mut client, &board, "add_shape", json!({"geom": "rect", "text": "snake_case * 2", "x": 10, "y": 20, "w": 180, "h": 90})));
+    let b = shape(&mut client, &board, "B", false);
+    let con = id_of(&ok(&mut client, &board, "add_connector", json!({"from": a, "to": b, "label": "yes"})));
+    let t = id_of(&ok(&mut client, &board, "add_table", json!({"rows": [["h1", "h2"], ["a", "b"]]})));
+    let d = ok(&mut client, &board, "describe_board", json!({}));
     let objects = d["page"]["objects"].as_array().unwrap();
     let find = |id: &str| objects.iter().find(|o| o["id"] == json!(id)).unwrap();
     let keys = |o: &Value| {
-        let mut k: Vec<&str> = o.as_object().unwrap().keys().map(String::as_str).collect();
-        k.sort_unstable();
-        k.join(",")
+        let mut names: Vec<&str> = o.as_object().unwrap().keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names.join(",")
     };
     assert_eq!(*find(&a), json!({"id": a, "type": "rect", "x": 10.0, "y": 20.0, "w": 180.0, "h": 90.0, "text": "snake_case * 2"}));
     assert_eq!(keys(find(&b)), "h,id,text,type,w,x,y");
@@ -225,19 +226,19 @@ fn describe_board_is_unchanged_for_plain_text() {
     let out = d.to_string();
     assert!(!out.contains("markdown"), "{out}");
     // the other tools' answers keep their shape too
-    let r = ok(&mut c, &board, "update_object", json!({"id": a, "text": "new"}));
-    assert_eq!(r, json!({"id": a, "avertissements": []}));
-    let r = ok(&mut c, &board, "add_shape", json!({"geom": "rect", "text": "x"}));
-    assert_eq!(keys(&r), "h,id,w,x,y");
+    let updated = ok(&mut client, &board, "update_object", json!({"id": a, "text": "new"}));
+    assert_eq!(updated, json!({"id": a, "avertissements": []}));
+    let reply = ok(&mut client, &board, "add_shape", json!({"geom": "rect", "text": "x"}));
+    assert_eq!(keys(&reply), "h,id,w,x,y");
 }
 
 /* ----------------------------------------------------- tables and connectors */
 
 #[test]
 fn table_cells_can_be_formatted() {
-    let (mut c, board) = setup("rt-table");
+    let (mut client, board) = setup("rt-table");
     let rows = json!([["**Name**", "{color=#e03131}Qty{/}"], ["plain", "*x* and **open"]]);
-    let r = ok(&mut c, &board, "add_table", json!({"rows": rows, "markdown": true}));
+    let r = ok(&mut client, &board, "add_table", json!({"rows": rows, "markdown": true}));
     let w = r["warnings"].as_array().unwrap();
     assert_eq!(w.len(), 1, "{r}");
     assert!(w[0].as_str().unwrap().starts_with("cell [1, 1]:"), "{w:?}");
@@ -246,7 +247,7 @@ fn table_cells_can_be_formatted() {
     assert_eq!(spans(&t[1]), sp(&[("Qty", "c=#e03131")]));
     assert_eq!(spans(&t[2]), sp(&[("plain", "")]));
     assert_eq!(spans(&t[3]), sp(&[("x", "i"), (" and **open", "")]));
-    let d = describe(&mut c, &board, &id_of(&r));
+    let d = describe(&mut client, &board, &id_of(&r));
     assert_eq!(d["cells_markdown"], json!([["**Name**", "{color=#e03131}Qty{/}"], ["plain", "*x* and \\*\\*open"]]));
 }
 
@@ -263,22 +264,22 @@ fn the_columns_follow_the_text_not_the_markup() {
 
 #[test]
 fn connector_labels_can_be_formatted() {
-    let (mut c, board) = setup("rt-label");
-    let (a, b) = (shape(&mut c, &board, "A", false), shape(&mut c, &board, "B", false));
-    let r = ok(&mut c, &board, "add_connector", json!({"from": a, "to": b, "label": "{color=#e03131}**no**{/}", "markdown": true}));
+    let (mut client, board) = setup("rt-label");
+    let (a, b) = (shape(&mut client, &board, "A", false), shape(&mut client, &board, "B", false));
+    let r = ok(&mut client, &board, "add_connector", json!({"from": a, "to": b, "label": "{color=#e03131}**no**{/}", "markdown": true}));
     assert!(r.get("warnings").is_none());
     let id = id_of(&r);
     assert_eq!(spans(&label_text(&board, &id)), sp(&[("no", "bc=#e03131")]));
-    let d = describe(&mut c, &board, &id);
+    let d = describe(&mut client, &board, &id);
     assert_eq!((d["label"].as_str(), d["markdown"].as_str()), (Some("no"), Some("{color=#e03131}**no**{/}")));
     // update_object
-    ok(&mut c, &board, "update_object", json!({"id": id, "text": "*maybe* **", "markdown": true}));
+    ok(&mut client, &board, "update_object", json!({"id": id, "text": "*maybe* **", "markdown": true}));
     assert_eq!(spans(&label_text(&board, &id)), sp(&[("maybe", "i"), (" **", "")]));
-    let r = ok(&mut c, &board, "update_object", json!({"id": id, "text": "x", "markdown": true}));
+    let r = ok(&mut client, &board, "update_object", json!({"id": id, "text": "x", "markdown": true}));
     assert_eq!(r, json!({"id": id, "avertissements": []}));
     // an empty text removes the label
-    ok(&mut c, &board, "update_object", json!({"id": id, "text": "", "markdown": true}));
-    assert!(describe(&mut c, &board, &id).get("label").is_none());
+    ok(&mut client, &board, "update_object", json!({"id": id, "text": "", "markdown": true}));
+    assert!(describe(&mut client, &board, &id).get("label").is_none());
 }
 
 #[test]
@@ -402,33 +403,33 @@ fn format_text_removes_and_clears() {
 
 #[test]
 fn format_text_on_table_cells_and_connector_labels() {
-    let (mut c, board) = setup("rt-ft-cell");
-    let t = id_of(&ok(&mut c, &board, "add_table", json!({"rows": [["x", "y z"], ["z", "w"]]})));
-    let r = ok(&mut c, &board, "format_text", json!({"id": t, "cell": [0, 1], "match": "z", "bold": true}));
+    let (mut client, board) = setup("rt-ft-cell");
+    let t = id_of(&ok(&mut client, &board, "add_table", json!({"rows": [["x", "y z"], ["z", "w"]]})));
+    let r = ok(&mut client, &board, "format_text", json!({"id": t, "cell": [0, 1], "match": "z", "bold": true}));
     assert_eq!(r["changed"], json!(1));
-    ok(&mut c, &board, "format_text", json!({"id": t, "cell": [1, 0], "color": RED}));
+    ok(&mut client, &board, "format_text", json!({"id": t, "cell": [1, 0], "color": RED}));
     let cells = cells(&board, &t);
     assert_eq!(spans(&cells[1]), sp(&[("y ", ""), ("z", "b")]));
     assert_eq!(spans(&cells[2]), sp(&[("z", "c=#e03131")]));
     assert_eq!(spans(&cells[0]), sp(&[("x", "")]));
     assert_eq!(spans(&cells[3]), sp(&[("w", "")]));
-    let d = describe(&mut c, &board, &t);
-    assert_eq!(d["cells_markdown"], json!([["x", "y **z**"], ["{color=#e03131}z{/}", "w"]]));
-    let (a, b) = (shape(&mut c, &board, "A", false), shape(&mut c, &board, "B", false));
-    let con = id_of(&ok(&mut c, &board, "add_connector", json!({"from": a, "to": b, "label": "go"})));
-    ok(&mut c, &board, "format_text", json!({"id": con, "italic": true}));
+    let described = describe(&mut client, &board, &t);
+    assert_eq!(described["cells_markdown"], json!([["x", "y **z**"], ["{color=#e03131}z{/}", "w"]]));
+    let (a, b) = (shape(&mut client, &board, "A", false), shape(&mut client, &board, "B", false));
+    let con = id_of(&ok(&mut client, &board, "add_connector", json!({"from": a, "to": b, "label": "go"})));
+    ok(&mut client, &board, "format_text", json!({"id": con, "italic": true}));
     assert_eq!(spans(&label_text(&board, &con)), sp(&[("go", "i")]));
 }
 
 #[test]
 fn format_text_errors_leave_the_file_untouched() {
-    let (mut c, board) = setup("rt-ft-err");
-    let id = shape(&mut c, &board, "alpha beta", false);
-    let (a, b) = (shape(&mut c, &board, "A", false), shape(&mut c, &board, "B", false));
-    let bare = id_of(&ok(&mut c, &board, "add_connector", json!({"from": a, "to": b})));
-    let t = id_of(&ok(&mut c, &board, "add_table", json!({"rows": [["x", "y"]]})));
-    let empty = shape(&mut c, &board, "", false);
-    let e = invalid(&mut c, &board, "format_text", json!({"id": id, "match": "gamma", "bold": true}));
+    let (mut client, board) = setup("rt-ft-err");
+    let id = shape(&mut client, &board, "alpha beta", false);
+    let (a, b) = (shape(&mut client, &board, "A", false), shape(&mut client, &board, "B", false));
+    let bare = id_of(&ok(&mut client, &board, "add_connector", json!({"from": a, "to": b})));
+    let t = id_of(&ok(&mut client, &board, "add_table", json!({"rows": [["x", "y"]]})));
+    let empty = shape(&mut client, &board, "", false);
+    let e = invalid(&mut client, &board, "format_text", json!({"id": id, "match": "gamma", "bold": true}));
     assert!(e.contains("text not found") && e.contains("alpha beta"), "{e}");
     for args in [
         json!({"id": id, "bold": true, "match": "alpha", "range": [0, 2]}),
@@ -452,7 +453,7 @@ fn format_text_errors_leave_the_file_untouched() {
         json!({"id": empty, "bold": true}),
         json!({"bold": true}),
     ] {
-        invalid(&mut c, &board, "format_text", args);
+        invalid(&mut client, &board, "format_text", args);
     }
 }
 

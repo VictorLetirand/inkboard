@@ -27,7 +27,9 @@ pub struct Server {
 }
 
 fn ok(id: &Value, result: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
+    let mut v = json!({"jsonrpc": "2.0", "id": id});
+    v["result"] = result;
+    v
 }
 
 fn err(id: &Value, code: i64, message: &str) -> Value {
@@ -36,9 +38,9 @@ fn err(id: &Value, code: i64, message: &str) -> Value {
 
 /// MCP content of a tool result: one text block, except when the result is a JSON object with the reserved key `_image`
 /// (`{"mime", "data_base64"}`): the content is then an image block followed by a text block holding the rest of the object.
-fn content_blocks(text: String) -> Value {
+fn content_blocks(text: &str) -> Value {
     if text.contains("\"_image\"")
-        && let Ok(Value::Object(mut m)) = serde_json::from_str::<Value>(&text)
+        && let Ok(Value::Object(mut m)) = serde_json::from_str::<Value>(text)
         && let Some(img) = m.remove("_image")
         && let (Some(mime), Some(data)) = (img["mime"].as_str(), img["data_base64"].as_str())
     {
@@ -94,7 +96,7 @@ impl Server {
                 let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
                 let args = msg.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
                 match tools::call(self, name, &args) {
-                    Ok(text) => ok(id, json!({"content": content_blocks(text), "isError": false})),
+                    Ok(text) => ok(id, json!({"content": content_blocks(&text), "isError": false})),
                     Err(e) if e.starts_with("unknown tool") => err(id, -32602, &e),
                     Err(e) => ok(id, json!({"content": [{"type": "text", "text": e}], "isError": true})),
                 }

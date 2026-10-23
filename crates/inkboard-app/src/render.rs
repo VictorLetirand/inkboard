@@ -7,8 +7,12 @@ use eframe::egui::{self, Color32, Painter, Pos2, Shape, Stroke, TextureHandle, p
 use inkboard_core::connector::{head_points, path_midpoint};
 use inkboard_core::geom::{Frame, Pt, Rect};
 use inkboard_core::model::Outline;
+use inkboard_core::num;
 use inkboard_core::text::{TextLayout, layout_rich};
-use inkboard_core::*;
+use inkboard_core::{
+    Align, Arrowhead, Asset, BoxGeom, BoxObj, Color, Connector, Dash, Document, Id, ImageObj, Kind, Label, Object, Page, Pattern, PenObj, RichText, Table,
+    style,
+};
 use std::collections::HashMap;
 
 pub const GRID: f32 = 24.0;
@@ -22,7 +26,7 @@ pub struct Cam {
 
 impl Cam {
     pub fn s(&self, p: Pt) -> Pos2 {
-        pos2(self.origin.x + p.x as f32 * self.zoom, self.origin.y + p.y as f32 * self.zoom)
+        pos2(self.origin.x + num::f32(p.x) * self.zoom, self.origin.y + num::f32(p.y) * self.zoom)
     }
     pub fn w(&self, p: Pos2) -> Pt {
         Pt::new(f64::from((p.x - self.origin.x) / self.zoom), f64::from((p.y - self.origin.y) / self.zoom))
@@ -34,7 +38,7 @@ impl Cam {
 
 pub fn col(c: Color, dark: bool, opacity: f32) -> Color32 {
     let (r, g, b) = c.resolve(dark);
-    Color32::from_rgba_unmultiplied(r, g, b, (opacity.clamp(0.0, 1.0) * 255.0).round() as u8)
+    Color32::from_rgba_unmultiplied(r, g, b, num::to_u8(f64::from((opacity.clamp(0.0, 1.0) * 255.0).round())))
 }
 
 /// Fallback rasterization scale of an SVG whose size cannot be read.
@@ -73,25 +77,29 @@ fn rasterize_svg(asset: &Asset, px: Option<u32>) -> Option<egui::ColorImage> {
 /// Rasterization level of an SVG shown with a longest side of `target_px` screen pixels: the next power of two, so a texture is never
 /// stretched (and at most halved), whether the cause is zooming in or enlarging the object.
 fn svg_level(target_px: f32, max_side: usize) -> u32 {
-    (target_px.max(1.0).ceil() as u32).next_power_of_two().clamp(SVG_MIN_PX, SVG_MAX_PX.min(max_side as u32))
+    num::to_u32(f64::from(target_px.max(1.0).ceil())).next_power_of_two().clamp(SVG_MIN_PX, SVG_MAX_PX.min(u32::try_from(max_side).unwrap_or(u32::MAX)))
 }
 
 /// A texture region ready to be drawn: either a whole texture or a cell of the small-icon atlas.
 #[derive(Clone)]
 pub struct ImageTex {
-    pub id: egui::TextureId,
     /// Part of the texture holding the image.
     pub uv: egui::Rect,
     /// Average color (premultiplied): what the image looks like when it is only a few pixels wide.
     pub avg: Color32,
-    _keep: TextureHandle,
+    /// Keeps the texture alive as long as the image is displayed.
+    texture: TextureHandle,
 }
 
 impl ImageTex {
+    pub fn id(&self) -> egui::TextureId {
+        self.texture.id()
+    }
+
     /// Size in pixels of the whole texture (an atlas page for small icons).
     #[cfg(test)]
     pub fn size(&self) -> [usize; 2] {
-        self._keep.size()
+        self.texture.size()
     }
 }
 
@@ -143,7 +151,7 @@ impl Default for TextureCache {
         Self {
             map: HashMap::new(),
             atlas: Vec::new(),
-            broken: Default::default(),
+            broken: std::collections::HashSet::default(),
             frame: None,
             spent_ms: 0.0,
             raster_budget_ms: RASTER_BUDGET_MS,
@@ -158,23 +166,24 @@ const ATLAS_LEVEL: u32 = 1;
 const ATLAS_PAGE: usize = 2048;
 const ATLAS_CELL: usize = 32;
 /// Icons shown with a longest side up to this many pixels use the atlas.
-const ATLAS_MAX_PX: f32 = (ATLAS_CELL - 2) as f32;
+const ATLAS_MAX_PX: f32 = num::f32_of(ATLAS_CELL - 2);
 const ATLAS_MAX_PAGES: usize = 4;
 
 /// Average color of an image (sampled), premultiplied.
 fn average_color(img: &egui::ColorImage) -> Color32 {
-    let n = img.pixels.len().max(1);
-    let step = (n / 1024).max(1);
-    let (mut r, mut g, mut b, mut a, mut k) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let count = img.pixels.len().max(1);
+    let step = (count / 1024).max(1);
+    let (mut r, mut g, mut b, mut a, mut samples) = (0u64, 0u64, 0u64, 0u64, 0u64);
     for p in img.pixels.iter().step_by(step) {
         r += u64::from(p.r());
         g += u64::from(p.g());
         b += u64::from(p.b());
         a += u64::from(p.a());
-        k += 1;
+        samples += 1;
     }
-    let k = k.max(1);
-    Color32::from_rgba_premultiplied((r / k) as u8, (g / k) as u8, (b / k) as u8, (a / k) as u8)
+    let divisor = samples.max(1);
+    let channel = |sum: u64| u8::try_from(sum / divisor).unwrap_or(u8::MAX);
+    Color32::from_rgba_premultiplied(channel(r), channel(g), channel(b), channel(a))
 }
 
 impl TextureCache {
@@ -214,7 +223,7 @@ impl TextureCache {
         let img = if !is_svg {
             decode_asset(asset)
         } else if in_atlas {
-            rasterize_svg(asset, Some(ATLAS_CELL as u32 - 2))
+            rasterize_svg(asset, u32::try_from(ATLAS_CELL - 2).ok())
         } else {
             rasterize_svg(asset, Some(level))
         };
@@ -234,7 +243,7 @@ impl TextureCache {
         } else {
             let bytes = img.pixels.len() * 4;
             let h = ctx.load_texture(format!("{}@{level}", id.as_str()), img, egui::TextureOptions::LINEAR);
-            (ImageTex { id: h.id(), uv: egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), avg, _keep: h }, bytes)
+            (ImageTex { uv: egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), avg, texture: h }, bytes)
         };
         self.map.entry(id.clone()).or_default().push(CachedTexture { level, tex: tex.clone(), bytes, used: now });
         self.evict(id, level);
@@ -254,11 +263,14 @@ impl TextureCache {
         page.used += 1;
         let (x, y) = (cx * ATLAS_CELL + 1, cy * ATLAS_CELL + 1);
         page.tex.set_partial([x, y], img.clone(), egui::TextureOptions::LINEAR);
-        let s = ATLAS_PAGE as f32;
-        let (w, h) = (img.size[0] as f32, img.size[1] as f32);
-        let uv = egui::Rect::from_min_max(pos2(x as f32 / s, y as f32 / s), pos2((x as f32 + w) / s, (y as f32 + h) / s));
+        let page_px = num::f32_of(ATLAS_PAGE);
+        let (w, h) = (num::f32_of(img.size[0]), num::f32_of(img.size[1]));
+        let uv = egui::Rect::from_min_max(
+            pos2(num::f32_of(x) / page_px, num::f32_of(y) / page_px),
+            pos2((num::f32_of(x) + w) / page_px, (num::f32_of(y) + h) / page_px),
+        );
         let _ = id;
-        ImageTex { id: page.tex.id(), uv, avg, _keep: page.tex.clone() }
+        ImageTex { uv, avg, texture: page.tex.clone() }
     }
 
     /// Drops the least recently used textures while the cache is over its budget (never the one just created).
@@ -368,12 +380,11 @@ impl Renderer<'_> {
         let clip = clip.expand(60.0);
         let page: &Page = self.page;
         let owned;
-        let ids: &HashMap<Id, usize> = match self.ids {
-            Some(i) => i,
-            None => {
-                owned = inkboard_core::spatial::id_index(page);
-                &owned
-            }
+        let ids: &HashMap<Id, usize> = if let Some(i) = self.ids {
+            i
+        } else {
+            owned = inkboard_core::spatial::id_index(page);
+            &owned
         };
         let get = |id: &Id| ids.get(id).map(|&i| &page.objects[i]);
         let (a, z) = (self.cam.w(clip.min), self.cam.w(clip.max));
@@ -418,7 +429,7 @@ impl Renderer<'_> {
     }
 
     fn stroke_path(&self, pts: &[Pos2], closed: bool, width: f64, color: Color32, dash: Dash, round_caps: bool) {
-        let w = (width as f32 * self.cam.zoom).max(0.0);
+        let w = (num::f32(width) * self.cam.zoom).max(0.0);
         if w <= 0.0 || color.a() == 0 || pts.len() < 2 {
             return;
         }
@@ -442,10 +453,10 @@ impl Renderer<'_> {
                 }
             }
             Dash::Dashed => {
-                self.painter.extend(Shape::dashed_line(&v, Stroke::new(w.max(0.5), color), ((width * 3.2 + 3.0) as f32) * z, ((width * 2.4 + 3.0) as f32) * z));
+                self.painter.extend(Shape::dashed_line(&v, Stroke::new(w.max(0.5), color), num::f32(width * 3.2 + 3.0) * z, num::f32(width * 2.4 + 3.0) * z));
             }
             Dash::Dotted => {
-                self.painter.extend(Shape::dotted_line(&v, color, ((width * 2.2 + 2.0) as f32) * z, (w / 2.0).max(0.5)));
+                self.painter.extend(Shape::dotted_line(&v, color, num::f32(width * 2.2 + 2.0) * z, (w / 2.0).max(0.5)));
             }
         }
     }
@@ -456,7 +467,9 @@ impl Renderer<'_> {
             Kind::Box(b) => self.boxed(o, b, skip_text, op),
             Kind::Pen(p) => self.pen(o, p, op),
             Kind::Connector(c) => self.connector(o, c, op, get),
-            Kind::Image(i) => self.image(i, if i.is_tinted() { col(o.style.stroke, self.dark, op) } else { Color32::from_white_alpha((op * 255.0) as u8) }),
+            Kind::Image(i) => {
+                self.image(i, if i.is_tinted() { col(o.style.stroke, self.dark, op) } else { Color32::from_white_alpha(num::to_u8(f64::from(op * 255.0))) });
+            }
             Kind::Table(t) => self.table(o, t, op),
         }
     }
@@ -466,10 +479,10 @@ impl Renderer<'_> {
         let (hw, hh) = (w / 2.0, h / 2.0);
         match b.geom {
             BoxGeom::Ellipse => {
-                let n = ((w.max(h) as f32 * self.cam.zoom) / 3.0).clamp(10.0, 160.0) as usize;
-                (0..n)
+                let steps = num::to_usize(f64::from(((num::f32(w.max(h)) * self.cam.zoom) / 3.0).clamp(10.0, 160.0)));
+                (0..steps)
                     .map(|i| {
-                        let a = i as f64 / n as f64 * std::f64::consts::TAU;
+                        let a = num::f64_of(i) / num::f64_of(steps) * std::f64::consts::TAU;
                         Pt::new(hw * a.cos(), hh * a.sin())
                     })
                     .collect()
@@ -477,12 +490,17 @@ impl Renderer<'_> {
             BoxGeom::Diamond => Outline::Diamond.polygon(w, h),
             BoxGeom::Triangle => Outline::Triangle.polygon(w, h),
             BoxGeom::Rect if roundness > 0.0 => {
-                let r = (f64::from(roundness) * w.min(h) / 2.0).min(hw.min(hh));
+                let radius = (f64::from(roundness) * w.min(h) / 2.0).min(hw.min(hh));
                 let mut pts = Vec::new();
-                for (cx, cy, a0) in [(hw - r, -hh + r, -90.0f64), (hw - r, hh - r, 0.0), (-hw + r, hh - r, 90.0), (-hw + r, -hh + r, 180.0)] {
+                for (cx, cy, a0) in [
+                    (hw - radius, -hh + radius, -90.0f64),
+                    (hw - radius, hh - radius, 0.0),
+                    (-hw + radius, hh - radius, 90.0),
+                    (-hw + radius, -hh + radius, 180.0),
+                ] {
                     for k in 0..=8 {
-                        let a = (a0 + 90.0 * f64::from(k) / 8.0).to_radians();
-                        pts.push(Pt::new(cx + r * a.cos(), cy + r * a.sin()));
+                        let angle = (a0 + 90.0 * f64::from(k) / 8.0).to_radians();
+                        pts.push(Pt::new(cx + radius * angle.cos(), cy + radius * angle.sin()));
                     }
                 }
                 pts
@@ -501,10 +519,10 @@ impl Renderer<'_> {
             BoxGeom::Sticky => {
                 let pts = screen(&self.outline(b, 0.0));
                 let off = |dx: f32, dy: f32| pts.iter().map(|p| *p + vec2(dx, dy) * self.cam.zoom).collect::<Vec<_>>();
-                self.painter.add(Shape::convex_polygon(off(4.0, 8.0), Color32::from_black_alpha((26.0 * op) as u8), Stroke::NONE));
-                self.painter.add(Shape::convex_polygon(off(2.0, 4.0), Color32::from_black_alpha((20.0 * op) as u8), Stroke::NONE));
+                self.painter.add(Shape::convex_polygon(off(4.0, 8.0), Color32::from_black_alpha(num::to_u8(f64::from(26.0 * op))), Stroke::NONE));
+                self.painter.add(Shape::convex_polygon(off(2.0, 4.0), Color32::from_black_alpha(num::to_u8(f64::from(20.0 * op))), Stroke::NONE));
                 self.painter.add(Shape::convex_polygon(pts, col(st.fill.unwrap_or(style::NOTE_YELLOW), self.dark, op), Stroke::NONE));
-                label_color = Color32::from_rgba_unmultiplied(0x1e, 0x1e, 0x1e, (op * 255.0) as u8);
+                label_color = Color32::from_rgba_unmultiplied(0x1e, 0x1e, 0x1e, num::to_u8(f64::from(op * 255.0)));
             }
             _ => {
                 let pts = screen(&self.outline(b, st.roundness));
@@ -516,17 +534,17 @@ impl Renderer<'_> {
                 }
             }
         }
-        if !skip_text && !b.label.text.is_empty() && b.label.size as f32 * self.cam.zoom >= 3.0 {
+        if !skip_text && !b.label.text.is_empty() && num::f32(b.label.size) * self.cam.zoom >= 3.0 {
             let lay = b.layout(self.measurer);
             let fr = f;
-            self.paint_lines(&lay, &b.label, b.label_rect(), &|p| fr.to_world(p), f.angle as f32, label_color, false);
+            self.paint_lines(&lay, &b.label, b.label_rect(), &|p| fr.to_world(p), num::f32(f.angle), label_color, false);
         }
     }
 
     /// Draws an already laid-out block of text (one text galley per line).
     #[allow(clippy::too_many_arguments)]
     pub fn paint_lines(&self, lay: &TextLayout, label: &Label, area: Rect, to_world: &dyn Fn(Pt) -> Pt, angle: f32, base: Color32, bold_all: bool) {
-        let size = label.size as f32 * self.cam.zoom;
+        let size = num::f32(label.size) * self.cam.zoom;
         if size < 3.0 {
             return;
         }
@@ -595,13 +613,13 @@ impl Renderer<'_> {
             mesh.vertices.push(Vertex { pos: self.cam.s(*l), uv: egui::epaint::WHITE_UV, color });
             mesh.vertices.push(Vertex { pos: self.cam.s(*r), uv: egui::epaint::WHITE_UV, color });
         }
-        for i in 0..pts.len().saturating_sub(1) as u32 {
+        for i in 0..u32::try_from(pts.len().saturating_sub(1)).unwrap_or(u32::MAX) {
             let k = i * 2;
             mesh.indices.extend_from_slice(&[k, k + 1, k + 2, k + 1, k + 3, k + 2]);
         }
         self.painter.add(Shape::mesh(mesh));
         for (i, p) in [(0, pts[0]), (pts.len() - 1, pts[pts.len() - 1])] {
-            self.painter.circle_filled(self.cam.s(p), (widths[i] as f32 * self.cam.zoom / 2.0).max(0.4), color);
+            self.painter.circle_filled(self.cam.s(p), (num::f32(widths[i]) * self.cam.zoom / 2.0).max(0.4), color);
         }
     }
 
@@ -617,7 +635,7 @@ impl Renderer<'_> {
         let size = (st.width * 4.5).max(12.0);
         for (head, tip, from) in [(c.head_start, path[0], path[1]), (c.head_end, path[path.len() - 1], path[path.len() - 2])] {
             let hp: Vec<Pos2> = head_points(tip, from, size, head).iter().map(|p| self.cam.s(*p)).collect();
-            let w = st.width as f32 * self.cam.zoom;
+            let w = num::f32(st.width) * self.cam.zoom;
             match head {
                 Arrowhead::None => {}
                 Arrowhead::Arrow => {
@@ -633,7 +651,7 @@ impl Renderer<'_> {
                     self.painter.add(Shape::line(hp, Stroke::new(w, color)));
                 }
                 Arrowhead::Dot => {
-                    self.painter.circle_filled(hp[0], size as f32 * 0.4 * self.cam.zoom, color);
+                    self.painter.circle_filled(hp[0], num::f32(size) * 0.4 * self.cam.zoom, color);
                 }
             }
         }
@@ -651,15 +669,15 @@ impl Renderer<'_> {
     fn image(&mut self, i: &ImageObj, tint: Color32) {
         let Some(asset) = self.doc.assets.get(&i.asset) else { return };
         let ctx = self.painter.ctx().clone();
-        let size_pt = i.frame.w.max(i.frame.h) as f32 * self.cam.zoom;
+        let size_pt = num::f32(i.frame.w.max(i.frame.h)) * self.cam.zoom;
         let target_px = size_pt * ctx.pixels_per_point();
         let tex = self.textures.get(&ctx, &i.asset, asset, target_px);
         let corners = || -> Vec<Pos2> { i.frame.corners().iter().map(|p| self.cam.s(*p)).collect() };
         match tex {
             Some(t) if size_pt < IMAGE_FLAT_PT => {
                 // a few pixels wide: a flat quad of the image's average color (no texture, so thousands of them cost one batch)
-                let a = f32::from(t.avg.a()) / 255.0;
-                let color = if i.is_tinted() { tint.gamma_multiply(a) } else { t.avg.gamma_multiply(f32::from(tint.a()) / 255.0) };
+                let alpha = f32::from(t.avg.a()) / 255.0;
+                let color = if i.is_tinted() { tint.gamma_multiply(alpha) } else { t.avg.gamma_multiply(f32::from(tint.a()) / 255.0) };
                 if i.frame.angle == 0.0 {
                     let (p, q) = (self.cam.s(Pt::new(i.frame.x, i.frame.y)), self.cam.s(Pt::new(i.frame.x + i.frame.w, i.frame.y + i.frame.h)));
                     self.painter.rect_filled(egui::Rect::from_two_pos(p, q), 0.0, color);
@@ -671,7 +689,7 @@ impl Renderer<'_> {
                 let corners = corners();
                 let (lo, hi) = (t.uv.min, t.uv.max);
                 let uvs = [pos2(lo.x, lo.y), pos2(hi.x, lo.y), pos2(hi.x, hi.y), pos2(lo.x, hi.y)];
-                let mut mesh = Mesh::with_texture(t.id);
+                let mut mesh = Mesh::with_texture(t.id());
                 for (p, uv) in corners.iter().zip(uvs) {
                     mesh.vertices.push(Vertex { pos: *p, uv, color: tint });
                 }
@@ -686,23 +704,29 @@ impl Renderer<'_> {
 
     fn table(&self, o: &Object, t: &Table, op: f32) {
         let st = &o.style;
-        let c = col(st.stroke, self.dark, op);
-        let r = t.rect();
-        let w = st.width.max(1.0);
+        let color = col(st.stroke, self.dark, op);
+        let rect = t.rect();
+        let line_w = st.width.max(1.0);
         if t.header {
-            self.painter.rect_filled(self.cam.rect_s(Rect::new(r.x, r.y, r.w, t.row_h[0])), 0.0, c.gamma_multiply(0.12));
+            self.painter.rect_filled(self.cam.rect_s(Rect::new(rect.x, rect.y, rect.w, t.row_h[0])), 0.0, color.gamma_multiply(0.12));
         }
-        let mut x = r.x;
+        let mut x = rect.x;
         for cw in &t.col_w[..t.cols() - 1] {
             x += cw;
-            self.painter.line_segment([self.cam.s(Pt::new(x, r.y)), self.cam.s(Pt::new(x, r.bottom()))], Stroke::new((w * 0.6) as f32 * self.cam.zoom, c));
+            self.painter.line_segment(
+                [self.cam.s(Pt::new(x, rect.y)), self.cam.s(Pt::new(x, rect.bottom()))],
+                Stroke::new(num::f32(line_w * 0.6) * self.cam.zoom, color),
+            );
         }
-        let mut y = r.y;
+        let mut y = rect.y;
         for rh in &t.row_h[..t.rows() - 1] {
             y += rh;
-            self.painter.line_segment([self.cam.s(Pt::new(r.x, y)), self.cam.s(Pt::new(r.right(), y))], Stroke::new((w * 0.6) as f32 * self.cam.zoom, c));
+            self.painter.line_segment(
+                [self.cam.s(Pt::new(rect.x, y)), self.cam.s(Pt::new(rect.right(), y))],
+                Stroke::new(num::f32(line_w * 0.6) * self.cam.zoom, color),
+            );
         }
-        self.painter.rect_stroke(self.cam.rect_s(r), 0.0, Stroke::new(w as f32 * self.cam.zoom, c), egui::StrokeKind::Middle);
+        self.painter.rect_stroke(self.cam.rect_s(rect), 0.0, Stroke::new(num::f32(line_w) * self.cam.zoom, color), egui::StrokeKind::Middle);
         let label = Label { text: RichText::default(), family: t.family, size: t.size, align: Align::Left };
         for ri in 0..t.rows() {
             for ci in 0..t.cols() {
@@ -710,7 +734,7 @@ impl Renderer<'_> {
                 let cr = t.cell_rect(ri, ci);
                 let area = Rect::new(cr.x + 8.0, cr.y + 4.0, (cr.w - 16.0).max(1.0), (cr.h - 8.0).max(1.0));
                 let lay = layout_rich(cell, Some(area.w), self.measurer, t.family, t.size);
-                self.paint_lines(&lay, &label, area, &|p| p, 0.0, c, t.header && ri == 0);
+                self.paint_lines(&lay, &label, area, &|p| p, 0.0, color, t.header && ri == 0);
             }
         }
     }

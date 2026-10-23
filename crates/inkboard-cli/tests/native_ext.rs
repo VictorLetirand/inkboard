@@ -25,7 +25,7 @@ fn convert_writes_inkboard_and_reads_every_native_name() {
     let native = d.join("flow.inkboard");
     assert!(convert(&mmd, &native));
     let doc = serial::load(&native).expect("native file written under the .inkboard extension");
-    assert!(!doc.pages[0].objects.is_empty());
+    assert_ne!(doc.pages[0].objects, [] as [inkboard_core::Object; 0]);
     // reading: the same content under the older names, and re-saving under each of the three names
     for old in ["old.inkboard.json", "older.tableau.json"] {
         let p = d.join(old);

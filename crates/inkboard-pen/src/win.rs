@@ -11,7 +11,7 @@ const SUBCLASS_ID: usize = 0x5742_5045; // "WBPE"
 
 /// Pointer id: low word of `wParam` (`GET_POINTERID_WPARAM`).
 fn pointer_id(wparam: WPARAM) -> u32 {
-    (wparam & 0xffff) as u32
+    u32::try_from(wparam & 0xffff).expect("masked to 16 bits")
 }
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
@@ -22,14 +22,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         } else {
             let mut kind = 0;
             // SAFETY: `kind` is a valid integer for the whole call; an invalid id simply makes the call fail.
-            let ok = unsafe { GetPointerType(id, &mut kind) } != 0;
+            let ok = unsafe { GetPointerType(id, &raw mut kind) } != 0;
             if ok && kind == PT_PEN {
                 let mut info = POINTER_PEN_INFO::default();
                 // SAFETY: output structure valid for the duration of the call.
-                if unsafe { GetPointerPenInfo(id, &mut info) } != 0 {
+                if unsafe { GetPointerPenInfo(id, &raw mut info) } != 0 {
                     record(PenSample {
                         kind: PointerKind::Pen,
-                        pressure: (info.pressure as f32 / 1024.0).clamp(0.0, 1.0),
+                        pressure: u16::try_from(info.pressure).map_or(1.0, |p| (f32::from(p) / 1024.0).min(1.0)),
                         flags: info.penFlags,
                         tilt: (info.tiltX, info.tiltY),
                         seq: 0,

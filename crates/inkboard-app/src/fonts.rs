@@ -2,6 +2,7 @@
 
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily as EFamily, FontId};
 use inkboard_core::FontFamily;
+use inkboard_core::num;
 use inkboard_core::text::Measurer;
 use std::sync::Arc;
 
@@ -70,6 +71,6 @@ impl Measurer for EguiMeasurer {
         if s.is_empty() {
             return 0.0;
         }
-        self.0.fonts_mut(|f| f64::from(f.layout_no_wrap(s.to_owned(), font_id(font, size as f32, bold), Color32::WHITE).size().x))
+        self.0.fonts_mut(|f| f64::from(f.layout_no_wrap(s.to_owned(), font_id(font, num::f32(size), bold), Color32::WHITE).size().x))
     }
 }

@@ -79,11 +79,11 @@ fn pump_messages(duration: Duration) {
     while Instant::now() < end {
         let mut msg = MSG::default();
         // SAFETY: `msg` is valid for the call; messages of this thread only.
-        while unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) } != 0 {
+        while unsafe { PeekMessageW(&raw mut msg, null_mut(), 0, 0, PM_REMOVE) } != 0 {
             // SAFETY: message just returned by `PeekMessageW`.
             unsafe {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
+                TranslateMessage(&raw const msg);
+                DispatchMessageW(&raw const msg);
             }
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -97,7 +97,7 @@ fn create_window() -> HWND {
     let hinstance = unsafe { GetModuleHandleW(null()) };
     CLASS.call_once(|| {
         let wc = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            cbSize: u32::try_from(std::mem::size_of::<WNDCLASSEXW>()).unwrap(),
             style: 0,
             lpfnWndProc: Some(DefWindowProcW),
             cbClsExtra: 0,
@@ -111,7 +111,7 @@ fn create_window() -> HWND {
             hIconSm: null_mut(),
         };
         // SAFETY: `wc` and the class name are valid for the call.
-        assert!(unsafe { RegisterClassExW(&wc) } != 0, "RegisterClassExW failed (error {})", unsafe { GetLastError() });
+        assert!(unsafe { RegisterClassExW(&raw const wc) } != 0, "RegisterClassExW failed (error {})", unsafe { GetLastError() });
     });
     let title: Vec<u16> = "Inkboard pen test\0".encode_utf16().collect();
     // SAFETY: registered class, no parent; destroyed by `TestWindow::drop`.
@@ -162,8 +162,8 @@ impl Session {
     fn line(&self) -> Vec<POINT> {
         let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         // SAFETY: `r` valid for the call, window of this thread.
-        assert!(unsafe { GetWindowRect(self.window.0, &mut r) } != 0, "GetWindowRect failed");
-        let y = (r.top + r.bottom) / 2;
+        assert!(unsafe { GetWindowRect(self.window.0, &raw mut r) } != 0, "GetWindowRect failed");
+        let y = i32::midpoint(r.top, r.bottom);
         let pts: Vec<POINT> = (0..8).map(|i| POINT { x: r.left + 60 + i * 25, y }).collect();
         // The injected coordinates must land in OUR window, otherwise another window of the user would receive the pen.
         for p in &pts {
@@ -194,12 +194,15 @@ impl Session {
         pen.pointerInfo.ptPixelLocation = p;
         pen.penFlags = pen_flags;
         pen.penMask = PEN_MASK_PRESSURE;
-        pen.pressure = (pressure * MAX_PRESSURE).round() as u32;
+        // float to integer has no `From`/`TryFrom` in std: `as` (saturating) is the conversion
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "pressure is in 0..=1: the product fits in 0..=1024")]
+        let raw = (pressure * MAX_PRESSURE).round() as u32;
+        pen.pressure = raw;
         info.Anonymous.penInfo = pen;
 
         let before = inkboard_pen::last_sample().seq;
         // SAFETY: valid device and one fully initialized `POINTER_TYPE_INFO`.
-        let ok = unsafe { InjectSyntheticPointerInput(self.device.0, &info, 1) } != 0;
+        let ok = unsafe { InjectSyntheticPointerInput(self.device.0, &raw const info, 1) } != 0;
         assert!(ok, "InjectSyntheticPointerInput failed (error {})", unsafe { GetLastError() });
 
         // The subclass runs while this thread dispatches messages.

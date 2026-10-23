@@ -4,23 +4,21 @@
 //! (the application's fonts); command-line tools use
 //! [`ApproxMeasurer`].
 
+use crate::num;
 use crate::style::{Color, FontFamily};
 use serde::{Deserialize, Serialize};
 
-fn is_false(b: &bool) -> bool {
-    !*b
-}
-
 /// Formatting of a text fragment.
+#[expect(clippy::struct_excessive_bools, reason = "independent decorations, stored as is in the board file")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpanStyle {
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bold: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub italic: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub underline: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strike: bool,
     /// Text color; `None`: the object's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,9 +45,11 @@ impl RichText {
         let text: String = s.into();
         if text.is_empty() { Self(Vec::new()) } else { Self(vec![Span { text, style: SpanStyle::default() }]) }
     }
+    #[must_use]
     pub fn to_plain(&self) -> String {
         self.0.iter().map(|s| s.text.as_str()).collect()
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.iter().all(|s| s.text.is_empty())
     }
@@ -93,11 +93,13 @@ impl RichText {
     }
 
     /// Number of characters.
+    #[must_use]
     pub fn len_chars(&self) -> usize {
         self.0.iter().map(|s| s.text.chars().count()).sum()
     }
 
     /// Style of the character at index `i`.
+    #[must_use]
     pub fn style_at(&self, i: usize) -> Option<SpanStyle> {
         self.chars_with_style().get(i).map(|c| c.1)
     }
@@ -168,6 +170,7 @@ pub enum Format {
 
 impl Format {
     /// True when the range `[from, to)` already carries this formatting on all its characters.
+    #[must_use]
     pub fn is_active(self, rt: &RichText, from: usize, to: usize) -> bool {
         match self {
             Format::Bold => rt.all(from, to, |s| s.bold),
@@ -258,7 +261,7 @@ pub struct TextLayout {
 }
 
 fn run_width(chars: &[(char, SpanStyle)], m: &dyn Measurer, font: FontFamily, size: f64) -> f64 {
-    let mut w = 0.0;
+    let mut total = 0.0;
     let mut i = 0;
     while i < chars.len() {
         let bold = chars[i].1.bold;
@@ -268,10 +271,10 @@ fn run_width(chars: &[(char, SpanStyle)], m: &dyn Measurer, font: FontFamily, si
             s.push(chars[j].0);
             j += 1;
         }
-        w += m.width(&s, font, size, bold);
+        total += m.width(&s, font, size, bold);
         i = j;
     }
-    w
+    total
 }
 
 fn to_line(chars: &[(char, SpanStyle)]) -> Line {
@@ -332,8 +335,10 @@ pub fn layout_rich(rt: &RichText, max_w: Option<f64>, m: &dyn Measurer, font: Fo
                 // word wider than the line: break character by character
                 for item in tok {
                     cur.push(*item);
-                    if cur.len() > 1 && run_width(&cur, m, font, size) > max {
-                        let last = cur.pop().unwrap();
+                    if cur.len() > 1
+                        && run_width(&cur, m, font, size) > max
+                        && let Some(last) = cur.pop()
+                    {
                         rows.push(std::mem::take(&mut cur));
                         cur.push(last);
                     }
@@ -350,7 +355,7 @@ pub fn layout_rich(rt: &RichText, max_w: Option<f64>, m: &dyn Measurer, font: Fo
     let line_h = m.line_height(size);
     let widths: Vec<f64> = rows.iter().map(|r| run_width(r, m, font, size)).collect();
     let width = widths.iter().copied().fold(0.0, f64::max);
-    TextLayout { height: rows.len().max(1) as f64 * line_h, lines: rows.iter().map(|r| to_line(r)).collect(), widths, line_h, width }
+    TextLayout { height: num::f64_of(rows.len().max(1)) * line_h, lines: rows.iter().map(|r| to_line(r)).collect(), widths, line_h, width }
 }
 
 #[cfg(test)]

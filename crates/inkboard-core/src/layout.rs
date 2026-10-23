@@ -7,6 +7,7 @@ use crate::connector::Route;
 use crate::editor::Editor;
 use crate::geom::{Pt, Rect};
 use crate::model::{Id, Kind};
+use crate::num;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,22 +43,10 @@ struct Item {
 const NODE_SEP: f64 = 48.0;
 const RANK_SEP: f64 = 84.0;
 
-/// Computes a readable layout: ranks by longest path, cycles broken,
-/// long edges passing through relay nodes, crossing reduction by barycenters.
-pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> Layout {
-    let n = nodes.len();
-    if n == 0 {
-        return Layout::default();
-    }
-    let horiz = matches!(dir, Direction::LeftRight | Direction::RightLeft);
-    let mut items: Vec<Item> = nodes.iter().map(|s| Item { a: if horiz { s.w } else { s.h }, b: if horiz { s.h } else { s.w }, rank: 0 }).collect();
-
-    // valid edges (index into `edges`)
-    let valid: Vec<usize> = (0..edges.len()).filter(|&i| edges[i].0 != edges[i].1 && edges[i].0 < n && edges[i].1 < n).collect();
-
-    // 1. break the cycles (iterative DFS)
+/// Edges to reverse so that the graph has no cycle (iterative DFS): `reversed[i]` for `edges[i]`; `valid`: the edges to consider.
+fn break_cycles(n: usize, edges: &[(usize, usize)], valid: &[usize]) -> Vec<bool> {
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for &i in &valid {
+    for &i in valid {
         adj[edges[i].0].push(i);
     }
     let mut state = vec![0u8; n];
@@ -87,13 +76,15 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
             }
         }
     }
-    let oriented: Vec<(usize, usize, usize)> =
-        valid.iter().map(|&i| if reversed[i] { (edges[i].1, edges[i].0, i) } else { (edges[i].0, edges[i].1, i) }).collect();
+    reversed
+}
 
-    // 2. ranks: longest path (Kahn)
+/// Rank of each node: longest path from a source (Kahn); `oriented`: acyclic edges `(from, to, _)`.
+fn assign_ranks(items: &mut [Item], oriented: &[(usize, usize, usize)]) {
+    let n = items.len();
     let mut indeg = vec![0usize; n];
     let mut out: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for &(u, v, _) in &oriented {
+    for &(u, v, _) in oriented {
         indeg[v] += 1;
         out[u].push(v);
     }
@@ -110,6 +101,99 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
             }
         }
     }
+}
+
+/// Order within the ranks: barycenters of the neighbors, alternating downward and upward sweeps.
+fn order_ranks(layers: &mut [Vec<usize>], up: &[Vec<usize>], down: &[Vec<usize>], total: usize) {
+    let max_rank = layers.len() - 1;
+    let mut pos = vec![0usize; total];
+    let reindex = |l: &[usize], pos: &mut [usize]| l.iter().enumerate().for_each(|(i, &id)| pos[id] = i);
+    for l in layers.iter() {
+        reindex(l, &mut pos);
+    }
+    let bary = |id: usize, nb: &[Vec<usize>], pos: &[usize]| -> f64 {
+        if nb[id].is_empty() { num::f64_of(pos[id]) } else { nb[id].iter().map(|&x| num::f64_of(pos[x])).sum::<f64>() / num::f64_of(nb[id].len()) }
+    };
+    for it in 0..8 {
+        let ranks: Vec<usize> = if it % 2 == 0 { (1..=max_rank).collect() } else { (0..max_rank).rev().collect() };
+        for r in ranks {
+            let nb = if it % 2 == 0 { up } else { down };
+            let keys: HashMap<usize, f64> = layers[r].iter().map(|&id| (id, bary(id, nb, &pos))).collect();
+            layers[r].sort_by(|p, q| keys[p].total_cmp(&keys[q]));
+            reindex(&layers[r], &mut pos);
+        }
+    }
+}
+
+/// Coordinates across the ranks: packed side by side, then pulled toward the neighbors (alternating sweeps, no overlap).
+fn cross_coords(items: &[Item], layers: &[Vec<usize>], up: &[Vec<usize>], down: &[Vec<usize>]) -> Vec<f64> {
+    let (total, max_rank) = (items.len(), layers.len() - 1);
+    let mut cx = vec![0.0f64; total];
+    for l in layers {
+        let mut x = 0.0;
+        for &id in l {
+            let w = items[id].b;
+            x += w / 2.0;
+            cx[id] = x;
+            x += w / 2.0 + NODE_SEP;
+        }
+        let shift = (x - NODE_SEP) / 2.0;
+        for &id in l {
+            cx[id] -= shift;
+        }
+    }
+    let settle = |l: &[usize], desire: &dyn Fn(usize) -> f64, cx: &mut [f64]| {
+        let m = l.len();
+        let d: Vec<f64> = l.iter().map(|&i| desire(i)).collect();
+        let w: Vec<f64> = l.iter().map(|&i| items[i].b).collect();
+        let (mut x1, mut x2) = (vec![0.0; m], vec![0.0; m]);
+        for i in 0..m {
+            x1[i] = if i > 0 { d[i].max(x1[i - 1] + f64::midpoint(w[i - 1], w[i]) + NODE_SEP) } else { d[i] };
+        }
+        for i in (0..m).rev() {
+            x2[i] = if i + 1 < m { d[i].min(x2[i + 1] - f64::midpoint(w[i], w[i + 1]) - NODE_SEP) } else { d[i] };
+        }
+        for (i, &id) in l.iter().enumerate() {
+            cx[id] = f64::midpoint(x1[i], x2[i]);
+        }
+    };
+    for _ in 0..6 {
+        for layer in &layers[1..] {
+            let cur = cx.clone();
+            settle(layer, &|id| if up[id].is_empty() { cur[id] } else { up[id].iter().map(|&x| cur[x]).sum::<f64>() / num::f64_of(up[id].len()) }, &mut cx);
+        }
+        for r in (0..max_rank).rev() {
+            let cur = cx.clone();
+            settle(
+                &layers[r],
+                &|id| if down[id].is_empty() { cur[id] } else { down[id].iter().map(|&x| cur[x]).sum::<f64>() / num::f64_of(down[id].len()) },
+                &mut cx,
+            );
+        }
+    }
+    cx
+}
+
+/// Computes a readable layout: ranks by longest path, cycles broken,
+/// long edges passing through relay nodes, crossing reduction by barycenters.
+pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> Layout {
+    let n = nodes.len();
+    if n == 0 {
+        return Layout::default();
+    }
+    let horiz = matches!(dir, Direction::LeftRight | Direction::RightLeft);
+    let mut items: Vec<Item> = nodes.iter().map(|s| Item { a: if horiz { s.w } else { s.h }, b: if horiz { s.h } else { s.w }, rank: 0 }).collect();
+
+    // valid edges (index into `edges`)
+    let valid: Vec<usize> = (0..edges.len()).filter(|&i| edges[i].0 != edges[i].1 && edges[i].0 < n && edges[i].1 < n).collect();
+
+    // 1. break the cycles
+    let reversed = break_cycles(n, edges, &valid);
+    let oriented: Vec<(usize, usize, usize)> =
+        valid.iter().map(|&i| if reversed[i] { (edges[i].1, edges[i].0, i) } else { (edges[i].0, edges[i].1, i) }).collect();
+
+    // 2. ranks
+    assign_ranks(&mut items, &oriented);
 
     // 3. relay nodes for the edges that skip ranks
     let mut chains: Vec<(usize, Vec<usize>)> = Vec::new(); // (original edge index, oriented chain)
@@ -137,70 +221,11 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
         }
     }
 
-    // 4. order within ranks (barycenters, alternating sweeps)
-    let mut pos = vec![0usize; total];
-    let reindex = |l: &Vec<usize>, pos: &mut Vec<usize>| l.iter().enumerate().for_each(|(i, &id)| pos[id] = i);
-    for l in &layers {
-        reindex(l, &mut pos);
-    }
-    let bary = |id: usize, nb: &Vec<Vec<usize>>, pos: &Vec<usize>| -> f64 {
-        if nb[id].is_empty() { pos[id] as f64 } else { nb[id].iter().map(|&x| pos[x] as f64).sum::<f64>() / nb[id].len() as f64 }
-    };
-    for it in 0..8 {
-        let ranks: Vec<usize> = if it % 2 == 0 { (1..=max_rank).collect() } else { (0..max_rank).rev().collect() };
-        for r in ranks {
-            let nb = if it % 2 == 0 { &up } else { &down };
-            let keys: HashMap<usize, f64> = layers[r].iter().map(|&id| (id, bary(id, nb, &pos))).collect();
-            layers[r].sort_by(|p, q| keys[p].total_cmp(&keys[q]));
-            let l = layers[r].clone();
-            reindex(&l, &mut pos);
-        }
-    }
+    // 4. order within ranks
+    order_ranks(&mut layers, &up, &down, total);
 
     // 5. cross coordinates
-    let mut cx = vec![0.0f64; total];
-    for l in &layers {
-        let mut x = 0.0;
-        for &id in l {
-            let w = items[id].b;
-            x += w / 2.0;
-            cx[id] = x;
-            x += w / 2.0 + NODE_SEP;
-        }
-        let shift = (x - NODE_SEP) / 2.0;
-        for &id in l {
-            cx[id] -= shift;
-        }
-    }
-    let settle = |l: &Vec<usize>, desire: &dyn Fn(usize) -> f64, cx: &mut Vec<f64>| {
-        let m = l.len();
-        let d: Vec<f64> = l.iter().map(|&i| desire(i)).collect();
-        let w: Vec<f64> = l.iter().map(|&i| items[i].b).collect();
-        let (mut x1, mut x2) = (vec![0.0; m], vec![0.0; m]);
-        for i in 0..m {
-            x1[i] = if i > 0 { d[i].max(x1[i - 1] + (w[i - 1] + w[i]) / 2.0 + NODE_SEP) } else { d[i] };
-        }
-        for i in (0..m).rev() {
-            x2[i] = if i + 1 < m { d[i].min(x2[i + 1] - (w[i] + w[i + 1]) / 2.0 - NODE_SEP) } else { d[i] };
-        }
-        for (i, &id) in l.iter().enumerate() {
-            cx[id] = (x1[i] + x2[i]) / 2.0;
-        }
-    };
-    for _ in 0..6 {
-        for layer in &layers[1..] {
-            let cur = cx.clone();
-            settle(layer, &|id| if up[id].is_empty() { cur[id] } else { up[id].iter().map(|&x| cur[x]).sum::<f64>() / up[id].len() as f64 }, &mut cx);
-        }
-        for r in (0..max_rank).rev() {
-            let cur = cx.clone();
-            settle(
-                &layers[r],
-                &|id| if down[id].is_empty() { cur[id] } else { down[id].iter().map(|&x| cur[x]).sum::<f64>() / down[id].len() as f64 },
-                &mut cx,
-            );
-        }
-    }
+    let cx = cross_coords(&items, &layers, &up, &down);
 
     // 6. coordinates along the ranks
     let mut ra = vec![0.0f64; max_rank + 1];
@@ -300,7 +325,7 @@ mod tests {
         for i in 0..nodes.len() {
             for j in i + 1..nodes.len() {
                 let (a, b) = (l.centers[i], l.centers[j]);
-                if (a.x - b.x).abs() < (nodes[i].w + nodes[j].w) / 2.0 && (a.y - b.y).abs() < (nodes[i].h + nodes[j].h) / 2.0 {
+                if (a.x - b.x).abs() < f64::midpoint(nodes[i].w, nodes[j].w) && (a.y - b.y).abs() < f64::midpoint(nodes[i].h, nodes[j].h) {
                     return true;
                 }
             }
@@ -355,19 +380,19 @@ mod tests {
 
     #[test]
     fn disconnected_and_empty_inputs() {
-        assert!(layered(&[], &[], Direction::TopDown).centers.is_empty());
+        assert_eq!(layered(&[], &[], Direction::TopDown).centers, [] as [crate::geom::Pt; 0]);
         let nodes = vec![spec(60.0, 30.0); 4];
         let l = layered(&nodes, &[], Direction::TopDown);
         assert!(!overlaps(&l, &nodes));
         let l = layered(&nodes, &[(9, 0)], Direction::TopDown); // invalid edge ignored
-        assert!(l.routes[0].is_empty());
+        assert_eq!(l.routes[0], [] as [crate::geom::Pt; 0]);
     }
 
     #[test]
     fn wide_fanout_is_centered_on_parent() {
         let nodes = vec![spec(100.0, 50.0); 4];
         let l = layered(&nodes, &[(0, 1), (0, 2), (0, 3)], Direction::TopDown);
-        let mid = (l.centers[1].x + l.centers[3].x) / 2.0;
+        let mid = f64::midpoint(l.centers[1].x, l.centers[3].x);
         assert!((l.centers[0].x - mid).abs() < 1.0);
         assert!(!overlaps(&l, &nodes));
     }
@@ -379,7 +404,7 @@ mod tests {
         use crate::style::Style;
         let mut e = Editor::new(Document::default());
         let ids: Vec<Id> = (0..4)
-            .map(|i| e.insert(Object::new_box(BoxGeom::Rect, Frame::new(i as f64 * 10.0, 0.0, 100.0, 50.0), Style::default(), Label::default())))
+            .map(|i| e.insert(Object::new_box(BoxGeom::Rect, Frame::new(f64::from(i) * 10.0, 0.0, 100.0, 50.0), Style::default(), Label::default())))
             .collect();
         let mut all = ids.clone();
         for (a, b) in [(0, 1), (1, 2), (2, 3), (0, 3)] {

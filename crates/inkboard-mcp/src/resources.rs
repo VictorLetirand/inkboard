@@ -7,6 +7,7 @@ use crate::Server;
 use crate::live::{self, Forward};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
@@ -18,6 +19,7 @@ const MAX_FILES: usize = 300;
 const MAX_DEPTH: usize = 3;
 
 /// Encodes a path as a `file://` URI (characters outside `A-Za-z0-9-._~/:` are %XX-encoded).
+#[must_use]
 pub fn file_uri(p: &Path) -> String {
     let s = p.display().to_string().replace('\\', "/");
     let mut out = String::from("file://");
@@ -28,13 +30,14 @@ pub fn file_uri(p: &Path) -> String {
         if b.is_ascii_alphanumeric() || b"-._~/:".contains(&b) {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out
 }
 
 /// Path designated by a `file://` URI (`None` for any other scheme).
+#[must_use]
 pub fn uri_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let decoded = String::from_utf8(inkboard_formats::common::percent_decode(rest)).ok()?;
@@ -47,7 +50,7 @@ pub fn uri_path(uri: &str) -> Option<PathBuf> {
 fn collect(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut entries: Vec<_> = rd.flatten().collect();
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for e in entries {
         if out.len() >= MAX_FILES {
             return;
@@ -67,6 +70,7 @@ fn live_available(srv: &Server) -> bool {
 
 impl Server {
     /// Available resources: the application's board if it is open, and the board files (`.inkboard`, `.inkboard.json`, `.tableau.json`) under the root.
+    #[must_use]
     pub fn list_resources(&self) -> Vec<Value> {
         let mut v = Vec::new();
         if live_available(self) {
@@ -88,6 +92,10 @@ impl Server {
     }
 
     /// JSON content of a resource (same shape as `describe_board`).
+    ///
+    /// # Errors
+    ///
+    /// A message when the URI is unknown, no board is open in the application (live URI), or the board cannot be read.
     pub fn read_resource(&self, uri: &str) -> Result<String, String> {
         if uri == LIVE_URI {
             return match live::forward(self, "describe_board", &json!({})) {
