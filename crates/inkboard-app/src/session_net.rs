@@ -19,16 +19,16 @@ use crate::i18n::{t, tr};
 use crate::join_ui::SessionFactory;
 use crate::session_guest::{Clock, ConnectError, ConnectErrorKind, Diagnosis, GuestConfig, GuestLink, GuestSession, NetWatch, RelayDiagnoser};
 use crate::session_host::{HostAddress, HostTransport, SessionNet, StartJob, StartResult};
+use crate::session_link::{Dialing, connect_error};
 use inkboard_net::diagnose::{DiagnoseOptions, diagnose_relay_with};
 use inkboard_net::ticket::MAX_HINTS;
 use inkboard_net::{CancelToken, GatewayKind, IrohConn, IrohTransport, NetConfig, RelaySetting};
 use inkboard_session::crypto::{OsEntropy, Ticket};
-use inkboard_session::error::{Error, NetCause, Result};
 use inkboard_session::transport::{Connection, Transport};
 use std::net::{IpAddr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -42,8 +42,6 @@ const GUEST_CONNECT: Duration = Duration::from_secs(15);
 const DIAGNOSE: Duration = Duration::from_secs(5);
 /// The host's address is looked at again this often.
 const REFRESH_EVERY: Duration = Duration::from_secs(1);
-/// Frames a connection that is still being established holds back (the `Hello` and what follows).
-const MAX_QUEUED: usize = 1024;
 
 /* ---------------------------------------------------------------------------------------------------- closing in the background */
 
@@ -312,15 +310,6 @@ pub fn host_net() -> Box<dyn SessionNet> {
 
 /* ---------------------------------------------------------------------------------------------------------------- guest */
 
-fn connect_error(e: &Error) -> ConnectError {
-    let kind = match e {
-        Error::Network { cause: NetCause::Local, .. } => ConnectErrorKind::NoNetwork,
-        Error::Network { cause: NetCause::TimedOut, .. } => ConnectErrorKind::TimedOut,
-        _ => ConnectErrorKind::Other,
-    };
-    ConnectError::new(kind, &e.to_string())
-}
-
 /// The link of a guest: dials on a thread and returns at once a connection that opens when the handshake is done.
 struct NetLink {
     cfg: NetConfig,
@@ -367,15 +356,7 @@ impl GuestLink for NetLink {
                 let _ = tx.send(dial(&slot, &cfg, &ticket, &dial_cancel, &poke));
             })
             .map_err(|e| ConnectError::new(ConnectErrorKind::Other, &format!("cannot start the connection thread: {e}")))?;
-        Ok(Box::new(Dialing {
-            peer: self.ticket.host.clone(),
-            rx: Some(rx),
-            conn: None,
-            queued: Vec::new(),
-            dead: false,
-            failure: Arc::clone(&self.failure),
-            cancel,
-        }))
+        Ok(Box::new(Dialing::new(self.ticket.host.clone(), rx, Arc::clone(&self.failure), cancel)))
     }
 
     fn take_failure(&mut self) -> Option<ConnectError> {
@@ -401,90 +382,6 @@ impl Drop for NetLink {
         if let Some(slot) = self.transport.take() {
             close_in_background(move || drop(slot));
         }
-    }
-}
-
-/// A connection being established: frames sent meanwhile are kept and go out once it is open; if it never opens, the reason is left
-/// for [`GuestLink::take_failure`].
-struct Dialing {
-    peer: String,
-    rx: Option<Receiver<std::result::Result<IrohConn, ConnectError>>>,
-    conn: Option<IrohConn>,
-    queued: Vec<Vec<u8>>,
-    dead: bool,
-    failure: Arc<Mutex<Option<ConnectError>>>,
-    /// Ends the dial running on the thread (closing, or dropping, this connection really stops the attempt).
-    cancel: CancelToken,
-}
-
-impl Drop for Dialing {
-    fn drop(&mut self) {
-        self.cancel.cancel();
-    }
-}
-
-impl Dialing {
-    fn settle(&mut self) {
-        let Some(rx) = self.rx.as_ref() else { return };
-        match rx.try_recv() {
-            Err(TryRecvError::Empty) => {}
-            Ok(Ok(mut conn)) => {
-                for frame in self.queued.drain(..) {
-                    let _ = conn.send(&frame);
-                }
-                self.conn = Some(conn);
-                self.rx = None;
-            }
-            Ok(Err(e)) => self.fail(e),
-            Err(TryRecvError::Disconnected) => self.fail(ConnectError::new(ConnectErrorKind::Other, "the connection thread ended without an answer")),
-        }
-    }
-
-    fn fail(&mut self, e: ConnectError) {
-        *self.failure.lock().unwrap_or_else(PoisonError::into_inner) = Some(e);
-        self.dead = true;
-        self.rx = None;
-        self.queued.clear();
-    }
-}
-
-impl Connection for Dialing {
-    fn peer(&self) -> &str {
-        &self.peer
-    }
-
-    fn send(&mut self, frame: &[u8]) -> Result<()> {
-        self.settle();
-        match self.conn.as_mut() {
-            Some(c) => c.send(frame),
-            None if self.dead => Err(Error::Closed),
-            None if self.queued.len() >= MAX_QUEUED => {
-                Err(Error::Network { cause: NetCause::Congested, detail: "too many frames waiting for the connection".to_owned() })
-            }
-            None => {
-                self.queued.push(frame.to_vec());
-                Ok(())
-            }
-        }
-    }
-
-    fn recv(&mut self) -> Option<Vec<u8>> {
-        self.settle();
-        self.conn.as_mut()?.recv()
-    }
-
-    fn is_open(&self) -> bool {
-        self.conn.as_ref().is_some_and(Connection::is_open)
-    }
-
-    fn close(&mut self) {
-        self.cancel.cancel();
-        if let Some(c) = self.conn.as_mut() {
-            c.close();
-        }
-        self.dead = true;
-        self.rx = None;
-        self.queued.clear();
     }
 }
 

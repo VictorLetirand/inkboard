@@ -247,29 +247,8 @@ pub fn set_fullscreen(_ctx: &egui::Context, _on: bool) {}
 
 /* ------------------------------------------------------------------ sessions */
 
-/// A relay address that was accepted (none is in a browser build before the web transport exists).
-#[derive(Debug)]
-pub struct RelayUrl;
-
-impl RelayUrl {
-    pub fn host_str(&self) -> Option<&str> {
-        None
-    }
-}
-
-/// Refused address of a relay.
-#[derive(Debug)]
-pub struct InvalidRelayUrl;
-
-/// The browser has no relay policy yet (the web transport comes later): every relay address of a link is refused.
-pub fn check_relay_url(_url: &str, _allow_private: bool) -> Result<RelayUrl, InvalidRelayUrl> {
-    Err(InvalidRelayUrl)
-}
-
-/// No relay is configured by the user in a browser.
-pub fn is_known_relay(_url: &str, _configured: &[String]) -> bool {
-    false
-}
+/// Relay addresses of an invitation link: what the network crate decides, as on the desktop.
+pub use inkboard_net::config::{check_relay_url, is_known_relay};
 
 /// Seed for the object ids: the browser has no clock to derive it from, and two browsers must never draw the same ids.
 pub fn random_seed() -> u64 {

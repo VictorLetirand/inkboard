@@ -71,8 +71,9 @@ fn installer_templates_handle_the_file_association_fields_correctly() {
     assert!(!mac.contains("DeleteRegKey SHCTX \"Software/Classes/.${EXT}\""), "NSIS: the extension key is never deleted when it still holds something else");
 }
 
-/// Targets of the released binaries (same list as `scripts/gen_third_party.py`).
-const RELEASE_TARGETS: [&str; 4] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"];
+/// Targets of the released binaries and of the web page (same list as `scripts/gen_third_party.py`).
+const RELEASE_TARGETS: [&str; 5] =
+    ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin", "wasm32-unknown-unknown"];
 
 /// `(name, version)` of the third-party crates compiled into the binaries for one target (normal and build dependencies, no dev dependencies).
 /// Prerequisite: `cargo fetch --locked` (offline, `cargo tree` needs the sources of the crates of the other platforms too; the CI runs it before the tests).

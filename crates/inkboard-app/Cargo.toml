@@ -14,6 +14,8 @@ path = "src/main.rs"
 # Web renderers (wasm32 only; the desktop build is unaffected). eframe compiles ONE painter for the web: `glow` wins if both are on.
 web-glow = ["eframe/glow"]
 web-wgpu = ["eframe/wgpu", "dep:wgpu"]
+# Test hook `window.__inkboard_test` of the browser end-to-end bench (web/test/e2e.mjs); never in the published page.
+web-test = []
 
 [dependencies]
 inkboard-fonts = { path = "../inkboard-fonts" }
@@ -25,15 +27,15 @@ inkboard-pen = { path = "../inkboard-pen" }
 inkboard-formats = { path = "../inkboard-formats" }
 inkboard-icons = { path = "../inkboard-icons" }
 inkboard-session = { path = "../inkboard-session" }
+inkboard-net = { path = "../inkboard-net" }
 
-# Desktop only: system clipboard, window handle, MCP server (live mode, data folder), network transport, system language, the
-# embedded icon pack (the web build fetches it on demand).
+# Desktop only: system clipboard, window handle, MCP server (live mode, data folder), system language, the embedded icon pack (the web
+# build fetches it on demand).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 arboard = "3.7.0"
 eframe = { version = "0.33.3", features = ["wgpu"] }
 raw-window-handle = "0.6.2"
 inkboard-mcp = { path = "../inkboard-mcp" }
-inkboard-net = { path = "../inkboard-net" }
 sys-locale = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

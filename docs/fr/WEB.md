@@ -28,6 +28,7 @@ dossier (les liens sont relatifs) ; pour l'essayer en local, lancez `trunk serve
 - **Rendu** : WebGL (`glow`, par défaut, plus léger). `scripts/build_web.sh wgpu` (Windows : `-Renderer wgpu`) construit le rendu WebGPU avec repli WebGL
   (fonctionnalité `web-wgpu`, un peu plus lourd).
 - **Chaîne d'outils** : si le Rust choisi par `rustup` est plus ancien que 1.91, définissez `RUSTUP_TOOLCHAIN` (par exemple `RUSTUP_TOOLCHAIN=1.99.1`).
+- **Compilateur C** : le transport réseau (`iroh`, via `ring`) compile du C pour WebAssembly ; la construction exige un `clang` avec la cible WebAssembly (LLVM 15 ou plus ; sous Linux, le paquet `clang`). Si ce n'est pas le `clang` du `PATH`, définissez `CC_wasm32_unknown_unknown` et `AR_wasm32_unknown_unknown` vers un `clang` et un `llvm-ar`.
 - La version de bureau n'est pas touchée : `cargo build -p inkboard-app` est inchangé et embarque toujours le pack d'icônes.
 
 ## Ce qui diffère de l'application de bureau
