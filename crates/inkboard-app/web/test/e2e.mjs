@@ -439,7 +439,7 @@ try {
     await hostSays('AGENT');
     const seenA = await until(A, 'Alice to see the agent', agentVisible, { timeout: 30000 });
     await shot(A, 'd1-agent-cursor');
-    check('the guest sees the cursor of the agent, with its name', seenA.agent.name === 'Claude', seenA.agent.name);
+    check('the guest sees the cursor of the agent, with its name', seenA.agent.name === 'Claude (agent)', seenA.agent.name);
     const seenB = await state(B);
     check('the other guest sees it as well', !!agentVisible(seenB) || !!(await until(B, 'Bob to see the agent', agentVisible, { timeout: 30000 }).catch(() => null)));
   });
