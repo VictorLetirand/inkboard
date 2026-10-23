@@ -8,7 +8,8 @@ use crate::tools::{Drag, Editing, Tool};
 use crate::ui;
 use eframe::egui::{self, Key, Modifiers};
 use inkboard_core::editor::Order;
-use inkboard_core::*;
+use inkboard_core::num;
+use inkboard_core::{Asset, BgPreset, BoxGeom, Color, Document, Editor, Format, Id, Kind, Label, Object, Page, Pt, Rect, Route, Style, View};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -70,13 +71,14 @@ pub struct Caches {
 
 impl Default for Caches {
     fn default() -> Self {
-        Self { rev: u64::MAX, page: Id::new(), len: 0, ids: Default::default(), spatial: None, build_ms: 0.0 }
+        Self { rev: u64::MAX, page: Id::new(), len: 0, ids: std::collections::HashMap::default(), spatial: None, build_ms: 0.0 }
     }
 }
 
 /// Below this many objects a linear scan is simpler and just as fast: no spatial index.
 const INDEX_MIN_OBJECTS: usize = 400;
 
+#[expect(clippy::struct_excessive_bools, reason = "independent UI states (panels, modes, pending actions)")]
 pub struct App {
     pub caches: Caches,
     pub bench: Option<Bench>,
@@ -241,7 +243,7 @@ impl App {
             present_req: None,
             prev_tool: Tool::Select,
             timer: None,
-            palette: Default::default(),
+            palette: crate::library::Palette::default(),
             editor_probe: None,
             timer_done: false,
             last_autosave: Instant::now(),
@@ -255,21 +257,7 @@ impl App {
             canvas_rect: egui::Rect::ZERO,
         };
         if restore {
-            let kp = autosave_path().with_file_name("keymap.json");
-            match std::fs::read(&kp) {
-                Ok(bytes) => match Keymap::decode_text(&bytes).and_then(|text| Keymap::from_json(&text)) {
-                    Ok((km, ignored)) => {
-                        app.keymap = km;
-                        if ignored > 0 {
-                            app.toast(&tr!("Shortcuts: {} invalid entries ignored", ignored));
-                        }
-                    }
-                    Err(e) => app.toast(&tr!("Shortcuts file ignored: {}", e)),
-                },
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => app.toast(&tr!("Shortcuts file ignored: {}", e)),
-                Err(_) => {}
-            }
-            app.keymap_path = Some(kp);
+            app.load_keymap();
         }
         match open {
             // fonts only exist after the first frame: opening is deferred
@@ -284,6 +272,25 @@ impl App {
         }
         app.saved_rev = app.ed.revision();
         app
+    }
+
+    /// Custom shortcuts saved next to the autosave (an unreadable file is reported and ignored).
+    fn load_keymap(&mut self) {
+        let kp = autosave_path().with_file_name("keymap.json");
+        match std::fs::read(&kp) {
+            Ok(bytes) => match Keymap::decode_text(&bytes).and_then(|text| Keymap::from_json(&text)) {
+                Ok((km, ignored)) => {
+                    self.keymap = km;
+                    if ignored > 0 {
+                        self.toast(&tr!("Shortcuts: {} invalid entries ignored", ignored));
+                    }
+                }
+                Err(e) => self.toast(&tr!("Shortcuts file ignored: {}", e)),
+            },
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => self.toast(&tr!("Shortcuts file ignored: {}", e)),
+            Err(_) => {}
+        }
+        self.keymap_path = Some(kp);
     }
 
     /// Updates the caches if the document changed since they were built.
@@ -375,7 +382,7 @@ impl App {
                 let native = inkboard_formats::detect(name, &content) == Some(inkboard_formats::Format::Native);
                 let mut doc = imp.doc;
                 if !native {
-                    doc.name = path.file_stem().and_then(|n| n.to_str()).unwrap_or("Imported").to_owned();
+                    path.file_stem().and_then(|n| n.to_str()).unwrap_or("Imported").clone_into(&mut doc.name);
                 }
                 self.ed.reset(doc);
                 self.sel.clear();
@@ -444,8 +451,9 @@ impl App {
                 }
                 Some(json)
             }
-            "svg" => inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()),
-            "png" | "pdf" => inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()),
+            "svg" | "png" | "pdf" => {
+                inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &inkboard_core::svg::SvgOptions::default())
+            }
             _ => None,
         };
         let Some(text) = text else { return self.toast(&t("Nothing to export")) };
@@ -523,7 +531,7 @@ impl App {
         self.paste_count += 1;
         let d = 24.0 * f64::from(self.paste_count);
         let mut page = Page::new("clip");
-        page.objects = self.clipboard.clone();
+        page.objects.clone_from(&self.clipboard);
         let ids: Vec<Id> = page.objects.iter().map(|o| o.id.clone()).collect();
         let copies = Editor::clone_objects(&page, &ids, Pt::new(d, d));
         for (id, a) in &self.clipboard_assets {
@@ -598,9 +606,9 @@ impl App {
     }
 
     /// Goes to the next (`+1`) or previous (`-1`) page; no effect at the ends.
-    pub fn step_page(&mut self, d: i32) {
-        let i = self.ed.doc.pages.iter().position(|p| p.id == self.ed.current).unwrap_or(0) as i32 + d;
-        if let Some(next) = usize::try_from(i).ok().and_then(|i| self.ed.doc.pages.get(i)).map(|p| p.id.clone()) {
+    pub fn step_page(&mut self, d: isize) {
+        let i = self.ed.doc.pages.iter().position(|p| p.id == self.ed.current).unwrap_or(0).checked_add_signed(d);
+        if let Some(next) = i.and_then(|i| self.ed.doc.pages.get(i)).map(|p| p.id.clone()) {
             self.commit_editing();
             self.ed.current = next;
             self.sel.clear();
@@ -839,7 +847,7 @@ impl App {
         let report = (n >= 126).then(|| {
             let mut t: Vec<f64> = b.frame_ms[6..].to_vec();
             t.sort_by(f64::total_cmp);
-            (t.iter().sum::<f64>() / t.len() as f64, t[t.len() / 2], t[(t.len() * 95) / 100], t[t.len() - 1])
+            (t.iter().sum::<f64>() / num::f64_of(t.len()), t[t.len() / 2], t[(t.len() * 95) / 100], t[t.len() - 1])
         });
         if n == 3 {
             self.fit_pending = true;
@@ -869,7 +877,7 @@ impl App {
             println!("cache rebuild (once per modification): {:.1} ms", self.caches.build_ms);
             let picks = self.bench.as_ref().map(|b| b.pick_ms.clone()).unwrap_or_default();
             if !picks.is_empty() {
-                println!("hover (lookup under the pointer): mean {:.3} ms", picks.iter().sum::<f64>() / picks.len() as f64);
+                println!("hover (lookup under the pointer): mean {:.3} ms", picks.iter().sum::<f64>() / num::f64_of(picks.len()));
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -903,7 +911,7 @@ impl App {
                     if let Some(g) = tok.strip_prefix("group=") {
                         self.palette.group = Some(g.to_owned());
                     } else if let Some(q) = tok.strip_prefix("q=") {
-                        self.palette.query = q.to_owned();
+                        q.clone_into(&mut self.palette.query);
                     }
                 }
             }
@@ -931,7 +939,7 @@ impl App {
                 let _ = self.insert_formula(f, None);
                 if self.ed.page().objects.len() > before {
                     let id = self.ed.page().objects[before].id.clone();
-                    self.ed.translate(&[id], Pt::new(0.0, (i as f64 - 1.0) * 110.0));
+                    self.ed.translate(&[id], Pt::new(0.0, (num::f64_of(i) - 1.0) * 110.0));
                 }
             }
             self.sel.clear();
@@ -968,9 +976,10 @@ impl App {
         }
         let shot = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
         if let Some(img) = shot {
-            let (w, h) = (img.width() as u32, img.height() as u32);
-            let raw: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
-            if let Some(buf) = image::RgbaImage::from_raw(w, h, raw) {
+            let raw: Vec<u8> = img.pixels.iter().flat_map(eframe::egui::Color32::to_array).collect();
+            if let (Ok(w), Ok(h)) = (u32::try_from(img.width()), u32::try_from(img.height()))
+                && let Some(buf) = image::RgbaImage::from_raw(w, h, raw)
+            {
                 let _ = buf.save(&path);
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);

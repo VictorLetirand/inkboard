@@ -1,0 +1,2 @@
+# `WiX` is a product name, not code (doc_markdown).
+doc-valid-idents = ["WiX", ".."]

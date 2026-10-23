@@ -254,12 +254,12 @@ impl Shortcut {
         Self::new(key, true, true, false)
     }
 
-    pub fn modifiers(&self) -> Modifiers {
+    pub fn modifiers(self) -> Modifiers {
         Modifiers { alt: self.alt, shift: self.shift, ..if self.ctrl { Modifiers::COMMAND } else { Modifiers::NONE } }
     }
 
     /// Exact match: the modifiers must be identical.
-    pub fn matches(&self, key: Key, m: Modifiers) -> bool {
+    pub fn matches(self, key: Key, m: Modifiers) -> bool {
         self.key == key && self.ctrl == m.command && self.shift == m.shift && self.alt == m.alt
     }
 
@@ -295,7 +295,7 @@ impl Shortcut {
     }
 
     /// Text shown to the user (translated).
-    pub fn label(&self) -> String {
+    pub fn label(self) -> String {
         let key = match self.key {
             Key::Delete => crate::i18n::t("Delete"),
             Key::Backspace => crate::i18n::t("Backspace"),
@@ -323,7 +323,7 @@ impl Shortcut {
 }
 
 /// Keys that cannot be reassigned (reserved by the application or the system).
-pub fn is_reserved(sc: &Shortcut) -> bool {
+pub fn is_reserved(sc: Shortcut) -> bool {
     matches!(sc.key, Key::Escape | Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown)
         || (sc.ctrl && !sc.shift && !sc.alt && matches!(sc.key, Key::C | Key::X | Key::V))
 }
@@ -399,13 +399,13 @@ impl Keymap {
 
     /// First shortcut of an action, ready to display (empty when there is none).
     pub fn label(&self, a: Action) -> String {
-        self.bindings(a).first().map(Shortcut::label).unwrap_or_default()
+        self.bindings(a).first().copied().map(Shortcut::label).unwrap_or_default()
     }
 
     /// Binds a shortcut to an action. If it was already used by another action it is removed from it,
     /// and that other action is returned. Reserved combinations are refused.
     pub fn add(&mut self, a: Action, sc: Shortcut) -> Result<Option<Action>, String> {
-        if is_reserved(&sc) {
+        if is_reserved(sc) {
             return Err(crate::i18n::tr!("\"{}\" is reserved (escape, arrows, copy/cut/paste)", sc.label()));
         }
         let mut stolen = None;
@@ -422,9 +422,9 @@ impl Keymap {
         Ok(stolen)
     }
 
-    pub fn remove(&mut self, a: Action, sc: &Shortcut) {
+    pub fn remove(&mut self, a: Action, sc: Shortcut) {
         if let Some(l) = self.map.get_mut(&a) {
-            l.retain(|s| s != sc);
+            l.retain(|s| *s != sc);
         }
     }
 
@@ -505,7 +505,7 @@ impl Keymap {
             let mut scs = Vec::new();
             for item in list {
                 match item.as_str().and_then(Shortcut::parse) {
-                    Some(sc) if !is_reserved(&sc) => scs.push(sc),
+                    Some(sc) if !is_reserved(sc) => scs.push(sc),
                     _ => ignored += 1,
                 }
             }
@@ -573,8 +573,8 @@ mod tests {
         let stolen = km.add(Action::ToolEllipse, Shortcut::key(Key::R)).unwrap();
         assert_eq!(stolen, Some(Action::ToolRect));
         assert_eq!(km.action_for(Key::R, Modifiers::NONE), Some(Action::ToolEllipse));
-        assert!(km.bindings(Action::ToolRect).is_empty());
-        assert!(km.conflicts().is_empty());
+        assert_eq!(km.bindings(Action::ToolRect), []);
+        assert_eq!(km.conflicts(), [] as [(Shortcut, Action, Action); 0]);
         // adding again does not duplicate
         assert_eq!(km.add(Action::ToolEllipse, Shortcut::key(Key::R)).unwrap(), None);
         assert_eq!(km.bindings(Action::ToolEllipse).iter().filter(|s| **s == Shortcut::key(Key::R)).count(), 1);
@@ -596,7 +596,7 @@ mod tests {
         km.reset(Action::ToolRect);
         assert!(km.is_default(Action::ToolRect));
         assert_eq!(km.action_for(Key::R, Modifiers::NONE), Some(Action::ToolRect), "the original shortcut is given back");
-        assert!(km.conflicts().is_empty());
+        assert_eq!(km.conflicts(), [] as [(Shortcut, Action, Action); 0]);
         km.reset_all();
         assert_eq!(km, Keymap::default());
     }
@@ -605,7 +605,7 @@ mod tests {
     fn json_roundtrip_and_tolerance() {
         let mut km = Keymap::default();
         km.add(Action::ToolPen, Shortcut::new(Key::K, true, false, true)).unwrap();
-        km.remove(Action::Delete, &Shortcut::key(Key::Backspace));
+        km.remove(Action::Delete, Shortcut::key(Key::Backspace));
         let (back, ignored) = Keymap::from_json(&km.to_json()).unwrap();
         assert_eq!(back, km);
         assert_eq!(ignored, 0);
@@ -628,11 +628,11 @@ mod tests {
         // every entry unreadable: default kept and the entries are reported
         let (km, ignored) = Keymap::from_json(r#"{"version":1,"bindings":{"edit.undo":["Ctrl+Thing","Nope"]}}"#).unwrap();
         assert!(km.is_default(Action::Undo));
-        assert!(!km.bindings(Action::Undo).is_empty());
+        assert_ne!(km.bindings(Action::Undo), []);
         assert_eq!(ignored, 2);
         // valid empty list: the shortcut is removed on purpose, nothing reported
         let (km, ignored) = Keymap::from_json(r#"{"version":1,"bindings":{"edit.undo":[]}}"#).unwrap();
-        assert!(km.bindings(Action::Undo).is_empty());
+        assert_eq!(km.bindings(Action::Undo), []);
         assert_eq!(ignored, 0);
     }
 

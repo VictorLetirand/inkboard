@@ -31,27 +31,29 @@ fn handshake_lists_the_tools() {
 #[test]
 fn an_agent_builds_a_diagram_and_exports_it() {
     let dir = temp_dir("diag");
-    let mut c = Client::start(&dir);
+    let mut client = Client::start(&dir);
     let board = dir.join("schema.inkboard");
-    let p = board.to_str().unwrap();
+    let path = board.to_str().unwrap();
 
-    c.tool("create_board", json!({"path": p, "name": "Archi"})).unwrap();
-    assert!(c.tool("create_board", json!({"path": p})).is_err(), "an existing board is not overwritten");
+    client.tool("create_board", json!({"path": path, "name": "Archi"})).unwrap();
+    assert!(client.tool("create_board", json!({"path": path})).is_err(), "an existing board is not overwritten");
 
-    let a = c.tool("add_shape", json!({"path": p, "geom": "rect", "text": "Client", "fill": "#a5d8ff"})).unwrap();
-    let b = c.tool("add_shape", json!({"path": p, "geom": "ellipse", "text": "API"})).unwrap();
+    let a = client.tool("add_shape", json!({"path": path, "geom": "rect", "text": "Client", "fill": "#a5d8ff"})).unwrap();
+    let b = client.tool("add_shape", json!({"path": path, "geom": "ellipse", "text": "API"})).unwrap();
     let (ida, idb) = (a["id"].as_str().unwrap().to_owned(), b["id"].as_str().unwrap().to_owned());
     assert!(b["y"].as_f64().unwrap() > a["y"].as_f64().unwrap(), "the second object is placed below the first");
-    c.tool("add_connector", json!({"path": p, "from": ida, "to": idb, "route": "elbow", "label": "HTTPS"})).unwrap();
-    c.tool("add_table", json!({"path": p, "rows": [["Route", "Verbe"], ["/users", "GET"]]})).unwrap();
-    c.tool("add_code_block", json!({"path": p, "code": "fn main() {}"})).unwrap();
-    c.tool("add_formula", json!({"path": p, "latex": r"\frac{a}{b}"})).unwrap();
-    assert!(c.tool("add_formula", json!({"path": p, "latex": r"\inconnu"})).is_err());
-    let mm = c.tool("import_mermaid", json!({"path": p, "mermaid": "flowchart LR\n  A[Start] --> B{Choice}\n  B -->|yes| C[End]", "new_page": true})).unwrap();
+    client.tool("add_connector", json!({"path": path, "from": ida, "to": idb, "route": "elbow", "label": "HTTPS"})).unwrap();
+    client.tool("add_table", json!({"path": path, "rows": [["Route", "Verbe"], ["/users", "GET"]]})).unwrap();
+    client.tool("add_code_block", json!({"path": path, "code": "fn main() {}"})).unwrap();
+    client.tool("add_formula", json!({"path": path, "latex": r"\frac{a}{b}"})).unwrap();
+    assert!(client.tool("add_formula", json!({"path": path, "latex": r"\inconnu"})).is_err());
+    let mm = client
+        .tool("import_mermaid", json!({"path": path, "mermaid": "flowchart LR\n  A[Start] --> B{Choice}\n  B -->|yes| C[End]", "new_page": true}))
+        .unwrap();
     assert_eq!(mm["created"], 5, "3 shapes + 2 arrows: {mm}");
-    c.tool("auto_layout", json!({"path": p, "page": 2, "direction": "LR"})).unwrap();
+    client.tool("auto_layout", json!({"path": path, "page": 2, "direction": "LR"})).unwrap();
 
-    let d = c.tool("describe_board", json!({"path": p, "page": 1})).unwrap();
+    let d = client.tool("describe_board", json!({"path": path, "page": 1})).unwrap();
     assert_eq!(d["pages"].as_array().unwrap().len(), 2);
     let objs = d["page"]["objects"].as_array().unwrap();
     let types: Vec<&str> = objs.iter().map(|o| o["type"].as_str().unwrap()).collect();
@@ -63,18 +65,18 @@ fn an_agent_builds_a_diagram_and_exports_it() {
     assert_eq!(conn["label"], "HTTPS");
 
     // modification then deletion
-    c.tool("update_object", json!({"path": p, "id": ida, "text": "Browser", "x": 500, "y": 300})).unwrap();
-    let d = c.tool("describe_board", json!({"path": p})).unwrap();
+    client.tool("update_object", json!({"path": path, "id": ida, "text": "Browser", "x": 500, "y": 300})).unwrap();
+    let d = client.tool("describe_board", json!({"path": path})).unwrap();
     let first = d["page"]["objects"].as_array().unwrap().iter().find(|o| o["id"] == json!(ida)).unwrap().clone();
     assert_eq!(first["text"], "Browser");
     assert_eq!((first["x"].as_f64().unwrap(), first["y"].as_f64().unwrap()), (500.0, 300.0));
-    c.tool("delete_object", json!({"path": p, "id": idb})).unwrap();
-    assert!(c.tool("update_object", json!({"path": p, "id": idb, "text": "x"})).is_err(), "object deleted");
+    client.tool("delete_object", json!({"path": path, "id": idb})).unwrap();
+    assert!(client.tool("update_object", json!({"path": path, "id": idb, "text": "x"})).is_err(), "object deleted");
 
     // exports
     for ext in ["svg", "png", "pdf", "drawio", "excalidraw", "canvas"] {
         let out = dir.join(format!("output.{ext}"));
-        let r = c.tool("export", json!({"path": p, "output": out.to_str().unwrap()})).unwrap_or_else(|e| panic!("{ext} : {e}"));
+        let r = client.tool("export", json!({"path": path, "output": out.to_str().unwrap()})).unwrap_or_else(|e| panic!("{ext} : {e}"));
         assert!(r["bytes"].as_u64().unwrap() > 100, "{ext} : {r}");
         assert!(out.exists());
     }
@@ -82,8 +84,8 @@ fn an_agent_builds_a_diagram_and_exports_it() {
     assert!(svg.contains("Browser"));
     assert_eq!(&std::fs::read(dir.join("output.pdf")).unwrap()[..5], b"%PDF-");
     // the produced file can be read back by the tool itself (round trip through draw.io)
-    let d = c.tool("describe_board", json!({"path": dir.join("output.drawio").to_str().unwrap()})).unwrap();
-    assert!(!d["page"]["objects"].as_array().unwrap().is_empty());
+    let d = client.tool("describe_board", json!({"path": dir.join("output.drawio").to_str().unwrap()})).unwrap();
+    assert_ne!(d["page"]["objects"].as_array().unwrap().as_slice(), [] as [serde_json::Value; 0]);
 }
 
 #[test]
@@ -126,37 +128,37 @@ const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42
 fn images_are_added_from_files_or_base64_and_validated() {
     use std::io::Write as _;
     let dir = temp_dir("img");
-    let mut c = Client::start(&dir);
+    let mut client = Client::start(&dir);
     let p = dir.join("i.inkboard");
     let p = p.to_str().unwrap();
-    c.tool("create_board", json!({"path": p})).unwrap();
+    client.tool("create_board", json!({"path": p})).unwrap();
     // from a file under the root: natural size kept (small image)
     let png = base64_decode(PNG_1X1);
     std::fs::write(dir.join("rouge.png"), &png).unwrap();
-    let r = c.tool("add_image", json!({"path": p, "source": "rouge.png"})).unwrap();
+    let r = client.tool("add_image", json!({"path": p, "source": "rouge.png"})).unwrap();
     assert_eq!(r["type"], "image/png");
     assert_eq!((r["w"].as_f64().unwrap(), r["h"].as_f64().unwrap()), (1.0, 1.0));
     // requested size: one dimension is enough, the ratio is kept
-    let r = c.tool("add_image", json!({"path": p, "data_base64": PNG_1X1, "w": 120})).unwrap();
+    let r = client.tool("add_image", json!({"path": p, "data_base64": PNG_1X1, "w": 120})).unwrap();
     assert_eq!((r["w"].as_f64().unwrap(), r["h"].as_f64().unwrap()), (120.0, 120.0));
     // SVG
     let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><rect width="200" height="100" fill="red"/></svg>"#;
     let mut f = std::fs::File::create(dir.join("a.svg")).unwrap();
     f.write_all(svg.as_bytes()).unwrap();
-    let r = c.tool("add_image", json!({"path": p, "source": "a.svg"})).unwrap();
+    let r = client.tool("add_image", json!({"path": p, "source": "a.svg"})).unwrap();
     assert_eq!((r["w"].as_f64().unwrap(), r["h"].as_f64().unwrap(), r["type"].as_str().unwrap()), (200.0, 100.0, "image/svg+xml"));
-    let d = c.tool("describe_board", json!({"path": p})).unwrap();
+    let d = client.tool("describe_board", json!({"path": p})).unwrap();
     assert_eq!(d["page"]["objects"].as_array().unwrap().iter().filter(|o| o["type"] == "image").count(), 3);
     // rejections: unknown format, outside the root, invalid base64
     std::fs::write(dir.join("fake.png"), b"this is not an image").unwrap();
-    assert!(c.tool("add_image", json!({"path": p, "source": "fake.png"})).unwrap_err().contains("unrecognized"));
+    assert!(client.tool("add_image", json!({"path": p, "source": "fake.png"})).unwrap_err().contains("unrecognized"));
     let outside = temp_dir("img-out");
     std::fs::write(outside.join("x.png"), &png).unwrap();
-    assert!(c.tool("add_image", json!({"path": p, "source": outside.join("x.png").to_str().unwrap()})).unwrap_err().contains("outside the allowed root"));
-    assert!(c.tool("add_image", json!({"path": p, "data_base64": "%%%"})).is_err());
+    assert!(client.tool("add_image", json!({"path": p, "source": outside.join("x.png").to_str().unwrap()})).unwrap_err().contains("outside the allowed root"));
+    assert!(client.tool("add_image", json!({"path": p, "data_base64": "%%%"})).is_err());
     // l'export contient bien l'image
     let out = dir.join("o.svg");
-    c.tool("export", json!({"path": p, "output": out.to_str().unwrap()})).unwrap();
+    client.tool("export", json!({"path": p, "output": out.to_str().unwrap()})).unwrap();
     assert!(std::fs::read_to_string(out).unwrap().contains("data:image/png;base64"));
 }
 
@@ -173,7 +175,7 @@ fn base64_decode(s: &str) -> Vec<u8> {
     b.chunks(4)
         .flat_map(|c| {
             let n = c.iter().fold(0u32, |a, v| (a << 6) | u32::from(*v)) << (6 * (4 - c.len()));
-            [(n >> 16) as u8, (n >> 8) as u8, n as u8].into_iter().take(c.len() * 6 / 8)
+            n.to_be_bytes()[1..].to_vec().into_iter().take(c.len() * 6 / 8)
         })
         .collect()
 }

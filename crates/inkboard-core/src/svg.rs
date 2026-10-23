@@ -4,7 +4,7 @@ use crate::connector::{Arrowhead, head_points, path_midpoint};
 use crate::geom::{Pt, Rect};
 use crate::model::{BoxGeom, BoxObj, Document, Id, Kind, Label, Object, Page, Table};
 use crate::style::{Align, Color, Dash, NOTE_YELLOW, Style};
-use crate::text::{Measurer, TextLayout, layout_rich};
+use crate::text::{Measurer, RichText, TextLayout, layout_rich};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::fmt::Write;
 
@@ -127,13 +127,13 @@ impl Ctx<'_> {
         let (hw, hh) = (f.w / 2.0, f.h / 2.0);
         let st = &o.style;
         let c = f.center();
-        let rot = if f.angle != 0.0 { format!(" rotate({})", n(f.angle.to_degrees())) } else { String::new() };
+        let rot = if f.angle == 0.0 { String::new() } else { format!(" rotate({})", n(f.angle.to_degrees())) };
         let mut inner = String::new();
         let stroke = if st.width > 0.0 { self.stroke(st, false) } else { r#"stroke="none""#.to_owned() };
         let mut label_color = st.stroke;
         match b.geom {
             BoxGeom::Rect => {
-                let r = f64::from(st.roundness) * f.w.min(f.h) / 2.0;
+                let radius = f64::from(st.roundness) * f.w.min(f.h) / 2.0;
                 let _ = write!(
                     inner,
                     r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" {stroke}/>"#,
@@ -141,7 +141,7 @@ impl Ctx<'_> {
                     n(-hh),
                     n(f.w),
                     n(f.h),
-                    n(r),
+                    n(radius),
                     self.fill(st.fill)
                 );
             }
@@ -186,18 +186,18 @@ impl Ctx<'_> {
     /// Pen-pressure stroke: a filled polygon whose width follows the pressure.
     fn pressure_pen(&self, o: &Object, pts: &[Pt], pressures: &[f32]) -> String {
         let st = &o.style;
-        let (p, q) = crate::pen::smooth(pts, Some(pressures), 4);
-        let widths: Vec<f64> = q.iter().map(|v| crate::pen::pressure_width(st.width, *v)).collect();
+        let (p, smooth_pressures) = crate::pen::smooth(pts, Some(pressures), 4);
+        let widths: Vec<f64> = smooth_pressures.iter().map(|v| crate::pen::pressure_width(st.width, *v)).collect();
         let (left, right) = crate::pen::stroke_sides(&p, &widths);
         let color = self.col(st.stroke);
         let op = if st.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(st.opacity))) } else { String::new() };
-        let mut d = String::new();
+        let mut outline = String::new();
         for (i, pt) in left.iter().chain(right.iter().rev()).enumerate() {
-            let _ = write!(d, "{}{} {}", if i == 0 { "M" } else { "L" }, n(pt.x), n(pt.y));
+            let _ = write!(outline, "{}{} {}", if i == 0 { "M" } else { "L" }, n(pt.x), n(pt.y));
         }
         let (a, z) = (p[0], p[p.len() - 1]);
         format!(
-            r#"<g fill="{color}"{op}><path d="{d}Z"/><circle cx="{}" cy="{}" r="{}"/><circle cx="{}" cy="{}" r="{}"/></g>"#,
+            r#"<g fill="{color}"{op}><path d="{outline}Z"/><circle cx="{}" cy="{}" r="{}"/><circle cx="{}" cy="{}" r="{}"/></g>"#,
             n(a.x),
             n(a.y),
             n(widths[0] / 2.0),
@@ -291,26 +291,50 @@ impl Ctx<'_> {
 
     fn table(&self, o: &Object, t: &Table) -> String {
         let st = &o.style;
-        let r = t.rect();
+        let rect = t.rect();
         let col = self.col(st.stroke);
-        let w = st.width.max(1.0);
+        let line_w = st.width.max(1.0);
         let mut out = String::new();
         if t.header {
-            let _ = write!(out, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{col}" fill-opacity="0.10"/>"#, n(r.x), n(r.y), n(r.w), n(t.row_h[0]));
+            let _ =
+                write!(out, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{col}" fill-opacity="0.10"/>"#, n(rect.x), n(rect.y), n(rect.w), n(t.row_h[0]));
         }
-        let _ =
-            write!(out, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="none" stroke="{col}" stroke-width="{}"/>"#, n(r.x), n(r.y), n(r.w), n(r.h), n(w));
-        let mut x = r.x;
+        let _ = write!(
+            out,
+            r#"<rect x="{}" y="{}" width="{}" height="{}" fill="none" stroke="{col}" stroke-width="{}"/>"#,
+            n(rect.x),
+            n(rect.y),
+            n(rect.w),
+            n(rect.h),
+            n(line_w)
+        );
+        let mut x = rect.x;
         for cw in &t.col_w[..t.cols() - 1] {
             x += cw;
-            let _ = write!(out, r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{col}" stroke-width="{}"/>"#, n(x), n(r.y), n(x), n(r.bottom()), n(w * 0.6));
+            let _ = write!(
+                out,
+                r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{col}" stroke-width="{}"/>"#,
+                n(x),
+                n(rect.y),
+                n(x),
+                n(rect.bottom()),
+                n(line_w * 0.6)
+            );
         }
-        let mut y = r.y;
+        let mut y = rect.y;
         for rh in &t.row_h[..t.rows() - 1] {
             y += rh;
-            let _ = write!(out, r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{col}" stroke-width="{}"/>"#, n(r.x), n(y), n(r.right()), n(y), n(w * 0.6));
+            let _ = write!(
+                out,
+                r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{col}" stroke-width="{}"/>"#,
+                n(rect.x),
+                n(y),
+                n(rect.right()),
+                n(y),
+                n(line_w * 0.6)
+            );
         }
-        let label = Label { text: Default::default(), family: t.family, size: t.size, align: Align::Left };
+        let label = Label { text: RichText::default(), family: t.family, size: t.size, align: Align::Left };
         for ri in 0..t.rows() {
             for ci in 0..t.cols() {
                 let Some(cell) = t.cell(ri, ci).filter(|c| !c.is_empty()) else { continue };
@@ -338,13 +362,13 @@ impl Ctx<'_> {
                 let f = i.frame;
                 // formula or monochrome icon: white SVG tinted with the object's stroke color
                 let data = i.export_bytes(&a.mime, a.data.as_slice(), o.style.stroke.resolve(self.dark));
-                let c = f.center();
-                let rot = if f.angle != 0.0 { format!(" rotate({})", n(f.angle.to_degrees())) } else { String::new() };
+                let center = f.center();
+                let rot = if f.angle == 0.0 { String::new() } else { format!(" rotate({})", n(f.angle.to_degrees())) };
                 let op = if o.style.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(o.style.opacity))) } else { String::new() };
                 format!(
                     r#"<g transform="translate({} {}){rot}"{op}><image x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="none" href="data:{};base64,{}"/></g>"#,
-                    n(c.x),
-                    n(c.y),
+                    n(center.x),
+                    n(center.y),
                     n(-f.w / 2.0),
                     n(-f.h / 2.0),
                     n(f.w),
@@ -389,6 +413,7 @@ pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer,
 }
 
 /// Quick version with the approximate measurer (command-line tools, tests).
+#[must_use]
 pub fn export_approx(doc: &Document, page: &Page) -> Option<String> {
     export(doc, page, None, &crate::text::ApproxMeasurer, &SvgOptions::default())
 }
@@ -439,8 +464,8 @@ mod tests {
         let mut t = Table::new(Pt::new(0.0, 300.0), 2, 2);
         t.cell_mut(0, 0).unwrap().set_plain("Title");
         let tb = Object::new(Kind::Table(t), Style { width: 2.0, ..Default::default() });
-        let d = doc_with(vec![a, b, c, pen, tb]);
-        let svg = export_approx(&d, &d.pages[0]).unwrap();
+        let doc = doc_with(vec![a, b, c, pen, tb]);
+        let svg = export_approx(&doc, &doc.pages[0]).unwrap();
         assert!(svg.starts_with("<?xml"));
         assert!(svg.contains("&lt;&amp;&gt;"));
         assert!(svg.contains("font-weight=\"bold\""));

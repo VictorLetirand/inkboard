@@ -31,6 +31,7 @@ use crate::tests_ui::isolated_in;
 use crate::tools::Tool;
 use eframe::egui::{self, vec2};
 use egui_kittest::{Harness, SnapshotError, SnapshotOptions, try_image_snapshot_options};
+use inkboard_core::num;
 use inkboard_core::*;
 use std::path::PathBuf;
 
@@ -101,7 +102,7 @@ fn settle(t: &mut T) {
 fn capture(t: &mut T, name: &str) {
     settle(t);
     let image = t.h.render().unwrap_or_else(|e| panic!("cannot render '{name}': {e}"));
-    assert_eq!((image.width(), image.height()), (SIZE.0 as u32, SIZE.1 as u32), "capture size of '{name}'");
+    assert_eq!((image.width(), image.height()), (num::to_u32(f64::from(SIZE.0)), num::to_u32(f64::from(SIZE.1))), "capture size of '{name}'");
     check(name, &image);
     set_for_thread(None);
 }
@@ -176,7 +177,7 @@ fn demo_board(t: &mut T) {
     // strokes: pen, pen with pressure, highlighter
     let wave: Vec<Pt> = (0..=24).map(|i| Pt::new(140.0 + f64::from(i) * 8.0, 500.0 + (f64::from(i) * 0.5).sin() * 20.0)).collect();
     t.app().ed.insert(Object::new_pen(wave.clone(), false, Style { stroke: Color::rgb(0xe0, 0x31, 0x31), width: 4.0, ..Style::default() }));
-    let pressures: Vec<f32> = (0..wave.len()).map(|i| 0.2 + 0.8 * i as f32 / wave.len() as f32).collect();
+    let pressures: Vec<f32> = (0..wave.len()).map(|i| 0.2 + 0.8 * num::f32_of(i) / num::f32_of(wave.len())).collect();
     let low: Vec<Pt> = wave.iter().map(|p| Pt::new(p.x, p.y + 50.0)).collect();
     t.app().ed.insert(Object::new_pen_with_pressure(low, pressures, false, Style { width: 6.0, ..Style::default() }));
     let band = vec![Pt::new(140.0, 440.0), Pt::new(330.0, 440.0)];
@@ -289,7 +290,7 @@ fn demo_svg() -> String {
     demo_board(&mut t);
     let page = t.app().ed.page().clone();
     let app = t.app();
-    let svg = inkboard_core::svg::export(&app.ed.doc, &page, None, &app.measurer, &Default::default()).expect("something to export");
+    let svg = inkboard_core::svg::export(&app.ed.doc, &page, None, &app.measurer, &inkboard_core::svg::SvgOptions::default()).expect("something to export");
     set_for_thread(None);
     svg
 }

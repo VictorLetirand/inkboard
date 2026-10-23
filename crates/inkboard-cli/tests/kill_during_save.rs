@@ -92,7 +92,7 @@ fn kill_trials(target: &Path, start: &dyn Fn() -> Command, old: &[u8], is_new: &
         let began = Instant::now();
         let mut finished = false;
         if trial % 2 == 0 {
-            let delay = Duration::from_micros(rng.below(full_time.as_micros() as u64 * 12 / 10));
+            let delay = Duration::from_micros(rng.below(u64::try_from(full_time.as_micros()).unwrap_or(u64::MAX) / 10 * 12));
             while began.elapsed() < delay {
                 if child.try_wait().unwrap().is_some() {
                     finished = true;
@@ -186,7 +186,7 @@ fn killing_a_save_never_leaves_a_half_written_board() {
         Err(_) => false,
     };
     let out = kill_trials(&target, &|| bench_args(BIG, &target), &old, &is_new, full_time);
-    assert!(out.new + out.old + out.absent == TRIALS);
+    assert_eq!(out.new + out.old + out.absent, TRIALS);
 }
 
 /// `ink convert` to a native file goes through `serial::write_atomic` (temporary file + rename), like `serial::save`: this was
@@ -208,5 +208,5 @@ fn killing_a_conversion_never_leaves_a_half_written_board() {
     assert_eq!(std::fs::read(&target).unwrap(), new, "a conversion must be deterministic for this test to compare bytes");
     assert!(serial::from_json(&String::from_utf8_lossy(&new)).is_ok() && serial::from_json(&String::from_utf8_lossy(&old)).is_ok());
     let out = kill_trials(&target, &|| convert_args(&big, &target), &old, &|bytes| bytes == new, full_time);
-    assert!(out.new + out.old + out.absent == TRIALS);
+    assert_eq!(out.new + out.old + out.absent, TRIALS);
 }

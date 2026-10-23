@@ -17,6 +17,7 @@ pub enum Handle {
 
 impl Handle {
     pub const ALL: [Handle; 8] = [Handle::NW, Handle::N, Handle::NE, Handle::E, Handle::SE, Handle::S, Handle::SW, Handle::W];
+    #[must_use]
     pub fn is_corner(self) -> bool {
         matches!(self, Handle::NE | Handle::SE | Handle::SW | Handle::NW)
     }
@@ -33,6 +34,7 @@ impl Handle {
         }
     }
     /// Handle position in the local frame (origin at the center).
+    #[must_use]
     pub fn local(self, w: f64, h: f64) -> Pt {
         let (dx, dy) = self.dirs();
         Pt::new(f64::from(dx) * w / 2.0, f64::from(dy) * h / 2.0)
@@ -41,6 +43,7 @@ impl Handle {
 
 /// New frame after dragging handle `h` to the world point `pointer`.
 /// The opposite side or corner stays fixed; also works for a rotated frame.
+#[must_use]
 pub fn resize_frame(orig: &Frame, h: Handle, pointer: Pt, keep_ratio: bool, min: f64) -> Frame {
     let p = orig.to_local(pointer);
     let (dx, dy) = h.dirs();
@@ -61,17 +64,18 @@ pub fn resize_frame(orig: &Frame, h: Handle, pointer: Pt, keep_ratio: bool, min:
         nw = orig.w * k;
         nh = orig.h * k;
         if dx > 0 {
-            right = left + nw
+            right = left + nw;
         } else {
-            left = right - nw
+            left = right - nw;
         }
         if dy > 0 { bottom = top + nh } else { top = bottom - nh }
     }
-    let c = Frame { angle: orig.angle, ..*orig }.to_world(Pt::new((left + right) / 2.0, (top + bottom) / 2.0));
+    let c = Frame { angle: orig.angle, ..*orig }.to_world(Pt::new(f64::midpoint(left, right), f64::midpoint(top, bottom)));
     Frame { x: c.x - nw / 2.0, y: c.y - nh / 2.0, w: nw, h: nh, angle: orig.angle }
 }
 
 /// Same operation for a non-rotated box (multiple selection).
+#[must_use]
 pub fn resize_rect(orig: Rect, h: Handle, pointer: Pt, keep_ratio: bool, min: f64) -> Rect {
     resize_frame(&Frame::from_rect(orig), h, pointer, keep_ratio, min).rect()
 }
@@ -87,21 +91,25 @@ pub fn scale_objects(objs: &mut [Object], from: Rect, to: Rect) {
 }
 
 /// Angle such that the rotation handle (above the frame) follows the pointer.
+#[must_use]
 pub fn rotation_toward(center: Pt, pointer: Pt) -> f64 {
     (pointer.y - center.y).atan2(pointer.x - center.x) + std::f64::consts::FRAC_PI_2
 }
 
 /// Rounds an angle to the nearest multiple of `step`.
+#[must_use]
 pub fn snap_angle(a: f64, step: f64) -> f64 {
     (a / step).round() * step
 }
 
 /// Snaps a point to a grid.
+#[must_use]
 pub fn snap_point(p: Pt, grid: f64) -> Pt {
     Pt::new((p.x / grid).round() * grid, (p.y / grid).round() * grid)
 }
 
 /// Constrains a move to an angle that is a multiple of `step` (e.g. 15°) from `from`.
+#[must_use]
 pub fn constrain_angle(from: Pt, to: Pt, step: f64) -> Pt {
     let d = to - from;
     let a = snap_angle(d.y.atan2(d.x), step);

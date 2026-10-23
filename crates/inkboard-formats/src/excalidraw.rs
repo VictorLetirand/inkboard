@@ -5,8 +5,12 @@
 
 use crate::common::{FormatError, Imported, Report, data_url, parse_color, parse_data_url};
 use inkboard_core::geom::Rect;
+use inkboard_core::num;
 use inkboard_core::text::{Measurer, layout_rich};
-use inkboard_core::*;
+use inkboard_core::{
+    Align, Arrowhead, Asset, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, Id, ImageObj, Kind, Label, Object, Page,
+    PenObj, Pt, RichText, Route, Style, Table,
+};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -58,64 +62,99 @@ fn head_back(v: Option<&Value>) -> Arrowhead {
 
 /* ===================================================================== Export */
 
-/// Exports a page in Excalidraw format (one scene = one page).
-pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
-    let dark = doc.background.preset.is_dark();
-    let col = |c: Color| c.resolve_hex(dark);
-    let mut els: Vec<Map<String, Value>> = Vec::new();
-    let mut files = Map::new();
-    let mut bound_to: HashMap<String, Vec<Value>> = HashMap::new();
-    let skip_bind: Vec<&Id> = page
-        .objects
-        .iter()
-        .filter(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Triangle) || matches!(o.kind, Kind::Pen(_) | Kind::Connector(_)))
-        .map(|o| &o.id)
-        .collect();
+/// Where the text element of a label goes.
+#[derive(Clone, Copy)]
+enum Place<'s> {
+    /// Bound to the container of this id (centered, wrapped to the area).
+    In(&'s str),
+    /// Free text whose top left corner is here.
+    At(Pt),
+    /// Free text centered on the area.
+    Center,
+}
 
-    let base = |o: &Object, ty: &str, x: f64, y: f64, w: f64, h: f64, angle: f64| -> Map<String, Value> {
+/// Elements of the scene being built.
+struct Exporter<'a> {
+    doc: &'a Document,
+    page: &'a Page,
+    m: &'a dyn Measurer,
+    dark: bool,
+    els: Vec<Map<String, Value>>,
+    files: Map<String, Value>,
+    /// Arrows bound to an element, by element id (added to its `boundElements` at the end).
+    bound_to: HashMap<String, Vec<Value>>,
+    /// Objects that Excalidraw cannot bind an arrow to.
+    skip_bind: Vec<&'a Id>,
+}
+
+impl Exporter<'_> {
+    fn col(&self, c: Color) -> String {
+        c.resolve_hex(self.dark)
+    }
+
+    /// Properties shared by every element.
+    fn base(&self, o: &Object, ty: &str, r: Rect, angle: f64) -> Map<String, Value> {
         let st = &o.style;
         let sw = (st.width / 1.6).round().max(1.0);
-        let v = json!({
-            "id": o.id.as_str(), "type": ty, "x": x, "y": y, "width": w, "height": h, "angle": angle,
-            "strokeColor": if st.width > 0.0 || ty == "text" { col(st.stroke) } else { "transparent".to_owned() },
-            "backgroundColor": st.fill.map_or("transparent".to_owned(), col),
-            "fillStyle": "solid", "strokeWidth": sw,
-            "strokeStyle": match st.dash { Dash::Solid => "solid", Dash::Dashed => "dashed", Dash::Dotted => "dotted" },
-            "roughness": 0, "opacity": (st.opacity * 100.0).round(),
-            "groupIds": o.group.as_ref().map(|g| vec![g.as_str().to_owned()]).unwrap_or_default(),
-            "frameId": null, "roundness": null, "seed": seed_of(o.id.as_str()), "version": 1, "versionNonce": seed_of(&format!("n{}", o.id)),
-            "isDeleted": false, "boundElements": null, "updated": 1, "link": null, "locked": o.locked,
-        });
-        let Value::Object(map) = v else { unreachable!() };
+        let mut map = Map::new();
+        for (k, v) in [
+            ("id", json!(o.id.as_str())),
+            ("type", json!(ty)),
+            ("x", json!(r.x)),
+            ("y", json!(r.y)),
+            ("width", json!(r.w)),
+            ("height", json!(r.h)),
+            ("angle", json!(angle)),
+            ("strokeColor", json!(if st.width > 0.0 || ty == "text" { self.col(st.stroke) } else { "transparent".to_owned() })),
+            ("backgroundColor", json!(st.fill.map_or("transparent".to_owned(), |c| self.col(c)))),
+            ("fillStyle", json!("solid")),
+            ("strokeWidth", json!(sw)),
+            (
+                "strokeStyle",
+                json!(match st.dash {
+                    Dash::Solid => "solid",
+                    Dash::Dashed => "dashed",
+                    Dash::Dotted => "dotted",
+                }),
+            ),
+            ("roughness", json!(0)),
+            ("opacity", json!((st.opacity * 100.0).round())),
+            ("groupIds", json!(o.group.as_ref().map(|g| vec![g.as_str().to_owned()]).unwrap_or_default())),
+            ("frameId", Value::Null),
+            ("roundness", Value::Null),
+            ("seed", json!(seed_of(o.id.as_str()))),
+            ("version", json!(1)),
+            ("versionNonce", json!(seed_of(&format!("n{}", o.id)))),
+            ("isDeleted", json!(false)),
+            ("boundElements", Value::Null),
+            ("updated", json!(1)),
+            ("link", Value::Null),
+            ("locked", json!(o.locked)),
+        ] {
+            map.insert(k.into(), v);
+        }
         map
-    };
-    let text_el = |o: &Object,
-                   label: &Label,
-                   area: Rect,
-                   container: Option<&str>,
-                   frame_angle: f64,
-                   standalone_pos: Option<Pt>,
-                   color: Color|
-     -> Option<Map<String, Value>> {
+    }
+
+    /// Text element of a label (`None` when it is empty); `area`: where the text is laid out.
+    fn text_el(&self, o: &Object, label: &Label, area: Rect, place: Place, angle: f64, color: Color) -> Option<Map<String, Value>> {
         if label.text.is_empty() {
             return None;
         }
+        let container = if let Place::In(id) = place { Some(id) } else { None };
         let wrap = container.map(|_| area.w);
-        let lay = layout_rich(&label.text, wrap, m, label.family, label.size);
+        let lay = layout_rich(&label.text, wrap, self.m, label.family, label.size);
         let text = lay.lines.iter().map(|l| l.iter().map(|r| r.text.as_str()).collect::<String>()).collect::<Vec<_>>().join("\n");
-        let (x, y) = match standalone_pos {
-            Some(p) => (p.x, p.y),
-            None => (area.center().x - lay.width / 2.0, area.center().y - lay.height / 2.0),
+        let (x, y) = match place {
+            Place::At(p) => (p.x, p.y),
+            Place::In(_) | Place::Center => (area.center().x - lay.width / 2.0, area.center().y - lay.height / 2.0),
         };
         let id = Id::new();
-        let mut t = base(
+        let mut t = self.base(
             &Object { id: id.clone(), style: Style { width: 1.0, fill: None, stroke: color, ..o.style.clone() }, ..o.clone() },
             "text",
-            x,
-            y,
-            lay.width.max(4.0),
-            lay.height,
-            frame_angle,
+            Rect::new(x, y, lay.width.max(4.0), lay.height),
+            angle,
         );
         t.insert("text".into(), json!(text));
         t.insert("originalText".into(), json!(label.text.to_plain()));
@@ -134,161 +173,171 @@ pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
         t.insert("autoResize".into(), json!(true));
         t.insert("lineHeight".into(), json!(1.3));
         Some(t)
-    };
-    for o in &page.objects {
-        if !page.is_visible(o) {
-            continue;
+    }
+
+    /// Pushes `e` followed by its bound text `label` (referenced in its `boundElements`).
+    fn push_with_label(&mut self, mut e: Map<String, Value>, label: Option<Map<String, Value>>) {
+        if let Some(t) = &label {
+            e.insert("boundElements".into(), json!([{"id": t["id"], "type": "text"}]));
         }
-        match &o.kind {
-            Kind::Box(b) => {
-                let f = b.frame;
-                let lab = b.layout(m);
-                let _ = lab;
-                let lr = b.label_rect();
-                let area_world = {
-                    let c = f.to_world(Pt::new(lr.center().x, lr.center().y));
-                    Rect::new(c.x - lr.w / 2.0, c.y - lr.h / 2.0, lr.w, lr.h)
+        self.els.push(e);
+        self.els.extend(label);
+    }
+
+    fn add_box(&mut self, o: &Object, b: &BoxObj) {
+        let f = b.frame;
+        let lr = b.label_rect();
+        let area_world = {
+            let c = f.to_world(Pt::new(lr.center().x, lr.center().y));
+            Rect::new(c.x - lr.w / 2.0, c.y - lr.h / 2.0, lr.w, lr.h)
+        };
+        let rect = Rect::new(f.x, f.y, f.w, f.h);
+        match b.geom {
+            BoxGeom::Text => {
+                if let Some(mut t) = self.text_el(o, &b.label, area_world, Place::At(Pt::new(f.x, f.y)), f.angle, o.style.stroke) {
+                    t.insert("id".into(), json!(o.id.as_str()));
+                    self.els.push(t);
+                }
+            }
+            BoxGeom::Triangle => {
+                let mut e = self.base(o, "line", rect, f.angle);
+                e.insert("points".into(), json!([[f.w / 2.0, 0.0], [f.w, f.h], [0.0, f.h], [f.w / 2.0, 0.0]]));
+                e.insert("polygon".into(), json!(true));
+                for k in ["startBinding", "endBinding", "lastCommittedPoint"] {
+                    e.insert(k.into(), Value::Null);
+                }
+                e.insert("startArrowhead".into(), Value::Null);
+                e.insert("endArrowhead".into(), Value::Null);
+                self.els.push(e);
+                if let Some(t) = self.text_el(o, &b.label, area_world, Place::Center, f.angle, o.style.stroke) {
+                    self.els.push(t);
+                }
+            }
+            geom => {
+                let ty = match geom {
+                    BoxGeom::Ellipse => "ellipse",
+                    BoxGeom::Diamond => "diamond",
+                    _ => "rectangle",
                 };
-                match b.geom {
-                    BoxGeom::Text => {
-                        if let Some(mut t) = text_el(o, &b.label, area_world, None, f.angle, Some(Pt::new(f.x, f.y)), o.style.stroke) {
-                            t.insert("id".into(), json!(o.id.as_str()));
-                            els.push(t);
-                        }
-                    }
-                    BoxGeom::Triangle => {
-                        let mut e = base(o, "line", f.x, f.y, f.w, f.h, f.angle);
-                        e.insert("points".into(), json!([[f.w / 2.0, 0.0], [f.w, f.h], [0.0, f.h], [f.w / 2.0, 0.0]]));
-                        e.insert("polygon".into(), json!(true));
-                        for k in ["startBinding", "endBinding", "lastCommittedPoint"] {
-                            e.insert(k.into(), Value::Null);
-                        }
-                        e.insert("startArrowhead".into(), Value::Null);
-                        e.insert("endArrowhead".into(), Value::Null);
-                        els.push(e);
-                        if let Some(t) = text_el(o, &b.label, area_world, None, f.angle, None, o.style.stroke) {
-                            els.push(t);
-                        }
-                    }
-                    geom => {
-                        let ty = match geom {
-                            BoxGeom::Ellipse => "ellipse",
-                            BoxGeom::Diamond => "diamond",
-                            _ => "rectangle",
-                        };
-                        let mut e = base(o, ty, f.x, f.y, f.w, f.h, f.angle);
-                        if geom == BoxGeom::Rect && o.style.roundness > 0.0 {
-                            e.insert("roundness".into(), json!({"type": 3}));
-                        }
-                        if geom == BoxGeom::Sticky {
-                            e.insert("strokeColor".into(), json!("transparent"));
-                            e.insert("backgroundColor".into(), json!(col(o.style.fill.unwrap_or(inkboard_core::style::NOTE_YELLOW))));
-                        }
-                        let color = if geom == BoxGeom::Sticky { Color::Rgb(0x1e, 0x1e, 0x1e) } else { o.style.stroke };
-                        let t = text_el(o, &b.label, area_world, Some(o.id.as_str()), f.angle, None, color);
-                        if let Some(t) = &t {
-                            e.insert("boundElements".into(), json!([{"id": t["id"], "type": "text"}]));
-                        }
-                        els.push(e);
-                        els.extend(t);
-                    }
+                let mut e = self.base(o, ty, rect, f.angle);
+                if geom == BoxGeom::Rect && o.style.roundness > 0.0 {
+                    e.insert("roundness".into(), json!({"type": 3}));
                 }
-            }
-            Kind::Pen(p) => {
-                let Some(first) = p.pts.first() else { continue };
-                let bb = Rect::from_points(p.pts.iter().copied()).unwrap_or_default();
-                let mut e = base(o, "freedraw", first.x, first.y, bb.w, bb.h, 0.0);
-                e.insert("points".into(), json!(p.pts.iter().map(|q| [q.x - first.x, q.y - first.y]).collect::<Vec<_>>()));
-                e.insert("pressures".into(), json!(p.pressures.as_ref().map(|v| v.as_slice()).unwrap_or(&[])));
-                e.insert("simulatePressure".into(), json!(p.pressures.is_none()));
-                e.insert("lastCommittedPoint".into(), Value::Null);
-                els.push(e);
-            }
-            Kind::Image(i) => {
-                let Some(a) = doc.assets.get(&i.asset) else { continue };
-                let fid = i.asset.as_str().to_owned();
-                let bytes = i.export_bytes(&a.mime, &a.data, o.style.stroke.resolve(doc.background.preset.is_dark()));
-                files.insert(fid.clone(), json!({"mimeType": a.mime, "id": fid, "dataURL": data_url(&a.mime, &bytes), "created": 1, "lastRetrieved": 1}));
-                let mut e = base(o, "image", i.frame.x, i.frame.y, i.frame.w, i.frame.h, i.frame.angle);
-                e.insert("fileId".into(), json!(fid));
-                e.insert("status".into(), json!("saved"));
-                e.insert("scale".into(), json!([1, 1]));
-                e.insert("crop".into(), Value::Null);
-                els.push(e);
-            }
-            Kind::Table(t) => {
-                // invisible outline carrying the table id: the element a bound connector points to
-                if page.objects.iter().any(|p| matches!(&p.kind, Kind::Connector(c) if c.targets().any(|t| *t == o.id))) {
-                    let bb = page.bounds(o);
-                    let outline = Object { style: Style { width: 0.0, fill: None, ..o.style.clone() }, ..o.clone() };
-                    els.push(base(&outline, "rectangle", bb.x, bb.y, bb.w, bb.h, 0.0));
+                if geom == BoxGeom::Sticky {
+                    e.insert("strokeColor".into(), json!("transparent"));
+                    e.insert("backgroundColor".into(), json!(self.col(o.style.fill.unwrap_or(inkboard_core::style::NOTE_YELLOW))));
                 }
-                for r in 0..t.rows() {
-                    for c in 0..t.cols() {
-                        let cr = t.cell_rect(r, c);
-                        let cell_id = Id::new();
-                        let cell_obj = Object {
-                            id: cell_id.clone(),
-                            style: Style { fill: (t.header && r == 0).then_some(Color::rgb(0xde, 0xe2, 0xe6)), ..o.style.clone() },
-                            ..o.clone()
-                        };
-                        let mut e = base(&cell_obj, "rectangle", cr.x, cr.y, cr.w, cr.h, 0.0);
-                        let label = Label { text: t.cell(r, c).cloned().unwrap_or_default(), family: t.family, size: t.size, align: Align::Left };
-                        let t_el = text_el(
-                            &cell_obj,
-                            &label,
-                            Rect::new(cr.x + 8.0, cr.y + 4.0, cr.w - 16.0, cr.h - 8.0),
-                            Some(cell_id.as_str()),
-                            0.0,
-                            None,
-                            o.style.stroke,
-                        );
-                        if let Some(t_el) = &t_el {
-                            e.insert("boundElements".into(), json!([{"id": t_el["id"], "type": "text"}]));
-                        }
-                        els.push(e);
-                        els.extend(t_el);
-                    }
-                }
-            }
-            Kind::Connector(c) => {
-                let Some(path) = page.connector_path(c) else { continue };
-                let (x0, y0) = (path[0].x, path[0].y);
-                let bb = Rect::from_points(path.iter().copied()).unwrap_or_default();
-                let arrow = c.head_start != Arrowhead::None || c.head_end != Arrowhead::None || c.start.target().is_some() || c.end.target().is_some();
-                let mut e = base(o, if arrow { "arrow" } else { "line" }, x0, y0, bb.w, bb.h, 0.0);
-                e.insert("points".into(), json!(path.iter().map(|q| [q.x - x0, q.y - y0]).collect::<Vec<_>>()));
-                e.insert("lastCommittedPoint".into(), Value::Null);
-                e.insert("startArrowhead".into(), xhead(c.head_start));
-                e.insert("endArrowhead".into(), xhead(c.head_end));
-                e.insert("elbowed".into(), json!(c.route == Route::Elbow));
-                if c.route != Route::Straight {
-                    e.insert("roundness".into(), json!({"type": 2}));
-                }
-                for (end, key) in [(&c.start, "startBinding"), (&c.end, "endBinding")] {
-                    let bind = end.target().filter(|t| !skip_bind.contains(t)).filter(|t| page.get(t).is_some());
-                    match bind {
-                        Some(t) => {
-                            e.insert(key.into(), json!({"elementId": t.as_str(), "focus": 0, "gap": 4}));
-                            bound_to.entry(t.as_str().to_owned()).or_default().push(json!({"id": o.id.as_str(), "type": "arrow"}));
-                        }
-                        None => {
-                            e.insert(key.into(), Value::Null);
-                        }
-                    }
-                }
-                let label_el = c.label.as_ref().and_then(|l| {
-                    let (mid, _) = inkboard_core::connector::path_midpoint(&path);
-                    text_el(o, l, Rect::new(mid.x - 40.0, mid.y - 10.0, 80.0, 20.0), Some(o.id.as_str()), 0.0, None, o.style.stroke)
-                });
-                if let Some(t) = &label_el {
-                    e.insert("boundElements".into(), json!([{"id": t["id"], "type": "text"}]));
-                }
-                els.push(e);
-                els.extend(label_el);
+                let color = if geom == BoxGeom::Sticky { Color::Rgb(0x1e, 0x1e, 0x1e) } else { o.style.stroke };
+                let label = self.text_el(o, &b.label, area_world, Place::In(o.id.as_str()), f.angle, color);
+                self.push_with_label(e, label);
             }
         }
     }
+
+    fn add_pen(&mut self, o: &Object, p: &PenObj) {
+        let Some(first) = p.pts.first() else { return };
+        let bb = Rect::from_points(p.pts.iter().copied()).unwrap_or_default();
+        let mut e = self.base(o, "freedraw", Rect::new(first.x, first.y, bb.w, bb.h), 0.0);
+        e.insert("points".into(), json!(p.pts.iter().map(|q| [q.x - first.x, q.y - first.y]).collect::<Vec<_>>()));
+        e.insert("pressures".into(), json!(p.pressures.as_deref().map_or(&[][..], Vec::as_slice)));
+        e.insert("simulatePressure".into(), json!(p.pressures.is_none()));
+        e.insert("lastCommittedPoint".into(), Value::Null);
+        self.els.push(e);
+    }
+
+    fn add_image(&mut self, o: &Object, i: &ImageObj) {
+        let Some(a) = self.doc.assets.get(&i.asset) else { return };
+        let fid = i.asset.as_str().to_owned();
+        let bytes = i.export_bytes(&a.mime, &a.data, o.style.stroke.resolve(self.doc.background.preset.is_dark()));
+        self.files.insert(fid.clone(), json!({"mimeType": a.mime, "id": fid, "dataURL": data_url(&a.mime, &bytes), "created": 1, "lastRetrieved": 1}));
+        let mut e = self.base(o, "image", Rect::new(i.frame.x, i.frame.y, i.frame.w, i.frame.h), i.frame.angle);
+        e.insert("fileId".into(), json!(fid));
+        e.insert("status".into(), json!("saved"));
+        e.insert("scale".into(), json!([1, 1]));
+        e.insert("crop".into(), Value::Null);
+        self.els.push(e);
+    }
+
+    fn add_table(&mut self, o: &Object, t: &Table) {
+        // invisible outline carrying the table id: the element a bound connector points to
+        if self.page.objects.iter().any(|p| matches!(&p.kind, Kind::Connector(c) if c.targets().any(|t| *t == o.id))) {
+            let bb = self.page.bounds(o);
+            let outline = Object { style: Style { width: 0.0, fill: None, ..o.style.clone() }, ..o.clone() };
+            let e = self.base(&outline, "rectangle", bb, 0.0);
+            self.els.push(e);
+        }
+        for r in 0..t.rows() {
+            for c in 0..t.cols() {
+                let cr = t.cell_rect(r, c);
+                let cell_id = Id::new();
+                let cell_obj = Object {
+                    id: cell_id.clone(),
+                    style: Style { fill: (t.header && r == 0).then_some(Color::rgb(0xde, 0xe2, 0xe6)), ..o.style.clone() },
+                    ..o.clone()
+                };
+                let e = self.base(&cell_obj, "rectangle", cr, 0.0);
+                let label = Label { text: t.cell(r, c).cloned().unwrap_or_default(), family: t.family, size: t.size, align: Align::Left };
+                let area = Rect::new(cr.x + 8.0, cr.y + 4.0, cr.w - 16.0, cr.h - 8.0);
+                let t_el = self.text_el(&cell_obj, &label, area, Place::In(cell_id.as_str()), 0.0, o.style.stroke);
+                self.push_with_label(e, t_el);
+            }
+        }
+    }
+
+    fn add_connector(&mut self, o: &Object, c: &Connector) {
+        let Some(path) = self.page.connector_path(c) else { return };
+        let (x0, y0) = (path[0].x, path[0].y);
+        let bb = Rect::from_points(path.iter().copied()).unwrap_or_default();
+        let arrow = c.head_start != Arrowhead::None || c.head_end != Arrowhead::None || c.start.target().is_some() || c.end.target().is_some();
+        let mut e = self.base(o, if arrow { "arrow" } else { "line" }, Rect::new(x0, y0, bb.w, bb.h), 0.0);
+        e.insert("points".into(), json!(path.iter().map(|q| [q.x - x0, q.y - y0]).collect::<Vec<_>>()));
+        e.insert("lastCommittedPoint".into(), Value::Null);
+        e.insert("startArrowhead".into(), xhead(c.head_start));
+        e.insert("endArrowhead".into(), xhead(c.head_end));
+        e.insert("elbowed".into(), json!(c.route == Route::Elbow));
+        if c.route != Route::Straight {
+            e.insert("roundness".into(), json!({"type": 2}));
+        }
+        for (end, key) in [(&c.start, "startBinding"), (&c.end, "endBinding")] {
+            let bind = end.target().filter(|t| !self.skip_bind.contains(t)).filter(|t| self.page.get(t).is_some());
+            match bind {
+                Some(t) => {
+                    e.insert(key.into(), json!({"elementId": t.as_str(), "focus": 0, "gap": 4}));
+                    self.bound_to.entry(t.as_str().to_owned()).or_default().push(json!({"id": o.id.as_str(), "type": "arrow"}));
+                }
+                None => {
+                    e.insert(key.into(), Value::Null);
+                }
+            }
+        }
+        let label = c.label.as_ref().and_then(|l| {
+            let (mid, _) = inkboard_core::connector::path_midpoint(&path);
+            self.text_el(o, l, Rect::new(mid.x - 40.0, mid.y - 10.0, 80.0, 20.0), Place::In(o.id.as_str()), 0.0, o.style.stroke)
+        });
+        self.push_with_label(e, label);
+    }
+}
+
+/// Exports a page in Excalidraw format (one scene = one page).
+pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
+    let dark = doc.background.preset.is_dark();
+    let skip_bind: Vec<&Id> = page
+        .objects
+        .iter()
+        .filter(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Triangle) || matches!(o.kind, Kind::Pen(_) | Kind::Connector(_)))
+        .map(|o| &o.id)
+        .collect();
+    let mut x = Exporter { doc, page, m, dark, els: Vec::new(), files: Map::new(), bound_to: HashMap::new(), skip_bind };
+    for o in page.objects.iter().filter(|o| page.is_visible(o)) {
+        match &o.kind {
+            Kind::Box(b) => x.add_box(o, b),
+            Kind::Pen(p) => x.add_pen(o, p),
+            Kind::Image(i) => x.add_image(o, i),
+            Kind::Table(t) => x.add_table(o, t),
+            Kind::Connector(c) => x.add_connector(o, c),
+        }
+    }
+    let Exporter { mut els, files, mut bound_to, .. } = x;
     for e in &mut els {
         let Some(id) = e.get("id").and_then(Value::as_str).map(str::to_owned) else { continue };
         if let Some(extra) = bound_to.remove(&id) {
@@ -303,7 +352,7 @@ pub fn export(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
         "appState": {"gridSize": null, "viewBackgroundColor": doc.background.preset.hex(), "theme": if dark { "dark" } else { "light" }},
         "files": files,
     });
-    serde_json::to_string(&scene).expect("serializable scene")
+    scene.to_string()
 }
 
 /* ===================================================================== Import */
@@ -327,7 +376,7 @@ fn style_of(e: &Value, is_text: bool) -> Style {
             Some("dotted") => Dash::Dotted,
             _ => Dash::Solid,
         },
-        opacity: (e.get("opacity").and_then(Value::as_f64).unwrap_or(100.0) / 100.0).clamp(0.05, 1.0) as f32,
+        opacity: num::f32((e.get("opacity").and_then(Value::as_f64).unwrap_or(100.0) / 100.0).clamp(0.05, 1.0)),
         roundness: 0.0,
     }
 }
@@ -353,165 +402,223 @@ fn finish(mut o: Object, e: &Value) -> Object {
     o
 }
 
-pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
-    let v: Value = serde_json::from_str(content)?;
-    if text(&v, "type") != Some("excalidraw") {
+/// Lookup tables of the scene being imported.
+struct Scene<'a> {
+    /// Pre-allocated ids: bindings resolve whatever the order of the elements.
+    ids: HashMap<&'a str, Id>,
+    kind_of: HashMap<&'a str, &'a str>,
+    /// Text element bound to each container.
+    labels: HashMap<&'a str, &'a Value>,
+}
+
+impl Scene<'_> {
+    /// Id of an element (an element without "id" gets a synthetic one).
+    fn own_id(&self, id: &str) -> Id {
+        self.ids.get(id).cloned().unwrap_or_else(Id::new)
+    }
+
+    /// Shape of a `rectangle` / `ellipse` / `diamond` element, with its bound text as label.
+    fn shape(&self, e: &Value, ty: &str) -> Object {
+        let id = text(e, "id").unwrap_or("");
+        let geom = match ty {
+            "ellipse" => BoxGeom::Ellipse,
+            "diamond" => BoxGeom::Diamond,
+            _ => BoxGeom::Rect,
+        };
+        let mut st = style_of(e, false);
+        if geom == BoxGeom::Rect && e.get("roundness").is_some_and(|r| !r.is_null()) {
+            st.roundness = 0.45;
+        }
+        let mut label = self.labels.get(id).map(|t| label_of(t)).unwrap_or_default();
+        if !self.labels.contains_key(id) {
+            label.align = Align::Center;
+        } else if st.width == 0.0
+            && let Some(c) = self.labels.get(id).and_then(|t| text(t, "strokeColor")).and_then(parse_color)
+        {
+            st.stroke = c;
+        }
+        let frame = Frame { x: num(e, "x"), y: num(e, "y"), w: num(e, "width"), h: num(e, "height"), angle: num(e, "angle") };
+        let mut obj = Object::new_box(geom, frame, st, label);
+        obj.id = self.own_id(id);
+        obj
+    }
+
+    /// Object of a `line` / `arrow` element: a connector, or a triangle drawn as a closed line. `None`: fewer than 2 points.
+    fn linear(&self, e: &Value, ty: &str, angle: f64) -> Option<Object> {
+        let id = text(e, "id").unwrap_or("");
+        let pts = element_points(e, angle);
+        if pts.len() < 2 {
+            return None;
+        }
+        let closed = pts.len() == 4 && pts[0].dist(pts[3]) < 2.0 && ty == "line";
+        if closed && angle == 0.0 {
+            let bb = Rect::from_points(pts.iter().copied()).unwrap_or_default();
+            let apex_up = (pts[0].x - bb.center().x).abs() < bb.w * 0.1 && (pts[0].y - bb.y).abs() < 1.0;
+            if apex_up {
+                let mut triangle = Object::new_box(BoxGeom::Triangle, Frame::from_rect(bb), style_of(e, false), Label::default());
+                triangle.id = self.own_id(id);
+                return Some(triangle);
+            }
+        }
+        let bind = |key: &str| -> Option<End> {
+            let t = e.get(key)?.get("elementId")?.as_str()?;
+            (matches!(self.kind_of.get(t), Some(&("rectangle" | "ellipse" | "diamond" | "image" | "text")))).then(|| End::bound(self.own_id(t)))
+        };
+        let mut c =
+            Connector::new(bind("startBinding").unwrap_or_else(|| End::free(pts[0])), bind("endBinding").unwrap_or_else(|| End::free(pts[pts.len() - 1])));
+        c.via = pts[1..pts.len() - 1].to_vec();
+        c.head_end = Arrowhead::None;
+        if ty == "arrow" {
+            c.head_end = if e.get("endArrowhead").is_none() { Arrowhead::Arrow } else { head_back(e.get("endArrowhead")) };
+            c.head_start = head_back(e.get("startArrowhead"));
+        }
+        let elbowed = e.get("elbowed").and_then(Value::as_bool).unwrap_or(false);
+        c.route = if elbowed {
+            c.via.clear();
+            Route::Elbow
+        } else if e.get("roundness").is_some_and(|r| !r.is_null()) && pts.len() > 2 {
+            Route::Curve
+        } else {
+            Route::Straight
+        };
+        if let Some(t) = self.labels.get(id) {
+            c.label = Some(Label { align: Align::Center, ..label_of(t) });
+        }
+        let mut o = Object::new(Kind::Connector(c), Style { fill: None, ..style_of(e, false) });
+        o.id = self.own_id(id);
+        Some(o)
+    }
+}
+
+/// Points of a `line` / `arrow` / `freedraw` element in world coordinates, its rotation applied.
+fn element_points(e: &Value, angle: f64) -> Vec<Pt> {
+    let (x, y) = (num(e, "x"), num(e, "y"));
+    let mut pts: Vec<Pt> = e
+        .get("points")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|p| Some(Pt::new(x + p.get(0)?.as_f64()?, y + p.get(1)?.as_f64()?))).collect())
+        .unwrap_or_default();
+    if angle != 0.0 {
+        let center = Rect::from_points(pts.iter().copied()).map(|r| r.center()).unwrap_or_default();
+        for p in &mut pts {
+            *p = p.rotate(center, angle);
+        }
+    }
+    pts
+}
+
+/// Pen stroke of a `freedraw` element (`None`: no point).
+fn freedraw(e: &Value, angle: f64) -> Option<Object> {
+    let mut pts = element_points(e, angle);
+    if pts.is_empty() {
+        return None;
+    }
+    let mut pressures: Vec<f32> =
+        e.get("pressures").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_f64().map(num::f32)).collect()).unwrap_or_default();
+    if pts.len() == 1 {
+        pts.push(pts[0]);
+        pressures.extend(pressures.first().copied());
+    }
+    let pen_style = Style { dash: Dash::Solid, fill: None, ..style_of(e, false) };
+    let mut o =
+        if pressures.len() == pts.len() { Object::new_pen_with_pressure(pts, pressures, false, pen_style) } else { Object::new_pen(pts, false, pen_style) };
+    o.style.width = (num(e, "strokeWidth").max(1.0) * 1.5).max(1.5);
+    Some(o)
+}
+
+/// A frame becomes a dashed rectangle, with its name above it.
+fn frame_objects(e: &Value, id: Id, measurer: &dyn Measurer) -> Vec<Object> {
+    let (x, y) = (num(e, "x"), num(e, "y"));
+    let mut outline = Object::new_box(
+        BoxGeom::Rect,
+        Frame::new(x, y, num(e, "width"), num(e, "height")),
+        Style { dash: Dash::Dashed, width: 2.0, ..Style::default() },
+        Label::default(),
+    );
+    outline.id = id;
+    let mut out = vec![outline];
+    if let Some(n) = text(e, "name").filter(|n| !n.is_empty()) {
+        let mut title =
+            Object::new_box(BoxGeom::Text, Frame::new(x, y - 26.0, 10.0, 10.0), Style { width: 0.0, ..Style::default() }, Label::new(n, 16.0, Align::Left));
+        if let Kind::Box(b) = &mut title.kind {
+            b.fit(measurer);
+        }
+        out.push(title);
+    }
+    out
+}
+
+/// Imports an Excalidraw scene.
+///
+/// # Errors
+///
+/// [`FormatError`] when the content is not an Excalidraw scene.
+pub fn import(content: &str, name: &str, measurer: &dyn Measurer) -> Result<Imported, FormatError> {
+    let root: Value = serde_json::from_str(content)?;
+    if text(&root, "type") != Some("excalidraw") {
         return Err(FormatError::Invalid("not an Excalidraw scene".into()));
     }
-    let els: Vec<&Value> = v
+    let els: Vec<&Value> = root
         .get("elements")
         .and_then(Value::as_array)
         .map(|a| a.iter().filter(|e| !e.get("isDeleted").and_then(Value::as_bool).unwrap_or(false)).collect())
         .unwrap_or_default();
-    let files = v.get("files").and_then(Value::as_object);
+    let files = root.get("files").and_then(Value::as_object);
     let mut report = Report::default();
     let mut doc = Document::new(name);
-    if let Some(bg) = v.pointer("/appState/viewBackgroundColor").and_then(Value::as_str).and_then(parse_color) {
+    if let Some(bg) = root.pointer("/appState/viewBackgroundColor").and_then(Value::as_str).and_then(parse_color) {
         doc.background.preset = BgPreset::nearest(bg.resolve(false));
     }
-    // pre-allocated ids: lets bindings be resolved whatever the order
-    let ids: HashMap<&str, Id> = els.iter().filter_map(|e| text(e, "id").map(|i| (i, Id::new()))).collect();
-    // an element without "id" gets a synthetic one
-    let own_id = |id: &str| ids.get(id).cloned().unwrap_or_else(Id::new);
-    let kind_of: HashMap<&str, &str> = els.iter().filter_map(|e| Some((text(e, "id")?, text(e, "type")?))).collect();
-    let mut labels: HashMap<&str, &Value> = HashMap::new();
+    let mut scene = Scene {
+        ids: els.iter().filter_map(|e| text(e, "id").map(|i| (i, Id::new()))).collect(),
+        kind_of: els.iter().filter_map(|e| Some((text(e, "id")?, text(e, "type")?))).collect(),
+        labels: HashMap::new(),
+    };
     for e in &els {
         if text(e, "type") == Some("text")
             && let Some(c) = text(e, "containerId")
         {
-            labels.insert(c, e);
+            scene.labels.insert(c, e);
         }
     }
     let mut out: Vec<Object> = Vec::new();
     for e in &els {
         let id = text(e, "id").unwrap_or("");
         let ty = text(e, "type").unwrap_or("");
-        let (x, y, w, h) = (num(e, "x"), num(e, "y"), num(e, "width"), num(e, "height"));
+        let (x, y, width, height) = (num(e, "x"), num(e, "y"), num(e, "width"), num(e, "height"));
         let angle = num(e, "angle");
         match ty {
-            "rectangle" | "ellipse" | "diamond" => {
-                let geom = match ty {
-                    "ellipse" => BoxGeom::Ellipse,
-                    "diamond" => BoxGeom::Diamond,
-                    _ => BoxGeom::Rect,
-                };
-                let mut st = style_of(e, false);
-                if geom == BoxGeom::Rect && e.get("roundness").is_some_and(|r| !r.is_null()) {
-                    st.roundness = 0.45;
-                }
-                let mut label = labels.get(id).map(|t| label_of(t)).unwrap_or_default();
-                if !labels.contains_key(id) {
-                    label.align = Align::Center;
-                } else if st.width == 0.0
-                    && let Some(c) = labels.get(id).and_then(|t| text(t, "strokeColor")).and_then(parse_color)
-                {
-                    st.stroke = c;
-                }
-                let mut o = Object::new_box(geom, Frame { x, y, w, h, angle }, st, label);
-                o.id = own_id(id);
-                out.push(finish(o, e));
-            }
+            "rectangle" | "ellipse" | "diamond" => out.push(finish(scene.shape(e, ty), e)),
             "text" => {
                 let container = text(e, "containerId");
                 if container.is_some_and(|c| {
-                    labels.get(c).is_some_and(|t| std::ptr::eq(*t, *e))
-                        && matches!(kind_of.get(c), Some(&("rectangle" | "ellipse" | "diamond" | "arrow" | "line")))
+                    scene.labels.get(c).is_some_and(|t| std::ptr::eq(*t, *e))
+                        && matches!(scene.kind_of.get(c), Some(&("rectangle" | "ellipse" | "diamond" | "arrow" | "line")))
                 }) {
                     continue;
                 }
-                let mut o = Object::new_box(BoxGeom::Text, Frame::new(x, y, w, h), style_of(e, true), label_of(e));
-                if let Kind::Box(b) = &mut o.kind {
-                    b.fit(m);
+                let mut text_obj = Object::new_box(BoxGeom::Text, Frame::new(x, y, width, height), style_of(e, true), label_of(e));
+                if let Kind::Box(b) = &mut text_obj.kind {
+                    b.fit(measurer);
                     b.frame.angle = angle;
                 }
-                o.style.stroke = text(e, "strokeColor").and_then(parse_color).unwrap_or(Color::Ink);
-                o.id = own_id(id);
-                out.push(finish(o, e));
+                text_obj.style.stroke = text(e, "strokeColor").and_then(parse_color).unwrap_or(Color::Ink);
+                text_obj.id = scene.own_id(id);
+                out.push(finish(text_obj, e));
             }
             "line" | "arrow" => {
-                let rel: Vec<Pt> = e
-                    .get("points")
-                    .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|p| Some(Pt::new(p.get(0)?.as_f64()?, p.get(1)?.as_f64()?))).collect())
-                    .unwrap_or_default();
-                if rel.len() < 2 {
+                let Some(o) = scene.linear(e, ty, angle) else {
                     report.skipped += 1;
                     continue;
-                }
-                let mut pts: Vec<Pt> = rel.iter().map(|p| Pt::new(x + p.x, y + p.y)).collect();
-                if angle != 0.0 {
-                    let c = Rect::from_points(pts.iter().copied()).map(|r| r.center()).unwrap_or_default();
-                    pts.iter_mut().for_each(|p| *p = p.rotate(c, angle));
-                }
-                let closed = pts.len() == 4 && pts[0].dist(pts[3]) < 2.0 && ty == "line";
-                if closed && angle == 0.0 {
-                    let bb = Rect::from_points(pts.iter().copied()).unwrap_or_default();
-                    let apex_up = (pts[0].x - bb.center().x).abs() < bb.w * 0.1 && (pts[0].y - bb.y).abs() < 1.0;
-                    if apex_up {
-                        let mut o = Object::new_box(BoxGeom::Triangle, Frame::from_rect(bb), style_of(e, false), Label::default());
-                        o.id = own_id(id);
-                        out.push(finish(o, e));
-                        continue;
-                    }
-                }
-                let bind = |key: &str| -> Option<End> {
-                    let t = e.get(key)?.get("elementId")?.as_str()?;
-                    (matches!(kind_of.get(t), Some(&("rectangle" | "ellipse" | "diamond" | "image" | "text")))).then(|| End::bound(own_id(t)))
                 };
-                let mut c = Connector::new(
-                    bind("startBinding").unwrap_or_else(|| End::free(pts[0])),
-                    bind("endBinding").unwrap_or_else(|| End::free(pts[pts.len() - 1])),
-                );
-                c.via = pts[1..pts.len() - 1].to_vec();
-                c.head_end = Arrowhead::None;
-                if ty == "arrow" {
-                    c.head_end = if e.get("endArrowhead").is_none() { Arrowhead::Arrow } else { head_back(e.get("endArrowhead")) };
-                    c.head_start = head_back(e.get("startArrowhead"));
-                }
-                let elbowed = e.get("elbowed").and_then(Value::as_bool).unwrap_or(false);
-                c.route = if elbowed {
-                    c.via.clear();
-                    Route::Elbow
-                } else if e.get("roundness").is_some_and(|r| !r.is_null()) && pts.len() > 2 {
-                    Route::Curve
-                } else {
-                    Route::Straight
-                };
-                if let Some(t) = labels.get(id) {
-                    c.label = Some(Label { align: Align::Center, ..label_of(t) });
-                }
-                let mut o = Object::new(Kind::Connector(c), Style { fill: None, ..style_of(e, false) });
-                o.id = own_id(id);
                 out.push(finish(o, e));
             }
             "freedraw" => {
-                let mut pts: Vec<Pt> = e
-                    .get("points")
-                    .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|p| Some(Pt::new(x + p.get(0)?.as_f64()?, y + p.get(1)?.as_f64()?))).collect())
-                    .unwrap_or_default();
-                if pts.is_empty() {
+                let Some(mut o) = freedraw(e, angle) else {
                     report.skipped += 1;
                     continue;
-                }
-                let mut pressures: Vec<f32> =
-                    e.get("pressures").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect()).unwrap_or_default();
-                if pts.len() == 1 {
-                    pts.push(pts[0]);
-                    pressures.extend(pressures.first().copied());
-                }
-                if angle != 0.0 {
-                    let c = Rect::from_points(pts.iter().copied()).map(|r| r.center()).unwrap_or_default();
-                    pts.iter_mut().for_each(|p| *p = p.rotate(c, angle));
-                }
-                let pen_style = Style { dash: Dash::Solid, fill: None, ..style_of(e, false) };
-                let mut o = if pressures.len() == pts.len() {
-                    Object::new_pen_with_pressure(pts, pressures, false, pen_style)
-                } else {
-                    Object::new_pen(pts, false, pen_style)
                 };
-                o.style.width = (num(e, "strokeWidth").max(1.0) * 1.5).max(1.5);
-                o.id = own_id(id);
+                o.id = scene.own_id(id);
                 out.push(finish(o, e));
             }
             "image" => {
@@ -523,30 +630,15 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
                 let aid = Id::new();
                 doc.assets.insert(aid.clone(), Asset { mime, data: Arc::new(bytes) });
                 let mut o = Object::new(
-                    Kind::Image(ImageObj { frame: Frame { x, y, w, h, angle }, asset: aid, latex: None, mono: false }),
+                    Kind::Image(ImageObj { frame: Frame { x, y, w: width, h: height, angle }, asset: aid, latex: None, mono: false }),
                     Style { width: 0.0, opacity: style_of(e, false).opacity, ..Style::default() },
                 );
-                o.id = own_id(id);
+                o.id = scene.own_id(id);
                 out.push(finish(o, e));
             }
             "frame" | "magicframe" => {
                 report.approximated += 1;
-                let mut o =
-                    Object::new_box(BoxGeom::Rect, Frame::new(x, y, w, h), Style { dash: Dash::Dashed, width: 2.0, ..Style::default() }, Label::default());
-                o.id = own_id(id);
-                out.push(o);
-                if let Some(n) = text(e, "name").filter(|n| !n.is_empty()) {
-                    let mut t = Object::new_box(
-                        BoxGeom::Text,
-                        Frame::new(x, y - 26.0, 10.0, 10.0),
-                        Style { width: 0.0, ..Style::default() },
-                        Label::new(n, 16.0, Align::Left),
-                    );
-                    if let Kind::Box(b) = &mut t.kind {
-                        b.fit(m);
-                    }
-                    out.push(t);
-                }
+                out.extend(frame_objects(e, scene.own_id(id), measurer));
             }
             "text_container_placeholder" => {}
             _ => report.skipped += 1,
@@ -562,6 +654,7 @@ mod tests {
     use super::*;
     use crate::sample_document;
     use inkboard_core::text::ApproxMeasurer;
+    use inkboard_core::{BoxObj, PenObj};
 
     fn export_import(d: &Document) -> Imported {
         let json = export(d, &d.pages[0], &ApproxMeasurer);

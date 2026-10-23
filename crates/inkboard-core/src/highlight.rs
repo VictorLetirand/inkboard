@@ -49,6 +49,7 @@ impl Lang {
     ];
 
     /// Display name (English; "Auto" is the only one a UI needs to translate).
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Lang::Auto => "Auto",
@@ -560,8 +561,8 @@ const CSS: &[&str] = &[
 ];
 
 fn spec(lang: Lang) -> Spec {
-    let s = |line, block, quotes, char_lit, keywords, ci, tags| Spec { line, block, quotes, char_lit, keywords, ci, tags };
     const SLASH: Option<(&str, &str)> = Some(("/*", "*/"));
+    let s = |line, block, quotes, char_lit, keywords, ci, tags| Spec { line, block, quotes, char_lit, keywords, ci, tags };
     match lang {
         Lang::Auto => s(&["//", "#"], SLASH, &['"', '`'], true, GENERIC, false, false),
         Lang::Rust => s(&["//"], SLASH, &['"'], true, RUST, false, false),
@@ -590,11 +591,13 @@ fn starts(c: &[char], i: usize, pat: &str) -> bool {
 }
 
 /// Ranges `(start, end, color)` in character indices (generic coloring).
+#[must_use]
 pub fn tokens(src: &str) -> Vec<(usize, usize, Color)> {
     tokens_lang(src, Lang::Auto)
 }
 
 /// Ranges `(start, end, color)` in character indices for the language `lang`.
+#[must_use]
 pub fn tokens_lang(src: &str, lang: Lang) -> Vec<(usize, usize, Color)> {
     let sp = spec(lang);
     let c: Vec<char> = src.chars().collect();
@@ -663,11 +666,13 @@ pub fn tokens_lang(src: &str, lang: Lang) -> Vec<(usize, usize, Color)> {
 }
 
 /// Rich text with the generic colors of `src`.
+#[must_use]
 pub fn highlight(src: &str) -> RichText {
     highlight_lang(src, Lang::Auto)
 }
 
 /// Rich text with the colors of `src` for the language `lang`.
+#[must_use]
 pub fn highlight_lang(src: &str, lang: Lang) -> RichText {
     let mut rt = RichText::plain(src);
     for (a, b, col) in tokens_lang(src, lang) {
@@ -699,7 +704,7 @@ mod tests {
 
     #[test]
     fn identifiers_containing_keywords_are_not_colored_and_lifetimes_are_not_strings() {
-        assert!(colored("format letter").is_empty());
+        assert_eq!(colored("format letter"), [] as [(String, crate::style::Color); 0]);
         let t = colored("fn f<'a>(x: &'a str)");
         assert_eq!(t, vec![("fn".to_owned(), KEYWORD)]);
         assert_eq!(colored("let c = 'x';").len(), 2);

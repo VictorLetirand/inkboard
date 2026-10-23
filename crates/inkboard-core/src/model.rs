@@ -31,7 +31,9 @@ fn next_seed() -> u64 {
         return s;
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x9E37_79B9, |d| d.as_nanos() as u64);
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0x9E37_79B9, |d| d.as_secs().wrapping_mul(1_000_000_000).wrapping_add(u64::from(d.subsec_nanos())));
     #[cfg(target_arch = "wasm32")]
     let t = 0x9E37_79B9_7F4A_7C15u64;
     let t = t | 1;
@@ -58,6 +60,7 @@ impl Id {
             .collect();
         Id(s)
     }
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -101,9 +104,11 @@ impl Default for Label {
 }
 
 impl Label {
+    #[must_use]
     pub fn new(text: &str, size: f64, align: Align) -> Self {
         Self { text: RichText::plain(text), family: FontFamily::Sans, size, align }
     }
+    #[must_use]
     pub fn line_height(&self) -> f64 {
         self.size * 1.3
     }
@@ -126,6 +131,7 @@ pub enum BoxGeom {
 
 impl BoxGeom {
     /// "Outline" shape used for attachment points and click tests.
+    #[must_use]
     pub fn outline(self) -> Outline {
         match self {
             BoxGeom::Ellipse => Outline::Ellipse,
@@ -146,6 +152,7 @@ pub enum Outline {
 
 impl Outline {
     /// Outline polygon in the local frame (origin at the center).
+    #[must_use]
     pub fn polygon(self, w: f64, h: f64) -> Vec<Pt> {
         let (hw, hh) = (w / 2.0, h / 2.0);
         match self {
@@ -170,6 +177,7 @@ pub struct BoxObj {
 
 impl BoxObj {
     /// Area (local frame) in which the text is laid out.
+    #[must_use]
     pub fn label_rect(&self) -> Rect {
         let (w, h) = (self.frame.w, self.frame.h);
         let (hw, hh) = (w / 2.0, h / 2.0);
@@ -226,11 +234,13 @@ pub struct ImageObj {
 
 impl ImageObj {
     /// Is the image tinted with the stroke color (formula or monochrome icon)?
+    #[must_use]
     pub fn is_tinted(&self) -> bool {
         self.mono || self.latex.is_some()
     }
 
     /// Bytes of the image as exported to other formats: a tinted SVG (white) gets the `stroke` color, anything else is unchanged.
+    #[must_use]
     pub fn export_bytes<'a>(&self, mime: &str, data: &'a [u8], stroke: (u8, u8, u8)) -> std::borrow::Cow<'a, [u8]> {
         if self.is_tinted() && mime == "image/svg+xml" {
             let hex = format!("#{:02x}{:02x}{:02x}", stroke.0, stroke.1, stroke.2);
@@ -268,6 +278,7 @@ pub struct Table {
 }
 
 impl Table {
+    #[must_use]
     pub fn new(origin: Pt, rows: usize, cols: usize) -> Self {
         let (rows, cols) = (rows.max(1), cols.max(1));
         Self {
@@ -280,15 +291,19 @@ impl Table {
             size: 18.0,
         }
     }
+    #[must_use]
     pub fn rows(&self) -> usize {
         self.row_h.len()
     }
+    #[must_use]
     pub fn cols(&self) -> usize {
         self.col_w.len()
     }
+    #[must_use]
     pub fn rect(&self) -> Rect {
         Rect::new(self.origin.x, self.origin.y, self.col_w.iter().sum(), self.row_h.iter().sum())
     }
+    #[must_use]
     pub fn cell(&self, r: usize, c: usize) -> Option<&RichText> {
         (r < self.rows() && c < self.cols()).then(|| &self.cells[r * self.cols() + c])
     }
@@ -296,18 +311,20 @@ impl Table {
         let cols = self.cols();
         (r < self.rows() && c < cols).then(move || &mut self.cells[r * cols + c])
     }
+    #[must_use]
     pub fn cell_rect(&self, r: usize, c: usize) -> Rect {
         let x = self.origin.x + self.col_w[..c].iter().sum::<f64>();
         let y = self.origin.y + self.row_h[..r].iter().sum::<f64>();
         Rect::new(x, y, self.col_w[c], self.row_h[r])
     }
     /// Cell located under a world point.
+    #[must_use]
     pub fn cell_at(&self, p: Pt) -> Option<(usize, usize)> {
         if !self.rect().contains(p) {
             return None;
         }
         let (mut x, mut y) = (self.origin.x, self.origin.y);
-        let c = self.col_w.iter().position(|w| {
+        let col = self.col_w.iter().position(|w| {
             x += w;
             p.x <= x
         })?;
@@ -315,7 +332,7 @@ impl Table {
             y += h;
             p.y <= y
         })?;
-        Some((r, c))
+        Some((r, col))
     }
     pub fn insert_row(&mut self, at: usize) {
         let at = at.min(self.rows());
@@ -366,10 +383,6 @@ pub enum Kind {
 fn default_layer() -> Id {
     Id::from("main")
 }
-fn is_false(b: &bool) -> bool {
-    !*b
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Object {
     pub id: Id,
@@ -379,33 +392,38 @@ pub struct Object {
     /// Group: objects sharing an id are selected together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<Id>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
     #[serde(default = "default_layer")]
     pub layer: Id,
 }
 
 impl Object {
+    #[must_use]
     pub fn new(kind: Kind, style: Style) -> Self {
         Self { id: Id::new(), kind, style, group: None, locked: false, layer: default_layer() }
     }
 
     /// Shape, note or text.
+    #[must_use]
     pub fn new_box(geom: BoxGeom, frame: Frame, style: Style, label: Label) -> Self {
         Self::new(Kind::Box(BoxObj { geom, frame, label, lang: None }), style)
     }
 
+    #[must_use]
     pub fn new_pen(pts: Vec<Pt>, highlighter: bool, style: Style) -> Self {
         Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures: None }), style)
     }
 
     /// Stroke with pen pressure (one 0..1 value per point; ignored when the lengths differ).
+    #[must_use]
     pub fn new_pen_with_pressure(pts: Vec<Pt>, pressures: Vec<f32>, highlighter: bool, style: Style) -> Self {
         let pressures = (pressures.len() == pts.len()).then(|| Arc::new(pressures));
         Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures }), style)
     }
 
     /// Frame for rectangular objects (shape, image, table).
+    #[must_use]
     pub fn frame(&self) -> Option<Frame> {
         match &self.kind {
             Kind::Box(b) => Some(b.frame),
@@ -416,6 +434,7 @@ impl Object {
     }
 
     /// Connectors can attach to this object.
+    #[must_use]
     pub fn is_attachable(&self) -> bool {
         self.frame().is_some()
     }
@@ -448,7 +467,9 @@ impl Object {
                 true
             }
             Kind::Pen(p) => {
-                Arc::make_mut(&mut p.pts).iter_mut().for_each(|q| *q = q.rotate(c, a));
+                for q in Arc::make_mut(&mut p.pts).iter_mut() {
+                    *q = q.rotate(c, a);
+                }
                 true
             }
             Kind::Connector(cn) => {
@@ -492,6 +513,7 @@ pub struct Layer {
 }
 
 impl Layer {
+    #[must_use]
     pub fn main() -> Self {
         Layer { id: default_layer(), name: "Layer 1".into(), visible: true, locked: false }
     }
@@ -522,25 +544,32 @@ pub struct Page {
 }
 
 impl Page {
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self { id: Id::new(), name: name.to_owned(), layers: vec![Layer::main()], objects: Vec::new(), view: View::default() }
     }
+    #[must_use]
     pub fn index_of(&self, id: &Id) -> Option<usize> {
         self.objects.iter().position(|o| &o.id == id)
     }
+    #[must_use]
     pub fn get(&self, id: &Id) -> Option<&Object> {
         self.objects.iter().find(|o| &o.id == id)
     }
+    #[must_use]
     pub fn layer(&self, id: &Id) -> Option<&Layer> {
         self.layers.iter().find(|l| &l.id == id)
     }
+    #[must_use]
     pub fn is_visible(&self, o: &Object) -> bool {
         self.layer(&o.layer).is_none_or(|l| l.visible)
     }
+    #[must_use]
     pub fn is_locked(&self, o: &Object) -> bool {
         o.locked || self.layer(&o.layer).is_some_and(|l| l.locked)
     }
     /// Ids of the objects whose group is touched by `ids`.
+    #[must_use]
     pub fn expand_groups(&self, ids: &[Id]) -> Vec<Id> {
         let groups: Vec<&Id> = self.objects.iter().filter(|o| ids.contains(&o.id)).filter_map(|o| o.group.as_ref()).collect();
         self.objects.iter().filter(|o| ids.contains(&o.id) || o.group.as_ref().is_some_and(|g| groups.contains(&g))).map(|o| o.id.clone()).collect()
@@ -562,6 +591,7 @@ pub enum BgPreset {
 
 impl BgPreset {
     pub const ALL: [BgPreset; 6] = [BgPreset::White, BgPreset::Cream, BgPreset::Gray, BgPreset::Slate, BgPreset::Black, BgPreset::Green];
+    #[must_use]
     pub fn rgb(self) -> (u8, u8, u8) {
         match self {
             BgPreset::White => (0xff, 0xff, 0xff),
@@ -572,13 +602,16 @@ impl BgPreset {
             BgPreset::Green => (0x1e, 0x3a, 0x31),
         }
     }
+    #[must_use]
     pub fn is_dark(self) -> bool {
         matches!(self, BgPreset::Slate | BgPreset::Black | BgPreset::Green)
     }
+    #[must_use]
     pub fn hex(self) -> String {
         let (r, g, b) = self.rgb();
         format!("#{r:02x}{g:02x}{b:02x}")
     }
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             BgPreset::White => "White",
@@ -590,6 +623,7 @@ impl BgPreset {
         }
     }
     /// Preset closest to any color.
+    #[must_use]
     pub fn nearest(rgb: (u8, u8, u8)) -> BgPreset {
         let d = |p: BgPreset| {
             let c = p.rgb();
@@ -658,9 +692,11 @@ impl Default for Document {
 }
 
 impl Document {
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self { name: name.to_owned(), background: Background::default(), pages: vec![Page::new("Page 1")], assets: BTreeMap::new() }
     }
+    #[must_use]
     pub fn page(&self, id: &Id) -> Option<&Page> {
         self.pages.iter().find(|p| &p.id == id)
     }
@@ -686,6 +722,7 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::num;
     use crate::text::ApproxMeasurer;
 
     #[test]
@@ -724,7 +761,7 @@ mod tests {
         struct Wide;
         impl Measurer for Wide {
             fn width(&self, s: &str, _: FontFamily, size: f64, _: bool) -> f64 {
-                s.chars().count() as f64 * size * 0.6
+                num::f64_of(s.chars().count()) * size * 0.6
             }
         }
         let b = BoxObj { geom: BoxGeom::Diamond, frame: Frame::new(0.0, 0.0, 160.0, 110.0), label: Label::new("Diamond", 20.0, Align::Center), lang: None };

@@ -5,8 +5,9 @@ use crate::i18n::t;
 use crate::render::{Cam, Renderer};
 use eframe::egui::{self, Color32, CursorIcon, PointerButton, Pos2, Sense, Shape, Stroke, vec2};
 use inkboard_core::geom::{Frame, Pt, Rect};
+use inkboard_core::num;
 use inkboard_core::transform::{Handle, constrain_angle, resize_frame, resize_rect, rotation_toward, scale_objects, snap_angle, snap_point};
-use inkboard_core::*;
+use inkboard_core::{Align, Arrowhead, BoxGeom, Connector, Dash, End, Id, ImageObj, Kind, Label, Object, Page, PenObj, Style, Table, View, style};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
@@ -159,8 +160,8 @@ impl App {
         p.objects.iter().filter(|o| self.sel.contains(&o.id) && !p.is_locked(o)).cloned().collect()
     }
 
-    fn select_with_groups(&mut self, ids: Vec<Id>) {
-        self.sel = self.ed.page().expand_groups(&ids);
+    fn select_with_groups(&mut self, ids: &[Id]) {
+        self.sel = self.ed.page().expand_groups(ids);
     }
 
     fn selection_box(&self) -> Option<SelBox> {
@@ -276,35 +277,32 @@ impl App {
             return;
         }
         let tol = 6.0 / f64::from(cam.zoom);
-        match self.pick_at(w, tol) {
-            Some(i) => {
-                let o = self.ed.page().objects[i].clone();
-                if shift {
-                    let ids = self.ed.page().expand_groups(std::slice::from_ref(&o.id));
-                    if self.sel.contains(&o.id) {
-                        self.sel.retain(|s| !ids.contains(s));
-                    } else {
-                        self.sel.extend(ids);
-                    }
-                    return;
+        if let Some(i) = self.pick_at(w, tol) {
+            let o = self.ed.page().objects[i].clone();
+            if shift {
+                let ids = self.ed.page().expand_groups(std::slice::from_ref(&o.id));
+                if self.sel.contains(&o.id) {
+                    self.sel.retain(|s| !ids.contains(s));
+                } else {
+                    self.sel.extend(ids);
                 }
-                let was = self.sel.contains(&o.id);
-                if !was {
-                    self.select_with_groups(vec![o.id.clone()]);
-                }
-                let mut orig = self.editable_selection();
-                if alt && !orig.is_empty() {
-                    let ids: Vec<Id> = orig.iter().map(|o| o.id.clone()).collect();
-                    self.sel = self.ed.duplicate(&ids, Pt::ZERO);
-                    orig = self.editable_selection();
-                }
-                self.drag = Some(Drag::Move { start: w, orig, moved: false, collapse_to: was.then_some(o.id) });
+                return;
             }
-            None => {
-                let base = if shift { self.sel.clone() } else { Vec::new() };
-                self.sel = base.clone();
-                self.drag = Some(Drag::Marquee { start: w, base });
+            let was = self.sel.contains(&o.id);
+            if !was {
+                self.select_with_groups(std::slice::from_ref(&o.id));
             }
+            let mut orig = self.editable_selection();
+            if alt && !orig.is_empty() {
+                let ids: Vec<Id> = orig.iter().map(|o| o.id.clone()).collect();
+                self.sel = self.ed.duplicate(&ids, Pt::ZERO);
+                orig = self.editable_selection();
+            }
+            self.drag = Some(Drag::Move { start: w, orig, moved: false, collapse_to: was.then_some(o.id) });
+        } else {
+            let base = if shift { self.sel.clone() } else { Vec::new() };
+            self.sel.clone_from(&base);
+            self.drag = Some(Drag::Marquee { start: w, base });
         }
     }
 
@@ -315,7 +313,7 @@ impl App {
             Tool::Select => self.press_select(cam, screen, w, shift, alt),
             Tool::Hand => self.drag = Some(Drag::Pan { from: screen, view: self.ed.page().view }),
             Tool::Pen | Tool::Highlighter => {
-                self.drag = Some(Drag::Draw { pts: vec![w], pressures: vec![self.pen_force.unwrap_or(0.5)], has_force: self.pen_force.is_some() })
+                self.drag = Some(Drag::Draw { pts: vec![w], pressures: vec![self.pen_force.unwrap_or(0.5)], has_force: self.pen_force.is_some() });
             }
             Tool::Vote => self.insert_vote_dot(w),
             Tool::Laser => {}
@@ -333,14 +331,14 @@ impl App {
 
     fn erase_at(&mut self, a: Pt, b: Pt, zoom: f64) {
         let tol = 8.0 / zoom;
-        let n = ((a.dist(b) / (tol * 0.8)).ceil() as usize).max(1);
+        let n = num::to_usize((a.dist(b) / (tol * 0.8)).ceil()).max(1);
         let mut found: Vec<Id> = Vec::new();
         for i in 0..=n {
-            let p = a.lerp(b, i as f64 / n as f64);
+            let p = a.lerp(b, num::f64_of(i) / num::f64_of(n));
             if let Some(idx) = self.pick_at(p, tol) {
-                let o = &self.ed.page().objects[idx];
-                if !self.ed.page().is_locked(o) {
-                    found.push(o.id.clone());
+                let obj = &self.ed.page().objects[idx];
+                if !self.ed.page().is_locked(obj) {
+                    found.push(obj.id.clone());
                 }
             }
         }
@@ -355,6 +353,78 @@ impl App {
 
     /* ----------------------------------------------- Pendant le geste */
 
+    fn move_objects(&mut self, orig: &[Object], start: Pt, w: Pt, shift: bool) {
+        let mut d = w - start;
+        if shift {
+            if d.x.abs() > d.y.abs() { d.y = 0.0 } else { d.x = 0.0 }
+        }
+        if self.snap
+            && let Some(r) = orig.iter().map(|o| self.ed.page().bounds(o)).reduce(|a, b| a.union(&b))
+        {
+            let g = f64::from(crate::render::GRID);
+            let s = snap_point(Pt::new(r.x + d.x, r.y + d.y), g);
+            d = Pt::new(s.x - r.x, s.y - r.y);
+        }
+        let moved_objs: Vec<Object> = orig
+            .iter()
+            .map(|o| {
+                let mut c = o.clone();
+                c.translate(d);
+                c
+            })
+            .collect();
+        self.set_live(&moved_objs);
+    }
+
+    fn resize_object(&mut self, first: &Object, orig_frame: &Frame, handle: Handle, w: Pt, shift: bool) {
+        let ratio = shift || matches!(&first.kind, Kind::Image(_)) || matches!(&first.kind, Kind::Box(b) if b.geom == BoxGeom::Text);
+        let nf = resize_frame(orig_frame, handle, w, ratio, MIN_SIZE);
+        let mut o = first.clone();
+        match &mut o.kind {
+            Kind::Box(b) => {
+                b.frame = nf;
+                if b.geom == BoxGeom::Text {
+                    b.label.size = (b.label.size * nf.h / orig_frame.h.max(1.0)).max(6.0);
+                    b.fit(&self.measurer);
+                    b.frame.x = nf.x;
+                    b.frame.y = nf.y;
+                }
+            }
+            Kind::Image(i) => i.frame = nf,
+            Kind::Table(t) => {
+                let (sx, sy) = (nf.w / orig_frame.w.max(1.0), nf.h / orig_frame.h.max(1.0));
+                if let Kind::Table(ot) = &first.kind {
+                    t.col_w = ot.col_w.iter().map(|c| (c * sx).max(20.0)).collect();
+                    t.row_h = ot.row_h.iter().map(|r| (r * sy).max(16.0)).collect();
+                }
+                t.origin = Pt::new(nf.x, nf.y);
+            }
+            _ => {}
+        }
+        self.set_live(&[o]);
+    }
+
+    fn rotate_objects(&mut self, orig: &[Object], center: Pt, a0: f64, w: Pt, shift: bool) {
+        let a = rotation_toward(center, w);
+        let mut da = a - a0;
+        if shift {
+            let base = match orig {
+                [o] => o.frame().map_or(0.0, |f| f.angle),
+                _ => 0.0,
+            };
+            da = snap_angle(base + da, std::f64::consts::PI / 12.0) - base;
+        }
+        let objs: Vec<Object> = orig
+            .iter()
+            .map(|o| {
+                let mut c = o.clone();
+                c.rotate_about(center, da);
+                c
+            })
+            .collect();
+        self.set_live(&objs);
+    }
+
     fn move_drag(&mut self, cam: &Cam, w: Pt, shift: bool, alt: bool) {
         let Some(drag) = self.drag.take() else { return };
         let zoom = f64::from(cam.zoom);
@@ -365,57 +435,13 @@ impl App {
                     return;
                 }
                 moved = true;
-                let _ = alt;
-                let mut d = w - start;
-                if shift {
-                    if d.x.abs() > d.y.abs() { d.y = 0.0 } else { d.x = 0.0 }
-                }
-                if self.snap
-                    && let Some(r) = orig.iter().map(|o| self.ed.page().bounds(o)).reduce(|a, b| a.union(&b))
-                {
-                    let g = f64::from(crate::render::GRID);
-                    let s = snap_point(Pt::new(r.x + d.x, r.y + d.y), g);
-                    d = Pt::new(s.x - r.x, s.y - r.y);
-                }
-                let moved_objs: Vec<Object> = orig
-                    .iter()
-                    .map(|o| {
-                        let mut c = o.clone();
-                        c.translate(d);
-                        c
-                    })
-                    .collect();
-                self.set_live(&moved_objs);
+                self.move_objects(&orig, start, w, shift);
                 Drag::Move { start, orig, moved, collapse_to }
             }
             Drag::Resize { handle, orig, orig_frame, orig_rect, single_frame } => {
                 if single_frame {
                     if let Some(first) = orig.first() {
-                        let ratio = shift || matches!(&first.kind, Kind::Image(_)) || matches!(&first.kind, Kind::Box(b) if b.geom == BoxGeom::Text);
-                        let nf = resize_frame(&orig_frame, handle, w, ratio, MIN_SIZE);
-                        let mut o = first.clone();
-                        match &mut o.kind {
-                            Kind::Box(b) => {
-                                b.frame = nf;
-                                if b.geom == BoxGeom::Text {
-                                    b.label.size = (b.label.size * nf.h / orig_frame.h.max(1.0)).max(6.0);
-                                    b.fit(&self.measurer);
-                                    b.frame.x = nf.x;
-                                    b.frame.y = nf.y;
-                                }
-                            }
-                            Kind::Image(i) => i.frame = nf,
-                            Kind::Table(t) => {
-                                let (sx, sy) = (nf.w / orig_frame.w.max(1.0), nf.h / orig_frame.h.max(1.0));
-                                if let Kind::Table(ot) = &first.kind {
-                                    t.col_w = ot.col_w.iter().map(|c| (c * sx).max(20.0)).collect();
-                                    t.row_h = ot.row_h.iter().map(|r| (r * sy).max(16.0)).collect();
-                                }
-                                t.origin = Pt::new(nf.x, nf.y);
-                            }
-                            _ => {}
-                        }
-                        self.set_live(&[o]);
+                        self.resize_object(first, &orig_frame, handle, w, shift);
                     }
                 } else {
                     let nr = resize_rect(orig_rect, handle, w, shift, MIN_SIZE);
@@ -426,24 +452,7 @@ impl App {
                 Drag::Resize { handle, orig, orig_frame, orig_rect, single_frame }
             }
             Drag::Rotate { center, a0, orig } => {
-                let a = rotation_toward(center, w);
-                let mut da = a - a0;
-                if shift {
-                    let base = match orig.as_slice() {
-                        [o] => o.frame().map_or(0.0, |f| f.angle),
-                        _ => 0.0,
-                    };
-                    da = snap_angle(base + da, std::f64::consts::PI / 12.0) - base;
-                }
-                let objs: Vec<Object> = orig
-                    .iter()
-                    .map(|o| {
-                        let mut c = o.clone();
-                        c.rotate_about(center, da);
-                        c
-                    })
-                    .collect();
-                self.set_live(&objs);
+                self.rotate_objects(&orig, center, a0, w, shift);
                 Drag::Rotate { center, a0, orig }
             }
             Drag::Endpoint { orig, is_start } => {
@@ -496,7 +505,7 @@ impl App {
                 Drag::Draw { pts, pressures, has_force }
             }
             Drag::Create { tool, start, start_target } => {
-                self.draft = self.make_draft(tool, start, start_target.clone(), w, shift, alt);
+                self.draft = self.make_draft(tool, start, start_target.as_ref(), w, shift, alt);
                 Drag::Create { tool, start, start_target }
             }
             Drag::Erase { hit, last } => {
@@ -512,12 +521,12 @@ impl App {
         self.drag = Some(drag);
     }
 
-    fn make_draft(&self, tool: Tool, start: Pt, start_target: Option<Id>, w: Pt, shift: bool, alt: bool) -> Option<Object> {
+    fn make_draft(&self, tool: Tool, start: Pt, start_target: Option<&Id>, w: Pt, shift: bool, alt: bool) -> Option<Object> {
         let cur = if self.snap { snap_point(w, f64::from(crate::render::GRID)) } else { w };
         match tool {
             Tool::Line | Tool::Arrow => {
-                let target = self.ed.page().attach_target(w, 4.0, start_target.as_slice());
-                let s = start_target.clone().map_or(End::free(start), End::bound);
+                let target = self.ed.page().attach_target(w, 4.0, start_target.map(std::slice::from_ref).unwrap_or_default());
+                let s = start_target.cloned().map_or(End::free(start), End::bound);
                 let end = match target {
                     Some(t) => End::bound(t),
                     None => End::free(if shift { constrain_angle(start, cur, std::f64::consts::PI / 12.0) } else { cur }),
@@ -571,7 +580,7 @@ impl App {
                 if moved {
                     self.commit_live(&orig);
                 } else if let (Some(id), false) = (collapse_to, shift) {
-                    self.select_with_groups(vec![id]);
+                    self.select_with_groups(&[id]);
                 }
             }
             Drag::Resize { orig, .. } | Drag::Rotate { orig, .. } => self.commit_live(&orig),
@@ -610,12 +619,13 @@ impl App {
         let new_id: Option<Id> = match tool {
             Tool::Line | Tool::Arrow => {
                 let target = self.ed.page().attach_target(w, 4.0, start_target.as_slice());
-                let s = start_target.clone().map_or(End::free(start), End::bound);
+                let had_start = start_target.is_some();
+                let s = start_target.map_or(End::free(start), End::bound);
                 let e = match target.clone() {
                     Some(t) => End::bound(t),
                     None => End::free(if shift { constrain_angle(start, end_pt, std::f64::consts::PI / 12.0) } else { end_pt }),
                 };
-                (dragged || (start_target.is_some() && target.is_some())).then(|| self.ed.insert(self.connector_object(tool, s, e)))
+                (dragged || (had_start && target.is_some())).then(|| self.ed.insert(self.connector_object(tool, s, e)))
             }
             Tool::Table => {
                 let t = Table::new(Pt::new(start.x - 210.0, start.y - 66.0), 3, 3);
@@ -677,12 +687,11 @@ impl App {
             let ext = f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
             // a vector image stays sharp at any size: it may be shown larger than its natural size (an icon-sized SVG is enlarged)
             let (w, h, mime, max_k) = if ext.as_deref() == Some("svg") {
-                match std::str::from_utf8(&bytes).ok().and_then(inkboard_icons::svg_dimensions).filter(|(w, h)| *w > 0.0 && *h > 0.0) {
-                    Some((w, h)) => (w, h, "image/svg+xml", 50.0),
-                    None => {
-                        self.toast(&t("Unreadable image"));
-                        continue;
-                    }
+                if let Some((w, h)) = std::str::from_utf8(&bytes).ok().and_then(inkboard_icons::svg_dimensions).filter(|(w, h)| *w > 0.0 && *h > 0.0) {
+                    (w, h, "image/svg+xml", 50.0)
+                } else {
+                    self.toast(&t("Unreadable image"));
+                    continue;
                 }
             } else {
                 let Ok(img) = image::load_from_memory(&bytes) else {
@@ -699,7 +708,7 @@ impl App {
             };
             let k = (480.0 / w).min(360.0 / h).min(max_k);
             let aid = self.ed.doc.add_asset(mime, bytes);
-            let off = 24.0 * i as f64;
+            let off = 24.0 * num::f64_of(i);
             let frame = Frame::new(at.x - w * k / 2.0 + off, at.y - h * k / 2.0 + off, w * k, h * k);
             ids.push(self.ed.insert(Object::new(
                 Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: false }),
@@ -718,61 +727,7 @@ pub fn is_image_file(f: &std::path::Path) -> bool {
     f.extension().and_then(|e| e.to_str()).is_some_and(|e| ["png", "jpg", "jpeg", "gif", "webp", "svg"].contains(&e.to_ascii_lowercase().as_str()))
 }
 
-/// Draws the canvas and handles the user's input.
-pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
-    let rect = ui.available_rect_before_wrap();
-    let (resp, painter) = ui.allocate_painter(rect.size(), Sense::click_and_drag());
-    app.canvas_size = (rect.width(), rect.height());
-    app.canvas_rect = rect;
-    if app.fit_pending {
-        app.fit_view(false);
-        app.fit_pending = false;
-    }
-    if app.fit_selection_next {
-        app.fit_view(true);
-        app.fit_selection_next = false;
-    }
-    let ctx = ui.ctx().clone();
-    app.refresh_caches();
-    let view = app.ed.page().view;
-    let mut cam = Cam { origin: rect.min + vec2(view.x as f32, view.y as f32), zoom: view.zoom as f32 };
-
-    // ---- zoom / scrolling
-    let (scroll, zoom_d, mods, ptr) = ctx.input(|i| (i.raw_scroll_delta, i.zoom_delta(), i.modifiers, i.pointer.hover_pos()));
-    if let (true, Some(p)) = (resp.hovered(), ptr) {
-        let factor = if (zoom_d - 1.0).abs() > 1e-4 {
-            zoom_d
-        } else if scroll.y != 0.0 && !mods.shift && !mods.alt {
-            (scroll.y * 0.0015).exp()
-        } else {
-            1.0
-        };
-        if (factor - 1.0).abs() > 1e-4 {
-            let nz = (cam.zoom * factor).clamp(0.05, 8.0);
-            let k = nz / cam.zoom;
-            let o = p - (p - cam.origin) * k;
-            app.set_view(View { x: f64::from(o.x - rect.min.x), y: f64::from(o.y - rect.min.y), zoom: f64::from(nz) });
-        } else if mods.shift || mods.alt {
-            let d = if mods.shift { vec2(scroll.y, 0.0) } else { vec2(0.0, scroll.y) } + vec2(scroll.x, 0.0);
-            let v = app.ed.page().view;
-            app.set_view(View { x: v.x + f64::from(d.x), y: v.y + f64::from(d.y), zoom: v.zoom });
-        }
-        let v = app.ed.page().view;
-        cam = Cam { origin: rect.min + vec2(v.x as f32, v.y as f32), zoom: v.zoom as f32 };
-    }
-
-    // ---- pen pressure: touch events carry the force (0..1) when the hardware provides it
-    ctx.input(|i| {
-        for e in &i.events {
-            if let egui::Event::Touch { phase, force, .. } = e {
-                match phase {
-                    egui::TouchPhase::Start | egui::TouchPhase::Move => app.pen_force = force.or(app.pen_force),
-                    egui::TouchPhase::End | egui::TouchPhase::Cancel => app.pen_force = None,
-                }
-            }
-        }
-    });
-
+fn canvas_pointer(app: &mut App, ctx: &egui::Context, resp: &egui::Response, rect: egui::Rect, cam: &mut Cam) {
     // ---- pointer
     let (pressed, down, released, middle, secondary, dbl, pos, alt, shift) = ctx.input(|i| {
         (
@@ -795,7 +750,7 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
             if middle || app.space_down || app.tool == Tool::Hand {
                 app.drag = Some(Drag::Pan { from: sp, view: app.ed.page().view });
             } else {
-                app.press_tool(&cam, sp, w, shift, alt);
+                app.press_tool(cam, sp, w, shift, alt);
             }
         } else if pressed && editing_now && inside {
             app.commit_editing();
@@ -809,35 +764,35 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
         {
             let id = app.ed.page().objects[i].id.clone();
             if !app.sel.contains(&id) {
-                app.select_with_groups(vec![id]);
+                app.select_with_groups(&[id]);
             }
         }
-        if dbl && inside && (app.drag.is_none() || matches!(app.drag, Some(Drag::Move { moved: false, .. }) | Some(Drag::Marquee { .. }))) {
+        if dbl && inside && (app.drag.is_none() || matches!(app.drag, Some(Drag::Move { moved: false, .. } | Drag::Marquee { .. }))) {
             app.drag = None;
-            handle_double_click(app, &cam, w);
+            handle_double_click(app, cam, w);
         }
         if let Some(Drag::Pan { from, view }) = &app.drag {
             let d = sp - *from;
             let v = *view;
             if down || ctx.input(|i| i.pointer.button_down(PointerButton::Middle)) {
                 app.set_view(View { x: v.x + f64::from(d.x), y: v.y + f64::from(d.y), zoom: v.zoom });
-                cam = Cam { origin: rect.min + vec2((v.x + f64::from(d.x)) as f32, (v.y + f64::from(d.y)) as f32), zoom: cam.zoom };
+                *cam = Cam { origin: rect.min + vec2(num::f32(v.x + f64::from(d.x)), num::f32(v.y + f64::from(d.y))), zoom: cam.zoom };
             }
         }
         if app.drag.is_some() && !matches!(app.drag, Some(Drag::Pan { .. })) && down {
-            app.move_drag(&cam, w, shift, alt);
+            app.move_drag(cam, w, shift, alt);
         }
         if released || (!down && !ctx.input(|i| i.pointer.button_down(PointerButton::Middle)) && app.drag.is_some()) {
             if matches!(app.drag, Some(Drag::Pan { .. })) {
                 app.drag = None;
             } else {
-                app.release(&cam, w, shift);
+                app.release(cam, w, shift);
             }
         }
         // cursor
         if inside && app.drag.is_none() && app.editing.is_none() {
             let icon = match app.tool {
-                Tool::Select => match app.hit_handle(&cam, sp) {
+                Tool::Select => match app.hit_handle(cam, sp) {
                     Some(HandleKind::Resize(h)) => match h {
                         Handle::N | Handle::S => CursorIcon::ResizeVertical,
                         Handle::E | Handle::W => CursorIcon::ResizeHorizontal,
@@ -860,7 +815,64 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
             ctx.set_cursor_icon(CursorIcon::Grabbing);
         }
     }
+}
 
+/// Draws the canvas and handles the user's input.
+pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
+    let rect = ui.available_rect_before_wrap();
+    let (resp, painter) = ui.allocate_painter(rect.size(), Sense::click_and_drag());
+    app.canvas_size = (rect.width(), rect.height());
+    app.canvas_rect = rect;
+    if app.fit_pending {
+        app.fit_view(false);
+        app.fit_pending = false;
+    }
+    if app.fit_selection_next {
+        app.fit_view(true);
+        app.fit_selection_next = false;
+    }
+    let ctx = ui.ctx().clone();
+    app.refresh_caches();
+    let view = app.ed.page().view;
+    let mut cam = Cam { origin: rect.min + vec2(num::f32(view.x), num::f32(view.y)), zoom: num::f32(view.zoom) };
+
+    // ---- zoom / scrolling
+    let (scroll, zoom_d, mods, ptr) = ctx.input(|i| (i.raw_scroll_delta, i.zoom_delta(), i.modifiers, i.pointer.hover_pos()));
+    if let (true, Some(p)) = (resp.hovered(), ptr) {
+        let factor = if (zoom_d - 1.0).abs() > 1e-4 {
+            zoom_d
+        } else if scroll.y != 0.0 && !mods.shift && !mods.alt {
+            (scroll.y * 0.0015).exp()
+        } else {
+            1.0
+        };
+        if (factor - 1.0).abs() > 1e-4 {
+            let nz = (cam.zoom * factor).clamp(0.05, 8.0);
+            let k = nz / cam.zoom;
+            let o = p - (p - cam.origin) * k;
+            app.set_view(View { x: f64::from(o.x - rect.min.x), y: f64::from(o.y - rect.min.y), zoom: f64::from(nz) });
+        } else if mods.shift || mods.alt {
+            let d = if mods.shift { vec2(scroll.y, 0.0) } else { vec2(0.0, scroll.y) } + vec2(scroll.x, 0.0);
+            let v = app.ed.page().view;
+            app.set_view(View { x: v.x + f64::from(d.x), y: v.y + f64::from(d.y), zoom: v.zoom });
+        }
+        let v = app.ed.page().view;
+        cam = Cam { origin: rect.min + vec2(num::f32(v.x), num::f32(v.y)), zoom: num::f32(v.zoom) };
+    }
+
+    // ---- pen pressure: touch events carry the force (0..1) when the hardware provides it
+    ctx.input(|i| {
+        for e in &i.events {
+            if let egui::Event::Touch { phase, force, .. } = e {
+                match phase {
+                    egui::TouchPhase::Start | egui::TouchPhase::Move => app.pen_force = force.or(app.pen_force),
+                    egui::TouchPhase::End | egui::TouchPhase::Cancel => app.pen_force = None,
+                }
+            }
+        }
+    });
+
+    canvas_pointer(app, &ctx, &resp, rect, &mut cam);
     // ---- drawing
     let dark = app.ed.doc.background.preset.is_dark();
     let (r, g, b) = app.ed.doc.background.preset.rgb();
@@ -904,34 +916,27 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
 
 fn handle_double_click(app: &mut App, cam: &Cam, w: Pt) {
     let tol = 6.0 / f64::from(cam.zoom);
-    match app.pick_at(w, tol) {
-        Some(i) => {
-            let o = app.ed.page().objects[i].clone();
-            match &o.kind {
-                Kind::Box(_) => {
-                    app.sel = vec![o.id.clone()];
-                    app.start_editing(&o.id, None);
-                }
-                Kind::Table(t) => {
-                    let cell = t.cell_at(w);
-                    app.sel = vec![o.id.clone()];
-                    app.start_editing(&o.id, cell);
-                }
-                Kind::Connector(_) => {
-                    app.sel = vec![o.id.clone()];
-                    app.start_editing(&o.id, None);
-                }
-                _ => {}
+    if let Some(i) = app.pick_at(w, tol) {
+        let o = app.ed.page().objects[i].clone();
+        match &o.kind {
+            Kind::Box(_) | Kind::Connector(_) => {
+                app.sel = vec![o.id.clone()];
+                app.start_editing(&o.id, None);
             }
+            Kind::Table(t) => {
+                let cell = t.cell_at(w);
+                app.sel = vec![o.id.clone()];
+                app.start_editing(&o.id, cell);
+            }
+            _ => {}
         }
-        None => {
-            let t = app.box_object(Tool::Text, Rect::new(w.x, w.y - app.label.size * 0.65, 12.0, app.label.size * 1.3));
-            let id = app.ed.insert(t);
-            app.sel = vec![id.clone()];
-            app.start_editing(&id, None);
-            if let Some(e) = &mut app.editing {
-                e.fresh = true;
-            }
+    } else {
+        let t = app.box_object(Tool::Text, Rect::new(w.x, w.y - app.label.size * 0.65, 12.0, app.label.size * 1.3));
+        let id = app.ed.insert(t);
+        app.sel = vec![id.clone()];
+        app.start_editing(&id, None);
+        if let Some(e) = &mut app.editing {
+            e.fresh = true;
         }
     }
 }
@@ -958,7 +963,7 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
     }
     // preview of a connector being created / edited: target aimed at
     let hover_target = match (&app.drag, app.ed.page()) {
-        (Some(Drag::Create { tool: Tool::Line | Tool::Arrow, .. }), _) | (Some(Drag::Endpoint { .. }), _) => {
+        (Some(Drag::Create { tool: Tool::Line | Tool::Arrow, .. } | Drag::Endpoint { .. }), _) => {
             let p = painter.ctx().input(|i| i.pointer.hover_pos());
             p.and_then(|p| app.ed.page().attach_target(cam.w(p), 4.0 / f64::from(cam.zoom), &[]))
         }
@@ -970,47 +975,7 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         let pts: Vec<Pos2> = f.corners().iter().map(|p| cam.s(*p)).collect();
         painter.add(Shape::closed_line(pts, Stroke::new(2.0_f32, accent)));
     }
-    // selection
-    let page = app.ed.page();
-    for o in page.objects.iter().filter(|o| app.sel.contains(&o.id)) {
-        let corners: Vec<Pos2> = match o.frame() {
-            Some(f) => f.corners().iter().map(|p| cam.s(*p)).collect(),
-            None => {
-                let r = cam.rect_s(page.bounds(o));
-                vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()]
-            }
-        };
-        let locked = page.is_locked(o);
-        painter.add(Shape::closed_line(corners, Stroke::new(1.5_f32, if locked { Color32::GRAY } else { accent })));
-    }
-    if app.sel.len() > 1
-        && let Some(r) = page.bounds_of(&app.sel)
-    {
-        let sr = cam.rect_s(r);
-        painter.add(Shape::dashed_line(
-            &[sr.left_top(), sr.right_top(), sr.right_bottom(), sr.left_bottom(), sr.left_top()],
-            Stroke::new(1.0_f32, accent),
-            5.0,
-            4.0,
-        ));
-    }
-    for (kind, p) in app.handles(cam) {
-        if matches!(kind, HandleKind::Via(_)) {
-            painter.circle(p, 5.0, accent, Stroke::new(1.5_f32, Color32::WHITE));
-        } else if matches!(kind, HandleKind::Mid(_)) {
-            painter.circle(p, 4.0, accent.gamma_multiply(0.25), Stroke::new(1.0_f32, accent));
-        } else if matches!(kind, HandleKind::Rotate | HandleKind::Start | HandleKind::End) {
-            painter.circle(p, 5.5, Color32::WHITE, Stroke::new(1.5_f32, accent));
-        } else {
-            painter.rect(egui::Rect::from_center_size(p, vec2(9.0, 9.0)), 1.0, Color32::WHITE, Stroke::new(1.5_f32, accent), egui::StrokeKind::Middle);
-        }
-    }
-    if let Some(Drag::Marquee { start, .. }) = &app.drag
-        && let Some(p) = painter.ctx().input(|i| i.pointer.hover_pos())
-    {
-        let r = egui::Rect::from_two_pos(cam.s(*start), p);
-        painter.rect(r, 0.0, accent.gamma_multiply(0.12), Stroke::new(1.0_f32, accent), egui::StrokeKind::Middle);
-    }
+    draw_selection(app, painter, cam, accent);
     // stroke being drawn
     if let Some(Drag::Draw { pts, pressures, has_force }) = &app.drag {
         let hl = app.tool == Tool::Highlighter;
@@ -1045,15 +1010,58 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
     }
 }
 
+/// Selection outlines, handles and the rubber band.
+fn draw_selection(app: &App, painter: &egui::Painter, cam: &Cam, accent: Color32) {
+    let page = app.ed.page();
+    for o in page.objects.iter().filter(|o| app.sel.contains(&o.id)) {
+        let corners: Vec<Pos2> = if let Some(f) = o.frame() {
+            f.corners().iter().map(|p| cam.s(*p)).collect()
+        } else {
+            let r = cam.rect_s(page.bounds(o));
+            vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()]
+        };
+        let locked = page.is_locked(o);
+        painter.add(Shape::closed_line(corners, Stroke::new(1.5_f32, if locked { Color32::GRAY } else { accent })));
+    }
+    if app.sel.len() > 1
+        && let Some(r) = page.bounds_of(&app.sel)
+    {
+        let sr = cam.rect_s(r);
+        painter.add(Shape::dashed_line(
+            &[sr.left_top(), sr.right_top(), sr.right_bottom(), sr.left_bottom(), sr.left_top()],
+            Stroke::new(1.0_f32, accent),
+            5.0,
+            4.0,
+        ));
+    }
+    for (kind, p) in app.handles(cam) {
+        if matches!(kind, HandleKind::Via(_)) {
+            painter.circle(p, 5.0, accent, Stroke::new(1.5_f32, Color32::WHITE));
+        } else if matches!(kind, HandleKind::Mid(_)) {
+            painter.circle(p, 4.0, accent.gamma_multiply(0.25), Stroke::new(1.0_f32, accent));
+        } else if matches!(kind, HandleKind::Rotate | HandleKind::Start | HandleKind::End) {
+            painter.circle(p, 5.5, Color32::WHITE, Stroke::new(1.5_f32, accent));
+        } else {
+            painter.rect(egui::Rect::from_center_size(p, vec2(9.0, 9.0)), 1.0, Color32::WHITE, Stroke::new(1.5_f32, accent), egui::StrokeKind::Middle);
+        }
+    }
+    if let Some(Drag::Marquee { start, .. }) = &app.drag
+        && let Some(p) = painter.ctx().input(|i| i.pointer.hover_pos())
+    {
+        let r = egui::Rect::from_two_pos(cam.s(*start), p);
+        painter.rect(r, 0.0, accent.gamma_multiply(0.12), Stroke::new(1.0_f32, accent), egui::StrokeKind::Middle);
+    }
+}
+
 /// Lifetime of a point of the laser pointer trail.
 const LASER_LIFE: std::time::Duration = std::time::Duration::from_millis(900);
 
 /// Records the pointer position (laser tool) and draws the fading trail.
-fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, pointer: Option<Pos2>) {
+fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, hover: Option<Pos2>) {
     let now = std::time::Instant::now();
     app.laser.retain(|(_, t)| now.duration_since(*t) < LASER_LIFE);
     if app.tool == Tool::Laser
-        && let Some(p) = pointer
+        && let Some(p) = hover
         && app.laser.last().is_none_or(|(l, _)| l.distance(p) > 1.0)
     {
         app.laser.push((p, now));

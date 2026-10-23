@@ -1,4 +1,4 @@
-//! Windows resources of the executable: icon and version information (Explorer properties, installers, SmartScreen).
+//! Windows resources of the executable: icon and version information (Explorer properties, installers, `SmartScreen`).
 //! No effect on other platforms.
 
 use std::fmt::Write as _;

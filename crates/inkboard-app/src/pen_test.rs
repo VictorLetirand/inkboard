@@ -3,7 +3,9 @@
 
 use crate::i18n::t;
 use eframe::egui;
+use inkboard_core::num;
 use inkboard_pen::{PenSample, PointerKind};
+use std::fmt::Write;
 
 /// Observations accumulated since the start (or the last reset).
 #[derive(Debug, Default)]
@@ -41,7 +43,7 @@ impl PenReport {
                 self.min_pressure = Some(self.min_pressure.map_or(sample.pressure, |m| m.min(sample.pressure)));
                 self.max_pressure = self.max_pressure.max(sample.pressure);
                 if sample.pressure > 0.0 {
-                    self.levels.insert((sample.pressure * 100.0).round() as u32);
+                    self.levels.insert(num::to_u32(f64::from((sample.pressure * 100.0).round())));
                 }
                 self.eraser_seen |= sample.eraser();
                 self.barrel_seen |= sample.barrel();
@@ -74,10 +76,11 @@ impl PenReport {
                 Some(false) => "NO",
                 None => "not tried",
             };
-            s.push_str(&format!("- {name}: {word}\n"));
+            let _ = writeln!(s, "- {name}: {word}");
         }
-        s.push_str(&format!(
-            "Samples: pen {}, mouse {}, touch {}; pressure {:.2}–{:.2}, {} distinct levels; egui: {} force samples (max {:.2})\n",
+        let _ = writeln!(
+            s,
+            "Samples: pen {}, mouse {}, touch {}; pressure {:.2}–{:.2}, {} distinct levels; egui: {} force samples (max {:.2})",
             self.pen_samples,
             self.mouse_samples,
             self.touch_samples,
@@ -86,7 +89,7 @@ impl PenReport {
             self.levels.len(),
             self.egui_force_samples,
             self.egui_max_force
-        ));
+        );
         s
     }
 }
@@ -146,9 +149,9 @@ mod tests {
     #[test]
     fn a_real_pen_session_is_recognized() {
         let mut r = PenReport::default();
-        for i in 0..40u64 {
-            let p = i as f32 / 40.0;
-            r.feed(pen(p, 0, i + 1), Some(p));
+        for i in 0..40u16 {
+            let p = f32::from(i) / 40.0;
+            r.feed(pen(p, 0, u64::from(i) + 1), Some(p));
         }
         r.feed(pen(0.3, PEN_FLAG_BARREL, 100), Some(0.3));
         r.feed(pen(0.3, PEN_FLAG_INVERTED, 101), None);
