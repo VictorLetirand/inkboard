@@ -2710,6 +2710,7 @@ dependencies = [
  "inkboard-core",
  "inkboard-formats",
  "inkboard-icons",
+ "inkboard-session",
  "regex",
  "serde_json",
 ]

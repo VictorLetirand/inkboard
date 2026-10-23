@@ -164,7 +164,7 @@ fn headers_that_declare_huge_bitmaps_are_read_without_decoding() {
     webp.extend([0; 8]);
     assert_eq!(declared_dimensions(&webp), Some((1 << 24, 1 << 24)));
     // all of them are over the bounds the host applies
-    assert!(65_535 > MAX_BITMAP_SIDE && 65_535u64 * 65_535 > MAX_BITMAP_PIXELS);
+    const { assert!(65_535 > MAX_BITMAP_SIDE && 65_535u64 * 65_535 > MAX_BITMAP_PIXELS) };
     // truncated at every length: nothing to say, nothing to panic about
     for full in [png_header(10, 10), gif, jpeg.to_vec(), webp] {
         for n in 0..full.len() {
