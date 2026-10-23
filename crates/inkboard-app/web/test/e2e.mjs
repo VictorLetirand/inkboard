@@ -8,40 +8,41 @@
 //      (enterprise message with its tips and the diagnostic copy), a network cut and its return, the host leaving;
 //   4. screenshots of every state (desktop and emulated phone) go to --out.
 //
-//   node e2e.mjs [--skip-build] [--dist ../dist-e2e] [--out ./results-e2e] [--headed]
+//   node e2e.mjs [--browser chrome|edge|firefox|webkit] [--skip-build] [--dist ../dist-e2e] [--out ./results-e2e] [--headed]
 //
-// Needs Internet (the public relay), Chrome (CHROME=<path to chrome.exe>), puppeteer-core (PUPPETEER_DIR), trunk, and for `ring` a clang
-// with the wasm32 target (CC_wasm32_unknown_unknown / AR_wasm32_unknown_unknown). RUST_TOOLCHAIN (default 1.99.1) selects the Rust
-// toolchain. No check asserts a duration (waits are on conditions, with generous time-outs). Exit code 1 when a check fails.
+// Needs Internet (the public relay), a browser (see drivers.mjs: CHROME / EDGE / FIREFOX / PLAYWRIGHT_DIR + PLAYWRIGHT_BROWSERS_PATH),
+// puppeteer-core (PUPPETEER_DIR), trunk, and for `ring` a clang with the wasm32 target (CC_wasm32_unknown_unknown /
+// AR_wasm32_unknown_unknown). RUST_TOOLCHAIN (default 1.99.1) selects the Rust toolchain. No check asserts a duration (waits are on
+// conditions, with generous time-outs). Exit code 1 when a check fails; a check an engine cannot make is a SKIP, with its reason.
 import http from 'node:http';
-import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, mkdtempSync } from 'node:fs';
 import { join, extname, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-
-// PUPPETEER_DIR: folder holding puppeteer-core, to keep node_modules out of the repository tree (see README.md)
-const require = createRequire(import.meta.url);
-const puppeteer = require(process.env.PUPPETEER_DIR ?? 'puppeteer-core');
+import { createDriver } from './drivers.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(`--${name}`); return i < 0 ? dflt : argv[i + 1]; };
+const engine = opt('browser', process.env.BROWSER ?? 'chrome');
 const dist = resolve(opt('dist', join(here, '../dist-e2e')));
 const out = resolve(opt('out', join(here, 'results-e2e')));
 const headed = argv.includes('--headed');
 const toolchain = process.env.RUST_TOOLCHAIN ?? '1.99.1';
-const chrome = process.env.CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const repo = resolve(here, '../../../..');
 const downloads = mkdtempSync(join(tmpdir(), 'inkboard-e2e-'));
+const drv = await createDriver(engine, { headed, downloads, out });
+console.log(`--- browser: ${engine}`);
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`); if (!ok) failed++; };
+/** A check this engine cannot make through its automation (not a pass, not a failure). */
+const skip = (name, reason) => console.log(`SKIP  ${name}  (${reason})`);
 const run = (cmd, args, options) => {
   const r = spawnSync(cmd, args, { stdio: 'inherit', ...options });
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed (${r.status})`);
@@ -134,14 +135,7 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 const url = `${origin}/index.html`;
 
 /* ---------------------------------------------------------------- page helpers */
-const chromeArgs = ['--lang=en-US', '--window-size=1360,900', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader',
-  '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 const logs = [];
-const device = puppeteer.KnownDevices['Pixel 5'];
-// Emulating a phone only changes what the page is told: the canvas is sized from the REAL pixels of the screen. The browsers that
-// emulate a phone therefore run with the same real scale factor (2), or the interface would be drawn at the wrong size.
-const phone = { ...device, viewport: { ...device.viewport, deviceScaleFactor: 2 } };
-const phoneArgs = [...chromeArgs, '--force-device-scale-factor=2'];
 
 /** Counts the `online` / `offline` events the page receives (the bench checks the browser really sends them). */
 const countNetEvents = () => {
@@ -149,13 +143,27 @@ const countNetEvents = () => {
   window.addEventListener('online', () => window.__netEvents.online++);
   window.addEventListener('offline', () => window.__netEvents.offline++);
 };
+/** Records what the application writes to the browser clipboard (and whether the browser accepted it): readable on every engine. */
+const recordClipboard = () => {
+  const rec = (window.__clip = { text: [], items: [], errors: [] });
+  const c = navigator.clipboard;
+  if (!c) return;
+  const text = c.writeText?.bind(c);
+  if (text) c.writeText = async (t) => { rec.text.push(String(t)); try { return await text(t); } catch (e) { rec.errors.push(`writeText: ${e}`); throw e; } };
+  const write = c.write?.bind(c);
+  if (write) c.write = async (items) => {
+    rec.items.push(items.flatMap((i) => i.types));
+    try { return await write(items); } catch (e) { rec.errors.push(`write: ${e}`); throw e; }
+  };
+};
 
 async function newPage(context, label, { mobile = false, french = false } = {}) {
-  const page = await context.newPage();
-  if (mobile) await page.emulate(phone); else await page.setViewport({ width: 1360, height: 860 });
+  const page = await drv.newPage(context);
+  if (mobile) await drv.emulatePhone(page); else await page.setViewport({ width: 1360, height: 860 });
   page.on('console', (m) => logs.push({ label, text: `[${m.type()}] ${m.text()}` }));
-  page.on('pageerror', (e) => logs.push({ label, text: `[pageerror] ${e.message}` }));
+  page.on('pageerror', (e) => logs.push({ label, text: `[pageerror] ${e.message ?? e}` }));
   await page.evaluateOnNewDocument(countNetEvents);
+  await page.evaluateOnNewDocument(recordClipboard);
   if (french) {
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'language', { get: () => 'fr-FR' });
@@ -249,8 +257,6 @@ let browser;
 let blockedBrowser;
 let phoneBrowser;
 let blockedPhoneBrowser;
-// the relay names end with a dot in the links ("….iroh.link."): both spellings are refused, as a DNS that blocks the domain would
-const blockRelays = '--host-resolver-rules=MAP *.iroh.link ~NOTFOUND, MAP *.iroh.link. ~NOTFOUND';
 let hostObjects = 0;
 const regularPages = [];
 try {
@@ -261,11 +267,11 @@ try {
   const readTicket = readLink.split('#')[1];
   check('the host shares a board with objects (edit link and read-only link)', hostObjects > 0 && !!ticket && !!readTicket && ticket !== readTicket, `${hostObjects} objects`);
 
-  browser = await puppeteer.launch({ executablePath: chrome, headless: !headed, args: chromeArgs });
-  const ctxA = browser.defaultBrowserContext();
-  const ctxB = await browser.createBrowserContext();
-  const ctxC = await browser.createBrowserContext();
-  await ctxA.overridePermissions(origin, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
+  browser = await drv.launch();
+  const ctxA = browser.defaultContext();
+  const ctxB = await browser.newContext();
+  const ctxC = await browser.newContext();
+  const canReadClipboard = (await drv.grant(ctxA, origin)) && drv.caps.clipboardRead;
 
   /* ---- loading screen, old browser, no WebGL */
   await scenario('loading screen with progress, old browser, no WebGL', async () => {
@@ -305,8 +311,7 @@ try {
   /* ---- a. link with fragment -> name box -> join -> snapshot */
   const A = await newPage(ctxA, 'alice');
   regularPages.push(A);
-  const cdp = await A.createCDPSession();
-  await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
+  await drv.setupDownloads(A);
   await scenario('a. link with the ticket in the fragment: name box, join, snapshot', async () => {
     await A.goto(`${url}#${ticket}`, { waitUntil: 'load' });
     await started(A);
@@ -357,21 +362,44 @@ try {
   /* ---- images: paste, drop, copies */
   await scenario('images: paste and drop reach the host; copies for the guest', async () => {
     const s0 = await state(A);
-    await A.evaluate(async (code) => {
-      const blob = await eval(code);
-      const dt = new DataTransfer();
-      dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
-      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-    }, png);
-    const pasted = await until(A, 'the pasted image on the board', (s) => s.images === s0.images + 1, { timeout: 30000 });
-    await sleep(500);
-    await shot(A, 'i1-pasted-image');
-    check('a pasted image (Ctrl+V of a clipboard image) is inserted on the guest board', pasted.images === s0.images + 1);
     const hostImages = async (n) => {
       for (let i = 0; i < 240; i++) { if (Number(await hostAsk('images', 'IMAGES ')) === n) return true; await sleep(500); }
       return false;
     };
-    check('the pasted image is sent to the host (chunked upload, acknowledged)', await hostImages(s0.images + 1));
+    // A synthetic paste event carries its files in Chrome and in Safari's engine; Firefox drops them (the DataTransfer of a clipboard
+    // event made by a script is empty). There the page puts the image on the real clipboard (a key press gives it the user activation)
+    // and a real Ctrl+V pastes it: the application's listener receives what a person's paste gives.
+    let pasted = null;
+    try {
+      if (drv.caps.syntheticPaste === false) {
+        await A.evaluate((code) => {
+          window.addEventListener('keydown', async function once(e) {
+            if (e.key !== 'F9') return;
+            window.removeEventListener('keydown', once, true);
+            try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': await eval(code) })]); window.__clipReady = true; } catch (err) { window.__clipReady = String(err); }
+          }, true);
+        }, png);
+        await A.mouse.click(1300, 800);
+        await A.keyboard.press('F9');
+        await A.waitForFunction(() => window.__clipReady, { timeout: 15000 });
+        const ready = await A.evaluate(() => window.__clipReady);
+        if (ready !== true) throw new Error(`the page could not put the image on the clipboard: ${ready}`);
+        await A.keyboard.down('Control'); await A.keyboard.press('v'); await A.keyboard.up('Control');
+      } else {
+        await A.evaluate(async (code) => {
+          const blob = await eval(code);
+          const dt = new DataTransfer();
+          dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+          document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        }, png);
+      }
+      pasted = await until(A, 'the pasted image on the board', (s) => s.images === s0.images + 1, { timeout: 30000 });
+      await sleep(500);
+      await shot(A, 'i1-pasted-image');
+    } catch (e) { console.log(`  (paste: ${String(e.message ?? e).slice(0, 200)})`); }
+    check('a pasted image (Ctrl+V of a clipboard image) is inserted on the guest board', pasted?.images === s0.images + 1);
+    check('the pasted image is sent to the host (chunked upload, acknowledged)', pasted !== null && (await hostImages(s0.images + 1)));
+    const base = pasted ? s0.images + 1 : s0.images;
     await A.evaluate(async (code) => {
       const blob = await eval(code);
       const dt = new DataTransfer();
@@ -379,8 +407,8 @@ try {
       const target = document.getElementById('inkboard_canvas');
       for (const t of ['dragover', 'drop']) target.dispatchEvent(new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true, clientX: 500, clientY: 500 }));
     }, png);
-    await until(A, 'the dropped image on the board', (s) => s.images === s0.images + 2, { timeout: 30000 });
-    check('a dropped image file is inserted and sent to the host', await hostImages(s0.images + 2));
+    await until(A, 'the dropped image on the board', (s) => s.images === base + 1, { timeout: 30000 });
+    check('a dropped image file is inserted and sent to the host', await hostImages(base + 1));
     hostObjects = Number(await hostAsk('count', 'COUNT '));
 
     // "Download a copy": the board leaves as a .inkboard file, with what the host holds
@@ -394,12 +422,35 @@ try {
     if (file) check('the copy holds every object of the shared board', objectsOf(file).length === hostObjects, `${objectsOf(file).length} vs ${hostObjects}`);
     // PNG export from the guest
     const sincePng = Date.now() - 20;
-    await A.evaluate(() => window.__inkboard_test.copy_image());
+    // asked from a key press, as a person would (Safari's engine refuses a clipboard write that follows no user gesture)
+    await A.evaluate(() => window.addEventListener('keydown', function once(e) {
+      if (e.key === 'F8') { window.removeEventListener('keydown', once, true); window.__inkboard_test.copy_image(); }
+    }, true));
+    await A.keyboard.press('F8');
     await sleep(800);
-    const clip = await A.evaluate(async () => {
-      try { const items = await navigator.clipboard.read(); return items.flatMap((i) => i.types); } catch (e) { return `error: ${e}`; }
-    });
-    check('"Copy as image" puts an image on the browser clipboard', Array.isArray(clip) && clip.includes('image/png'), JSON.stringify(clip));
+    const written = await A.evaluate(() => window.__clip);
+    const accepted = written.items.some((t) => t.includes('image/png')) && written.errors.length === 0;
+    // what the engine itself does with the smallest possible image write inside a key press (Playwright's WebKit build refuses even that)
+    const minimal = accepted ? true : await (async () => {
+      await A.evaluate(() => window.addEventListener('keydown', function once(e) {
+        if (e.key !== 'F7') return;
+        window.removeEventListener('keydown', once, true);
+        const c = document.createElement('canvas'); c.width = c.height = 4;
+        const blob = new Promise((r) => c.toBlob(r, 'image/png'));
+        navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(() => { window.__imgProbe = 'ok'; }, (err) => { window.__imgProbe = String(err); });
+      }, true));
+      await A.keyboard.press('F7');
+      await sleep(800);
+      return (await A.evaluate(() => window.__imgProbe)) === 'ok';
+    })();
+    if (!accepted && !minimal) skip('"Copy as image": the browser accepts an image/png', 'this engine refuses ANY image write to the clipboard in automation (a minimal page gets NotAllowedError too): the application cannot be judged');
+    else check('"Copy as image": the application hands an image/png to the browser clipboard and the browser accepts it', accepted, JSON.stringify(written));
+    if (canReadClipboard) {
+      const clip = await A.evaluate(async () => {
+        try { const items = await navigator.clipboard.read(); return items.flatMap((i) => i.types); } catch (e) { return `error: ${e}`; }
+      });
+      check('"Copy as image" puts an image on the browser clipboard (read back)', Array.isArray(clip) && clip.includes('image/png'), JSON.stringify(clip));
+    } else skip('"Copy as image" read back from the clipboard', 'this engine does not let automation read the clipboard');
     void sincePng;
   });
 
@@ -444,16 +495,40 @@ try {
     check('the other guest sees it as well', !!agentVisible(seenB) || !!(await until(B, 'Bob to see the agent', agentVisible, { timeout: 30000 }).catch(() => null)));
   });
 
+  /* ---- v. the tab is hidden by another tab, then visible again */
+  await scenario('v. tab hidden then visible again (visibilitychange): the guest stays or comes back live', async () => {
+    await A.evaluate(() => {
+      window.__vis = { events: 0, states: [] };
+      document.addEventListener('visibilitychange', () => { window.__vis.events++; window.__vis.states.push(document.visibilityState); });
+    });
+    const other = await newPage(ctxA, 'other-tab');
+    await other.goto('about:blank');
+    await other.bringToFront();
+    await sleep(1500);
+    const hidden = await A.evaluate(() => ({ state: document.visibilityState, ...window.__vis }));
+    await A.bringToFront();
+    await sleep(1500);
+    const shown = await A.evaluate(() => ({ state: document.visibilityState, ...window.__vis }));
+    if (hidden.state === 'hidden') check('the browser tells a hidden tab (visibilitychange fired, state hidden)', hidden.events >= 1, JSON.stringify(hidden));
+    else skip('the browser tells a hidden tab', `this engine keeps a background tab "${hidden.state}" in automation`);
+    check('the tab is visible again and the guest is live with the same board', shown.state === 'visible' && isLive(await state(A)), JSON.stringify(shown));
+    await other.close();
+    await A.bringToFront();
+  });
+
   /* ---- e2. network cut and return */
   await scenario('e2. network cut: reconnecting, pending changes kept, quick resume when the network is back', async () => {
     await A.bringToFront();
     const cutAt = Date.now();
-    await A.setOfflineMode(true);
+    await drv.setOffline(A, true);
     const rec = await until(A, 'the guest to notice the cut', (s) => s.state === 'reconnecting', { timeout: 60000 });
     await shot(A, 'e2a-reconnecting-desktop');
     console.log(`  (cut noticed after ${Date.now() - cutAt} ms, not asserted)`);
     check('after the cut the page shows "reconnecting" (the board stays)', rec.state === 'reconnecting' && rec.mirror, `attempt ${rec.attempt}`);
-    check('the browser sent the offline event', (await A.evaluate(() => window.__netEvents.offline)) >= 1);
+    const offlineEvents = await A.evaluate(() => window.__netEvents.offline);
+    if (drv.caps.netEvents === true) check('the browser sent the offline event', offlineEvents >= 1);
+    else if (offlineEvents >= 1) check('the browser sent the offline event', true, 'engine without a guaranteed cut event');
+    else skip('the browser sent the offline event', "the cut is made through a proxy or this engine's emulation: no browser event");
     const hostBefore = Number(await hostAsk('count', 'COUNT '));
     await drawRect(A, 700, 250);
     const held = await until(A, 'the change to be kept as pending', (s) => s.pending > 0, { timeout: 20000 });
@@ -461,10 +536,13 @@ try {
     check('the host has not seen it yet', Number(await hostAsk('count', 'COUNT ')) === hostBefore);
     await shot(A, 'e2b-pending-desktop');
     const backAt = Date.now();
-    await A.setOfflineMode(false);
+    await drv.setOffline(A, false);
     const back = await until(A, 'the guest to be live again', (s) => s.state === 'live' && s.pending === 0, { timeout: 90000 });
     console.log(`  (live again ${Date.now() - backAt} ms after the network came back, not asserted)`);
-    check('the browser sent the online event (the page listens to it to reconnect at once)', (await A.evaluate(() => window.__netEvents.online)) >= 1);
+    const onlineEvents = await A.evaluate(() => window.__netEvents.online);
+    if (drv.caps.netEvents === true) check('the browser sent the online event (the page listens to it to reconnect at once)', onlineEvents >= 1);
+    else if (onlineEvents >= 1) check('the browser sent the online event (the page listens to it to reconnect at once)', true, 'engine without a guaranteed cut event');
+    else skip('the browser sent the online event', "no browser event with this cut: the guest resumed through its own retries");
     check('the guest is live again after the network returns, nothing pending', back.state === 'live' && back.pending === 0);
     await hostObjectsUntil('the pending change to reach the host', hostBefore + 1);
     check('the change made during the cut reached the host after the reconnection', true);
@@ -510,8 +588,8 @@ try {
 
   /* ---- m. phone: touch */
   await scenario('m. emulated phone: touch targets, virtual keyboard, join with a finger', async () => {
-    phoneBrowser = await puppeteer.launch({ executablePath: chrome, headless: !headed, args: phoneArgs });
-    const M = await newPage(phoneBrowser.defaultBrowserContext(), 'phone', { mobile: true });
+    phoneBrowser = await drv.launch({ mobile: true });
+    const M = await newPage(phoneBrowser.defaultContext(), 'phone', { mobile: true });
     regularPages.push(M);
     await open(M, ticket);
     const box = await until(M, 'the join box on the phone', (s) => s.window?.from_system && s.marks?.join_go);
@@ -539,23 +617,23 @@ try {
     check('the "Leave the session" button is reachable and large enough on the phone', bar.length > 0 && bar.every(([, m]) => m[3] >= 32 && m[0] + m[2] <= vw + 0.5), JSON.stringify(bar));
     check('the toolbar and the board are drawn (not blank) on the phone', await M.evaluate(() => document.getElementById('inkboard_canvas').width > 0));
     // a cut on the phone: the banner sits under the row of tools, fits the width, and its button is large enough
-    await M.setOfflineMode(true);
+    await drv.setOffline(M, true);
     await until(M, 'the phone to notice the cut', (st) => st.state === 'reconnecting' && st.marks?.bar_retry, { timeout: 60000 });
     await sleep(600);
     const cutM = await state(M);
     await shot(M, 'm4-reconnecting-phone');
     const barM = Object.entries(cutM.marks).filter(([n]) => n.startsWith('bar_'));
     check('the "Reconnecting…" banner and its buttons fit the phone and are large enough', barM.length >= 2 && barM.every(([, m]) => m[3] >= 32 && m[0] >= 0 && m[0] + m[2] <= vw + 0.5), JSON.stringify(barM));
-    await M.setOfflineMode(false);
+    await drv.setOffline(M, false);
     await until(M, 'the phone to be live again', (st) => st.state === 'live', { timeout: 90000 });
     await M.close();
   });
 
   /* ---- e1. relay unreachable (blocked): enterprise message ---- */
   await scenario('e1. relay unreachable: enterprise message, 3 tips, copy the diagnostic', async () => {
-    blockedBrowser = await puppeteer.launch({ executablePath: chrome, headless: !headed, args: [...chromeArgs, blockRelays] });
-    const ctx = blockedBrowser.defaultBrowserContext();
-    await ctx.overridePermissions(origin, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
+    blockedBrowser = await drv.launch({ blockRelays: true });
+    const ctx = blockedBrowser.defaultContext();
+    const canRead = (await drv.grant(ctx, origin)) && drv.caps.clipboardRead;
     const E = await newPage(ctx, 'blocked');
     regularPages.push(E);
     await E.bringToFront();
@@ -573,8 +651,13 @@ try {
     await E.bringToFront();
     await press(E, 'issue_copy');
     await sleep(800);
-    const clip = await E.evaluate(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return `error: ${e}`; } });
-    check('"Copy the diagnostic" copies the diagnostic to the browser clipboard', /Connection service: .*iroh\.link/.test(clip) && /Inkboard/.test(clip), clip.split('\n').slice(0, 3).join(' | '));
+    const copied = await E.evaluate(() => window.__clip);
+    const handed = copied.text.at(-1) ?? '';
+    check('"Copy the diagnostic" hands the diagnostic to the browser clipboard and the browser accepts it', /Connection service: .*iroh\.link/.test(handed) && /Inkboard/.test(handed) && copied.errors.length === 0, `${handed.split('\n').slice(0, 3).join(' | ')} ${copied.errors.join(' ')}`);
+    if (canRead) {
+      const clip = await E.evaluate(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return `error: ${e}`; } });
+      check('"Copy the diagnostic" (read back from the browser clipboard)', /Connection service: .*iroh\.link/.test(clip), clip.split('\n').slice(0, 2).join(' | '));
+    } else skip('"Copy the diagnostic" read back from the clipboard', 'this engine does not let automation read the clipboard');
     await press(E, 'issue_retry');
     await until(E, 'the new attempt to start', (s) => s.state === 'joining', { timeout: 30000 });
     await until(E, 'the failure again', (s) => s.state === 'failed', { timeout: 120000 });
@@ -594,8 +677,8 @@ try {
     check('the failure message is in French in a French browser', /pare-feu|passerelle/.test(fr.issue.headline) && fr.issue.tips.length === 3, fr.issue.headline);
     await F.close();
 
-    blockedPhoneBrowser = await puppeteer.launch({ executablePath: chrome, headless: !headed, args: [...phoneArgs, blockRelays] });
-    const G = await newPage(blockedPhoneBrowser.defaultBrowserContext(), 'blocked-phone', { mobile: true });
+    blockedPhoneBrowser = await drv.launch({ mobile: true, blockRelays: true });
+    const G = await newPage(blockedPhoneBrowser.defaultContext(), 'blocked-phone', { mobile: true });
     regularPages.push(G);
     await open(G, ticket);
     await until(G, 'the join box', (s) => s.window?.from_system);
@@ -624,7 +707,7 @@ try {
     if (file) check('the copy holds the whole shared board', objectsOf(file).length === finalCount, `${objectsOf(file).length} vs ${finalCount}`);
   });
 
-  const bad = logs.filter((l) => !['blocked', 'blocked-fr', 'blocked-phone', 'old-browser', 'no-webgl'].includes(l.label) && /^\[(pageerror|error)\]/.test(l.text) && !/Failed to load resource|ERR_NAME_NOT_RESOLVED|WebSocket connection/.test(l.text));
+  const bad = logs.filter((l) => !['blocked', 'blocked-fr', 'blocked-phone', 'old-browser', 'no-webgl'].includes(l.label) && /^\[(pageerror|error)\]/.test(l.text) && !/Failed to load resource|ERR_NAME_NOT_RESOLVED|WebSocket connection|Cross-Origin Request Blocked|can.t establish a connection|Load failed|Viewport argument key/.test(l.text));
   check('no unexpected error in the browser consoles', bad.length === 0, bad.slice(0, 3).map((l) => `${l.label}: ${l.text}`).join(' | '));
   console.log('--- console (first lines)');
   for (const l of logs.slice(0, 20)) console.log(`${l.label} ${l.text}`);

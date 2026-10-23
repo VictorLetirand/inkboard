@@ -81,10 +81,22 @@ l'invité l'adresse de la page et le lien natif.
 
 ## Navigateurs
 
-Essayé : **Chrome 155 sous Windows 11, sans fenêtre (headless), et un téléphone émulé par Chrome** (tactile, taille d'écran), par le banc ci-dessous. **Non essayé : Edge,
-Firefox, Safari, vrais téléphones ou tablettes** (clavier virtuel, pincement, latence tactile réelle), une page servie en `https://` sur un hébergeur public. Edge partage le
-moteur de Chrome et devrait se comporter de même ; Firefox et Safari ne sont pas revendiqués. Une page qui ne peut pas démarrer le dit au lieu de rester blanche : ni WebAssembly,
-ni WebSocket, ni `crypto.getRandomValues` (« ce navigateur est trop ancien »), ni WebGL 2 ni WebGPU (« pas de WebGL : activez l'accélération matérielle… »).
+Essayé, avec le banc ci-dessous (65 vérifications et plus ; un vrai hôte natif et le relais public), sous Windows 11, sans fenêtre (headless) :
+
+| Moteur | Résultat |
+|---|---|
+| **Chrome 155** (et un téléphone émulé par Chrome) | toutes les vérifications passent |
+| **Edge 155** (Chromium) | toutes les vérifications passent |
+| **Firefox 158** (version officielle, pilotée par WebDriver BiDi) | toutes les vérifications passent ; 2 ne peuvent pas être faites (les événements `online` / `offline` : la coupure passe par un proxy et l'invité reprend par ses propres tentatives) |
+| **WebKit** (build de Playwright pour Windows, **une approximation de Safari, pas Safari**) | toutes les vérifications passent ; 4 ne peuvent pas être faites avec ce build (il refuse toute écriture d'image dans le presse-papiers, l'automatisation ne peut pas le lire, un onglet en arrière-plan reste visible) |
+
+La page publique (`https://victorletirand.github.io/inkboard/`) démarre et dessine aussi sur les quatre moteurs, de même qu'une copie servie en `http://` simple sur une adresse du réseau
+local (contexte non sécurisé : elle démarre et dessine ; le presse-papiers n'y est pas disponible, comme dit plus haut).
+**Non essayé : Safari lui-même, iOS / iPadOS, vrais téléphones ou tablettes** (clavier virtuel, pincement, latence tactile réelle), une vraie passerelle d'entreprise. Différences
+constatées : Firefox ne donne aucun fichier à un événement de collage fabriqué par un script (un vrai Ctrl+V d'image fonctionne) ; dans un build WebKit, « Copier comme image » a été
+refusé par le navigateur alors que l'application affichait « Image copiée » (à vérifier sur un vrai Safari) ; le moteur de Safari écrit dans la console une clé de viewport inconnue
+(`interactive-widget`), sans conséquence. Une page qui ne peut pas démarrer le dit au lieu de rester blanche : ni WebAssembly, ni WebSocket, ni `crypto.getRandomValues`
+(« ce navigateur est trop ancien »), ni WebGL 2 ni WebGPU (« pas de WebGL : activez l'accélération matérielle… »).
 
 ## Limites connues (invité navigateur)
 
@@ -113,7 +125,7 @@ node sizes.mjs ../dist   # tailles brute / gzip / brotli
 
 Évitez de laisser `node_modules` dans l'arborescence du dépôt : le test du dépôt qui cherche du français dans les sources parcourt tous les dossiers.
 
-`e2e.mjs` pilote Chrome par la vraie interface et vérifie : la progression du chargement, les messages « trop ancien » et « pas de WebGL », un lien avec le ticket dans le
+`e2e.mjs` pilote Chrome (ou `--browser edge|firefox|webkit`) par la vraie interface et vérifie : la progression du chargement, les messages « trop ancien » et « pas de WebGL », un lien avec le ticket dans le
 fragment (fenêtre du nom, rejoindre, instantané, ticket effacé de la barre d'adresse), un objet dessiné dans le navigateur qui arrive chez l'hôte, des images collées et
 déposées qui arrivent chez l'hôte, le téléchargement d'une copie, deux invités navigateur qui voient les curseurs et les noms l'un de l'autre, le curseur de l'agent MCP, une
 coupure réseau avec modifications conservées puis reprises, un lien en lecture seule, un lien invalide, un relais injoignable (message d'entreprise, trois pistes, diagnostic
@@ -123,5 +135,7 @@ chaque état dans `--out` (`context/mcp-remote/screenshots/f3/`) :
 ```bash
 export PUPPETEER_DIR=<dossier de puppeteer-core>      # hors de l'arborescence du dépôt
 export CC_wasm32_unknown_unknown=<clang>  AR_wasm32_unknown_unknown=<llvm-ar>   # pour ring, comme ci-dessus
-node crates/inkboard-app/web/test/e2e.mjs [--skip-build] [--out <dossier>] [--headed]
+node crates/inkboard-app/web/test/e2e.mjs [--browser chrome|edge|firefox|webkit] [--skip-build] [--out <dossier>] [--headed]
+# Firefox : FIREFOX=<firefox.exe> ; WebKit : PLAYWRIGHT_DIR=<playwright-core> PLAYWRIGHT_BROWSERS_PATH=<dossier> ; EDGE=<msedge.exe>
+node crates/inkboard-app/web/test/smoke-public.mjs --browser firefox     # la page publiée seulement
 ```

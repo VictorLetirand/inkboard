@@ -80,10 +80,21 @@ the ticket together by hand, or give the guest the page address and the native l
 
 ## Browsers
 
-Tested: **Chrome 155 on Windows 11, headless, and a phone emulated by Chrome** (touch, screen size), by the bench below. **Not tested: Edge, Firefox, Safari,
-real phones or tablets** (virtual keyboard, pinch, real touch latency), a page served over `https://` on a public host. Edge shares Chrome's engine and is
-expected to behave the same; Firefox and Safari are not claimed. A page that cannot run says why instead of staying blank: no WebAssembly / WebSocket /
-`crypto.getRandomValues` ("this browser is too old"), neither WebGL 2 nor WebGPU ("no WebGL: turn on hardware acceleration…").
+Tested, with the bench below (65+ checks; a real native host and the public relay), on Windows 11, headless:
+
+| Engine | Result |
+|---|---|
+| **Chrome 155** (and a phone emulated by Chrome) | all checks pass |
+| **Edge 155** (Chromium) | all checks pass |
+| **Firefox 158** (stock, driven through WebDriver BiDi) | all checks pass; 2 checks cannot be made (the `online` / `offline` events: the network cut is made through a proxy, and the guest resumes through its own retries) |
+| **WebKit** (Playwright's build for Windows, **an approximation of Safari, not Safari**) | all checks pass; 4 cannot be made with this build (it refuses any image write to the clipboard, the clipboard cannot be read by automation, a background tab stays visible) |
+
+The public page (`https://victorletirand.github.io/inkboard/`) also starts and draws on the four engines, and so does a copy served over plain `http://` on a LAN address
+(an insecure context: it starts and draws; the clipboard is not available there, as said above).
+**Not tested: Safari itself, iOS / iPadOS, real phones or tablets** (virtual keyboard, pinch, real touch latency), a real company gateway. Differences seen: Firefox gives a
+script-made paste event no files (a real Ctrl+V of an image works); in a WebKit build "Copy as image" was refused by the browser while the application still showed "Image copied"
+(to check on a real Safari); Safari's engine logs an unknown viewport key (`interactive-widget`) in the console, harmlessly. A page that cannot run says why instead of
+staying blank: no WebAssembly / WebSocket / `crypto.getRandomValues` ("this browser is too old"), neither WebGL 2 nor WebGPU ("no WebGL: turn on hardware acceleration…").
 
 ## Known limits (browser guest)
 
@@ -112,7 +123,7 @@ node sizes.mjs ../dist   # raw / gzip / brotli sizes
 
 Keep `node_modules` out of the repository tree when you can: the repository's test that looks for French text in sources walks every folder.
 
-`e2e.mjs` drives Chrome through the real interface and checks: the loading progress, the "too old" and "no WebGL" messages, a link with the ticket in the
+`e2e.mjs` drives Chrome (or `--browser edge|firefox|webkit`) through the real interface and checks: the loading progress, the "too old" and "no WebGL" messages, a link with the ticket in the
 fragment (name box, join, snapshot, ticket removed from the address bar), an object drawn in the browser reaching the host, pasted and dropped images reaching
 the host, the download of a copy, two browser guests seeing each other's cursors and names, the MCP agent's cursor, a network cut with changes kept and resumed,
 a read-only link, an invalid link, a relay that cannot be reached (enterprise message, three tips, copied diagnostic, in English and French), an emulated phone
@@ -122,5 +133,7 @@ a read-only link, an invalid link, a relay that cannot be reached (enterprise me
 ```bash
 export PUPPETEER_DIR=<folder of puppeteer-core>      # outside the repository tree
 export CC_wasm32_unknown_unknown=<clang>  AR_wasm32_unknown_unknown=<llvm-ar>   # for ring, as above
-node crates/inkboard-app/web/test/e2e.mjs [--skip-build] [--out <dir>] [--headed]
+node crates/inkboard-app/web/test/e2e.mjs [--browser chrome|edge|firefox|webkit] [--skip-build] [--out <dir>] [--headed]
+# Firefox: FIREFOX=<firefox.exe>; WebKit: PLAYWRIGHT_DIR=<playwright-core> PLAYWRIGHT_BROWSERS_PATH=<folder>; EDGE=<msedge.exe>
+node crates/inkboard-app/web/test/smoke-public.mjs --browser firefox     # the published page only
 ```

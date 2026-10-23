@@ -1,0 +1,135 @@
+--- browser: firefox
+PASS  the page is built  (E:\Dev\tableau-blanc\.claude\worktrees\agent-a09e3581a1b008df2\crates\inkboard-app\web\dist-e2e)
+--- building the native host
+[host] running 1 test
+[host] LINK inkboard://join#SUJUAQDf8J4Ura8aIwD2QxFFOGdClA4Nj0kE2kneP5_qkS8CNQBAZmJkN2Q5MDI1OTQ0ZmRkOTJhMDI…
+[host] LINK_READ inkboard://join#SUJUAQGA0aJeuUgAAO-k6fZPrMZT9kn8HdVbIhV2W4iHn3tnMgBAZmJkN2Q5MDI1OTQ0ZmRkOT…
+[host] OBJECTS 5
+PASS  the host shares a board with objects (edit link and read-only link)  (5 objects)
+--- loading screen with progress, old browser, no WebGL
+PASS  the loading screen shows the download progress  (bar up to 83%, "18.0 / 21.8 MB")
+PASS  the page starts and the loading screen is gone
+PASS  a browser without WebAssembly gets "too old" (not a blank page)
+PASS  a browser without WebGL nor WebGPU gets the WebGL message
+--- a. link with the ticket in the fragment: name box, join, snapshot
+PASS  the page opens the join box with the link of the address (no typing of the link)
+PASS  the ticket was taken out of the address bar and the history entry  (http://127.0.0.1:60102/index.html)
+PASS  the box offers a name, pre-filled  (Guest)
+[host] MEMBER Alice Edit
+PASS  the connection is established (live)  ({"agent":{"cursor":null,"name":"Claude","visible":false},"assets":0,"attempt":0,"host_name":"Host","images":0,"issue":null,"join_error":null,"mirror":true,"mirror_ready":true,"objects":5,"participants":2,"pending":0,"people":[],"read_only":false,"role":"Edit","screen":[1360,860],"state":"live","window":{"from_system":true,"name":"  Alice\u0007  ","unknown_relay":null}})
+PASS  the host saw the guest by its (cleaned) name, with edit rights
+PASS  the snapshot arrived: same number of objects as the host  (5 vs 5)
+PASS  the host name came with the welcome  (Host)
+PASS  the guest has the edit role  (Edit)
+PASS  the name is remembered in the browser (local storage)
+PASS  the ticket never reached the static server (URL fragment)
+PASS  the name of the last visit is pre-filled  (Alice)
+--- b. an object created in the browser reaches the host
+PASS  the new object is on the guest board  (6)
+[host] COUNT 6
+PASS  the object created in the browser appears at the native host
+[host] ADDED 7
+PASS  a modification of the host reaches the browser  (7 objects)
+--- images: paste and drop reach the host; copies for the guest
+PASS  a pasted image (Ctrl+V of a clipboard image) is inserted on the guest board
+[host] IMAGES 1
+PASS  the pasted image is sent to the host (chunked upload, acknowledged)
+[host] IMAGES 2
+PASS  a dropped image file is inserted and sent to the host
+[host] COUNT 9
+PASS  Ctrl+S downloads a copy of the shared board (.inkboard file)  (Untitled.inkboard)
+PASS  the copy holds every object of the shared board  (9 vs 9)
+PASS  "Copy as image": the application hands an image/png to the browser clipboard and the browser accepts it  ({"text":[],"items":[["image/png"],["image/png"]],"errors":[]})
+PASS  "Copy as image" puts an image on the browser clipboard (read back)  (["image/png"])
+--- c. two browser guests: each sees the cursor and name of the other
+[host] MEMBER Bob Edit
+[host] PEOPLE Alice,Bob
+PASS  the host lists both browser guests  (Alice,Bob)
+PASS  Bob sees the cursor and name of Alice
+PASS  Alice sees the cursor and name of Bob
+PASS  an object created by one guest reaches the other guest (through the host)
+[host] COUNT 10
+--- d. the MCP agent of the host: guests see its cursor
+[host] AGENT
+PASS  the guest sees the cursor of the agent, with its name  (Claude (agent))
+PASS  the other guest sees it as well
+--- v. tab hidden then visible again (visibilitychange): the guest stays or comes back live
+PASS  the browser tells a hidden tab (visibilitychange fired, state hidden)  ({"state":"hidden","events":1,"states":["hidden"]})
+PASS  the tab is visible again and the guest is live with the same board  ({"state":"visible","events":2,"states":["hidden","visible"]})
+--- e2. network cut: reconnecting, pending changes kept, quick resume when the network is back
+  (cut noticed after 1853 ms, not asserted)
+PASS  after the cut the page shows "reconnecting" (the board stays)  (attempt 0)
+SKIP  the browser sent the offline event  (the cut is made through a proxy or this engine's emulation: no browser event)
+[host] COUNT 10
+PASS  a change made while disconnected is kept, waiting to be sent  (1 pending)
+[host] COUNT 10
+PASS  the host has not seen it yet
+  (live again 533 ms after the network came back, not asserted)
+SKIP  the browser sent the online event  (no browser event with this cut: the guest resumed through its own retries)
+PASS  the guest is live again after the network returns, nothing pending
+[host] COUNT 11
+PASS  the change made during the cut reached the host after the reconnection
+--- f. read-only link: the browser guest cannot edit
+[host] MEMBER Carol View
+PASS  the host accepted Carol with the read-only right only
+PASS  the guest has the view role  (View)
+[host] COUNT 11
+PASS  drawing is refused on the read-only guest board  (11 vs 11)
+[host] COUNT 11
+PASS  nothing reached the host from the read-only guest
+--- g. invalid link: a clear message, nothing connects
+PASS  an invalid link opens the join window with an error and the link editable  (This is not an Inkboard invitation link.)
+[host] MEMBER Dave Edit
+PASS  a valid link pasted afterwards joins
+--- m. emulated phone: touch targets, virtual keyboard, join with a finger
+PASS  the join box fits the width of the phone  (screen 393x851)
+PASS  the buttons and the field of the join box are large enough for a finger (>= 32 px)
+PASS  the page does not scroll sideways nor zoom (viewport meta)
+PASS  tapping the name field focuses the text input that brings up the virtual keyboard  (INPUT:text)
+[host] MEMBER Phone Edit
+PASS  the phone joins with a finger and holds the board  (11 objects)
+PASS  the "Leave the session" button is reachable and large enough on the phone  ([["bar_leave",[243.1875,19,131.03125,36]]])
+PASS  the toolbar and the board are drawn (not blank) on the phone
+PASS  the "Reconnecting…" banner and its buttons fit the phone and are large enough  ([["bar_leave",[243.1875,19,131.03125,36]],["bar_retry",[262.96875,161,85.21875,36]]])
+--- e1. relay unreachable: enterprise message, 3 tips, copy the diagnostic
+[host] test tests_web_host::web_bench_host has been running for over 60 seconds
+PASS  the failure is the "cannot reach the connection service" one (firewall/gateway), not a host problem  (Unreachable: Cannot reach the connection service. A firewall or a security gateway (often at work or at school) is probably blocking it.)
+PASS  three actionable tips are shown  (3)
+PASS  a tip names the exact domain to allow  (Ask your IT department to allow this domain: euc1-1.relay.n0.iroh.link)
+PASS  "Copy the diagnostic" hands the diagnostic to the browser clipboard and the browser accepts it  (Inkboard 0.1.0 | Connection service: euc1-1.relay.n0.iroh.link (https://euc1-1.relay.n0.iroh.link./) | Reachable: no )
+PASS  "Copy the diagnostic" (read back from the browser clipboard)  (Inkboard 0.1.0 | Connection service: euc1-1.relay.n0.iroh.link (https://euc1-1.relay.n0.iroh.link./))
+PASS  "Try again" tries again (connecting) and reports the failure again
+PASS  "Close" leaves the failure window
+PASS  the failure message is in French in a French browser  (Impossible de joindre le service de connexion. Un pare-feu ou une passerelle de sécurité (souvent en entreprise ou à l'école) le bloque probablement.)
+PASS  the enterprise message and its buttons fit the phone  (screen 393x851)
+--- z. the host ends the session: banner with "Save a copy"
+[host] COUNT 11
+[host] test tests_web_host::web_bench_host ... ok
+[host] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 317 filtered out; finished in 115.14s
+PASS  the guest is told that the host ended the session  ({"reason":"HostLeft"})
+PASS  "Save a copy of the board" downloads the board after the host left
+PASS  the copy holds the whole shared board  (11 vs 11)
+PASS  no unexpected error in the browser consoles
+--- console (first lines)
+bob [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+alice [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+bob [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+alice [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+bob [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+alice [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+bob [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+phone [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+phone [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+phone [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+phone [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+blocked [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+blocked [pageerror] Cross-Origin Request Blocked: The Same Origin Policy disallows reading the remote resource at https://euc1-1.relay.n0.iroh.link./ping. (Reason: CORS request did not succeed). Status code: (null).
+blocked [pageerror] Cross-Origin Request Blocked: The Same Origin Policy disallows reading the remote resource at https://euc1-1.relay.n0.iroh.link./ping. (Reason: CORS request did not succeed). Status code: (null).
+blocked [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+blocked [pageerror] Cross-Origin Request Blocked: The Same Origin Policy disallows reading the remote resource at https://euc1-1.relay.n0.iroh.link./ping. (Reason: CORS request did not succeed). Status code: (null).
+blocked [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+blocked [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+blocked [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+blocked [pageerror] Firefox can’t establish a connection to the server at wss://euc1-1.relay.n0.iroh.link./relay.
+all checks passed
+exit 0
