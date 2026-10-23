@@ -5,7 +5,10 @@
 # (Settings > Pages > Source: GitHub Actions), create the variable PAGES_ENABLED=true, and add the trigger you want (for example a release tag).
 # Nothing here touches the repository's settings or secrets.
 name: Pages
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    branches: [web-beta]
 
 permissions:
   contents: read
