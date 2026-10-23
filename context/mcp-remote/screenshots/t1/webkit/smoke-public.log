@@ -1,0 +1,9 @@
+--- webkit: https://victorletirand.github.io/inkboard/
+UA Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15
+PASS  WebGL 2 and WebAssembly are there  ({"webgl2":true,"renderer":"WebKit WebGL","secure":true,"wasm":"object"})
+PASS  the page starts (loading screen gone, no error panel, canvas present)
+PASS  secure context (https)
+PASS  the canvas has a size  (1360x860)
+PASS  drawing a rectangle changes the board
+PASS  no unexpected error in the console
+all checks passed

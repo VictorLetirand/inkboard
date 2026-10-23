@@ -115,10 +115,16 @@ fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
         if narrow && ctx.content_rect().width() < TOOLS_ROW_WIDTH {
             // a phone is narrower than the row of tools (about 760 px): it scrolls sideways (a drag) instead of losing the last tools
             let room = ctx.content_rect().width() - 2.0 * offset.x - 16.0;
-            egui::ScrollArea::horizontal()
+            let out = egui::ScrollArea::horizontal()
                 .max_width(room.max(120.0))
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                 .show(ui, |ui| tool_row(app, ui, view_only));
+            // a chevron tells that there are more tools to drag into view
+            if out.state.offset.x + out.inner_rect.width() < out.content_size.x - 1.0 {
+                let at = egui::pos2(out.inner_rect.right() - 6.0, out.inner_rect.center().y);
+                let color = ui.visuals().strong_text_color();
+                ui.painter().text(at, Align2::RIGHT_CENTER, "›", egui::FontId::proportional(22.0), color);
+            }
         } else {
             tool_row(app, ui, view_only);
         }

@@ -1975,7 +1975,7 @@ dependencies = [
  "log",
  "rustversion",
  "windows-link 0.2.1",
- "windows-result 0.3.4",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -2438,7 +2438,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -2629,6 +2629,7 @@ dependencies = [
  "inkboard-session",
  "js-sys",
  "log",
+ "peak_alloc",
  "raw-window-handle",
  "rfd",
  "serde_json",
@@ -2709,6 +2710,7 @@ dependencies = [
  "inkboard-core",
  "inkboard-formats",
  "inkboard-icons",
+ "inkboard-session",
  "regex",
  "serde_json",
 ]
@@ -2720,10 +2722,13 @@ dependencies = [
  "getrandom 0.3.4",
  "inkboard-session",
  "iroh",
+ "js-sys",
  "n0-future",
  "rustls",
  "tokio",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "webpki-roots",
 ]
 
@@ -4227,6 +4232,12 @@ dependencies = [
  "memchr",
  "ryu",
 ]
+
+[[package]]
+name = "peak_alloc"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccc90935a8dd139fdf341762773687a1e361d3f54b396a55d9dd1f7001e484bb"
 
 [[package]]
 name = "pem-rfc7468"
@@ -7316,8 +7327,8 @@ dependencies = [
  "log",
  "serde",
  "thiserror 2.0.21",
- "windows 0.61.3",
- "windows-core 0.61.2",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

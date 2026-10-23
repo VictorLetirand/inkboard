@@ -40,6 +40,9 @@ fn node_from(e: &BytesStart<'_>) -> Result<Node, String> {
     Ok(n)
 }
 
+/// Deepest nesting accepted: the tree is walked and dropped recursively, so a file of 100 000 open tags would overflow the stack.
+const MAX_DEPTH: usize = 256;
+
 /// Parses an XML document and returns its root element.
 pub fn parse(src: &str) -> Result<Node, String> {
     let mut reader = Reader::from_str(src);
@@ -47,8 +50,16 @@ pub fn parse(src: &str) -> Result<Node, String> {
     let mut root: Option<Node> = None;
     loop {
         match reader.read_event().map_err(|e| format!("invalid XML: {e}"))? {
-            Event::Start(e) => stack.push(node_from(&e)?),
+            Event::Start(e) => {
+                if stack.len() >= MAX_DEPTH {
+                    return Err("XML nested too deeply".into());
+                }
+                stack.push(node_from(&e)?);
+            }
             Event::Empty(e) => {
+                if stack.len() >= MAX_DEPTH {
+                    return Err("XML nested too deeply".into());
+                }
                 let n = node_from(&e)?;
                 match stack.last_mut() {
                     Some(p) => p.children.push(n),

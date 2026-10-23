@@ -1,0 +1,136 @@
+--- browser: webkit
+PASS  the page is built  (E:\Dev\tableau-blanc\.claude\worktrees\agent-a09e3581a1b008df2\crates\inkboard-app\web\dist-e2e)
+--- building the native host
+[host] running 1 test
+[host] LINK inkboard://join#SUJUAQCciraf0LxS5sGbfbsNW-1AdqMRarb8a5aBfV7Zx-ZITgBAYzYyOTgxYmEwOGQwNjEwOGY0M2M…
+[host] LINK_READ inkboard://join#SUJUAQHftax8Jsh7usixZ5wtpRbSUU3q6QP23PP8fdKrg1xDnQBAYzYyOTgxYmEwOGQwNjEwOG…
+[host] OBJECTS 5
+PASS  the host shares a board with objects (edit link and read-only link)  (5 objects)
+--- loading screen with progress, old browser, no WebGL
+PASS  the loading screen shows the download progress  (bar up to 99%, "21.8 / 21.8 MB")
+PASS  the page starts and the loading screen is gone
+PASS  a browser without WebAssembly gets "too old" (not a blank page)
+PASS  a browser without WebGL nor WebGPU gets the WebGL message
+--- a. link with the ticket in the fragment: name box, join, snapshot
+PASS  the page opens the join box with the link of the address (no typing of the link)
+PASS  the ticket was taken out of the address bar and the history entry  (http://127.0.0.1:62631/index.html)
+PASS  the box offers a name, pre-filled  (Guest)
+[host] MEMBER Alice Edit
+PASS  the connection is established (live)  ({"agent":{"cursor":null,"name":"Claude","visible":false},"assets":0,"attempt":0,"host_name":"Host","images":0,"issue":null,"join_error":null,"mirror":true,"mirror_ready":true,"objects":5,"participants":2,"pending":0,"people":[],"read_only":false,"role":"Edit","screen":[1360,860],"state":"live","window":{"from_system":true,"name":"  Alice\u0007  ","unknown_relay":null}})
+PASS  the host saw the guest by its (cleaned) name, with edit rights
+PASS  the snapshot arrived: same number of objects as the host  (5 vs 5)
+PASS  the host name came with the welcome  (Host)
+PASS  the guest has the edit role  (Edit)
+PASS  the name is remembered in the browser (local storage)
+PASS  the ticket never reached the static server (URL fragment)
+PASS  the name of the last visit is pre-filled  (Alice)
+--- b. an object created in the browser reaches the host
+PASS  the new object is on the guest board  (6)
+[host] COUNT 6
+PASS  the object created in the browser appears at the native host
+[host] ADDED 7
+PASS  a modification of the host reaches the browser  (7 objects)
+--- images: paste and drop reach the host; copies for the guest
+PASS  a pasted image (Ctrl+V of a clipboard image) is inserted on the guest board
+[host] IMAGES 1
+PASS  the pasted image is sent to the host (chunked upload, acknowledged)
+[host] IMAGES 2
+PASS  a dropped image file is inserted and sent to the host
+[host] COUNT 9
+PASS  Ctrl+S downloads a copy of the shared board (.inkboard file)  (Untitled.inkboard)
+PASS  the copy holds every object of the shared board  (9 vs 9)
+SKIP  "Copy as image": the browser accepts an image/png  (this engine refuses ANY image write to the clipboard in automation (a minimal page gets NotAllowedError too): the application cannot be judged)
+SKIP  "Copy as image" read back from the clipboard  (this engine does not let automation read the clipboard)
+--- c. two browser guests: each sees the cursor and name of the other
+[host] MEMBER Bob Edit
+[host] PEOPLE Alice,Bob
+PASS  the host lists both browser guests  (Alice,Bob)
+PASS  Bob sees the cursor and name of Alice
+PASS  Alice sees the cursor and name of Bob
+PASS  an object created by one guest reaches the other guest (through the host)
+[host] COUNT 10
+--- d. the MCP agent of the host: guests see its cursor
+[host] AGENT
+PASS  the guest sees the cursor of the agent, with its name  (Claude (agent))
+PASS  the other guest sees it as well
+--- v. tab hidden then visible again (visibilitychange): the guest stays or comes back live
+SKIP  the browser tells a hidden tab  (this engine keeps a background tab "visible" in automation)
+PASS  the tab is visible again and the guest is live with the same board  ({"state":"visible","events":0,"states":[]})
+--- e2. network cut: reconnecting, pending changes kept, quick resume when the network is back
+  (cut noticed after 2199 ms, not asserted)
+PASS  after the cut the page shows "reconnecting" (the board stays)  (attempt 0)
+PASS  the browser sent the offline event  (engine without a guaranteed cut event)
+[host] COUNT 10
+PASS  a change made while disconnected is kept, waiting to be sent  (1 pending)
+[host] COUNT 10
+PASS  the host has not seen it yet
+  (live again 2383 ms after the network came back, not asserted)
+PASS  the browser sent the online event (the page listens to it to reconnect at once)  (engine without a guaranteed cut event)
+PASS  the guest is live again after the network returns, nothing pending
+[host] COUNT 11
+PASS  the change made during the cut reached the host after the reconnection
+--- f. read-only link: the browser guest cannot edit
+[host] MEMBER Carol View
+PASS  the host accepted Carol with the read-only right only
+PASS  the guest has the view role  (View)
+[host] COUNT 11
+PASS  drawing is refused on the read-only guest board  (11 vs 11)
+[host] COUNT 11
+PASS  nothing reached the host from the read-only guest
+--- g. invalid link: a clear message, nothing connects
+PASS  an invalid link opens the join window with an error and the link editable  (This is not an Inkboard invitation link.)
+[host] MEMBER Dave Edit
+PASS  a valid link pasted afterwards joins
+--- m. emulated phone: touch targets, virtual keyboard, join with a finger
+PASS  the join box fits the width of the phone  (screen 390x664)
+PASS  the buttons and the field of the join box are large enough for a finger (>= 32 px)
+PASS  the page does not scroll sideways nor zoom (viewport meta)
+PASS  tapping the name field focuses the text input that brings up the virtual keyboard  (INPUT:text)
+[host] MEMBER Phone Edit
+PASS  the phone joins with a finger and holds the board  (11 objects)
+PASS  the "Leave the session" button is reachable and large enough on the phone  ([["bar_leave",[255.6875,19,115.375,36]]])
+PASS  the toolbar and the board are drawn (not blank) on the phone
+PASS  the "Reconnecting…" banner and its buttons fit the phone and are large enough  ([["bar_leave",[255.6875,19,115.375,36]],["bar_retry",[267.8125,149,69.5625,36]]])
+--- e1. relay unreachable: enterprise message, 3 tips, copy the diagnostic
+[host] test tests_web_host::web_bench_host has been running for over 60 seconds
+PASS  the failure is the "cannot reach the connection service" one (firewall/gateway), not a host problem  (Unreachable: Cannot reach the connection service. A firewall or a security gateway (often at work or at school) is probably blocking it.)
+PASS  three actionable tips are shown  (3)
+PASS  a tip names the exact domain to allow  (Ask your IT department to allow this domain: euc1-1.relay.n0.iroh.link)
+PASS  "Copy the diagnostic" hands the diagnostic to the browser clipboard and the browser accepts it  (Inkboard 0.1.0 | Connection service: euc1-1.relay.n0.iroh.link (https://euc1-1.relay.n0.iroh.link./) | Reachable: no )
+SKIP  "Copy the diagnostic" read back from the clipboard  (this engine does not let automation read the clipboard)
+PASS  "Try again" tries again (connecting) and reports the failure again
+PASS  "Close" leaves the failure window
+PASS  the failure message is in French in a French browser  (Impossible de joindre le service de connexion. Un pare-feu ou une passerelle de sécurité (souvent en entreprise ou à l'école) le bloque probablement.)
+PASS  the enterprise message and its buttons fit the phone  (screen 390x664)
+--- z. the host ends the session: banner with "Save a copy"
+[host] COUNT 11
+[host] test tests_web_host::web_bench_host ... ok
+[host] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 317 filtered out; finished in 113.80s
+PASS  the guest is told that the host ended the session  ({"reason":"HostLeft"})
+PASS  "Save a copy of the board" downloads the board after the host left
+PASS  the copy holds the whole shared board  (11 vs 11)
+PASS  no unexpected error in the browser consoles
+--- console (first lines)
+loading [error] Viewport argument key "interactive-widget" not recognized and ignored.
+old-browser [error] Viewport argument key "interactive-widget" not recognized and ignored.
+no-webgl [error] Viewport argument key "interactive-widget" not recognized and ignored.
+alice [error] Viewport argument key "interactive-widget" not recognized and ignored.
+alice-again [error] Viewport argument key "interactive-widget" not recognized and ignored.
+alice [warning] The resource http://127.0.0.1:62631/inkboard-97d8de5472537323_bg.wasm was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it wasn't preloaded for nothing.
+alice [warning] ERROR: [eframe::web] C:\Users\Utilisateur\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\eframe-0.33.3\src\web\mod.rs:247: Copy/cut image action failed: JsValue(NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.
+)
+bob [error] Viewport argument key "interactive-widget" not recognized and ignored.
+bob [warning] The resource http://127.0.0.1:62631/inkboard-97d8de5472537323_bg.wasm was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it wasn't preloaded for nothing.
+alice [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+bob [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+alice [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+bob [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+alice [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+bob [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+alice [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+bob [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+alice [error] Failed to load resource: WebKit encountered an internal error
+alice [error] Failed to load resource: WebKit encountered an internal error
+bob [error] WebSocket connection to 'wss://euc1-1.relay.n0.iroh.link./relay' failed: WebSocket network error: error code 56
+all checks passed
+exit 0

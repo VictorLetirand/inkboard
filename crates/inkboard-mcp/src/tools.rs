@@ -199,10 +199,12 @@ fn select_page(ed: &mut Editor, spec: Option<&Value>) -> Res<()> {
 }
 
 fn origin(ed: &Editor, a: &Value) -> Pt {
-    match (of(a, "x"), of(a, "y")) {
+    let at = match (of(a, "x"), of(a, "y")) {
         (Some(x), Some(y)) => Pt::new(x, y),
         _ => ed.page().content_bounds().map_or(Pt::new(0.0, 0.0), |b| Pt::new(of(a, "x").unwrap_or(b.x), of(a, "y").unwrap_or(b.bottom() + 40.0))),
-    }
+    };
+    // "below the existing content" can run past the largest position a shared session relays
+    Pt::new(at.x.clamp(-MAX_ARG_ABS, MAX_ARG_ABS), at.y.clamp(-MAX_ARG_ABS, MAX_ARG_ABS))
 }
 
 fn find<'a>(ed: &'a Editor, id: &str) -> Res<&'a Object> {
@@ -232,6 +234,59 @@ const EDITOR_TOOLS: [&str; 14] = [
     "export",
 ];
 
+/// Bounds on what an agent may ask for. They are the limits a shared session applies to every object it relays (positions, sizes, font
+/// and line widths), so that nothing the agent adds can make the guests refuse the board; text is bounded in total so that a call stays
+/// quick whatever it carries.
+const MAX_ARG_ABS: f64 = 1e7;
+const MAX_ARG_SIZE: f64 = 1e6;
+const MAX_ARG_FONT: f64 = 2_000.0;
+const MAX_ARG_STROKE: f64 = 1_000.0;
+const MAX_ARG_CHARS: usize = 200_000;
+const MAX_ARG_DEPTH: usize = 32;
+const MAX_ARG_NAME: usize = 200;
+/// Arguments that carry an encoded file (their own, larger limit is checked where they are decoded).
+const BULK_KEYS: [&str; 1] = ["data_base64"];
+
+/// Refuses numbers that are out of range, text that is too long in total, and nesting that is too deep, anywhere in the arguments.
+fn check_args(a: &Value) -> Res<()> {
+    fn walk(v: &Value, key: &str, depth: usize, chars: &mut usize) -> Res<()> {
+        if depth > MAX_ARG_DEPTH {
+            return Err("arguments nested too deeply".into());
+        }
+        match v {
+            Value::Number(n) => {
+                let x = n.as_f64().unwrap_or(f64::INFINITY);
+                let (lo, hi, what) = match key {
+                    // a negative size is for each tool (or the check after it) to refuse, with its own message
+                    "w" | "h" => (-MAX_ARG_SIZE, MAX_ARG_SIZE, "a size within 1,000,000"),
+                    "font_size" => (0.0, MAX_ARG_FONT, "a font size between 0 and 2,000"),
+                    "stroke_width" => (0.0, MAX_ARG_STROKE, "a line width between 0 and 1,000"),
+                    _ => (-MAX_ARG_ABS, MAX_ARG_ABS, "a number between -10,000,000 and 10,000,000"),
+                };
+                if !x.is_finite() || x < lo || x > hi {
+                    return Err(format!("\"{key}\" is out of range ({n}): expected {what}"));
+                }
+            }
+            Value::String(t) if !BULK_KEYS.contains(&key) => {
+                let n = t.chars().count();
+                // names of boards and pages (a shared session refuses longer ones)
+                if key == "name" && n > MAX_ARG_NAME {
+                    return Err(format!("\"name\" is too long ({n} characters, at most {MAX_ARG_NAME})"));
+                }
+                *chars += n;
+                if *chars > MAX_ARG_CHARS {
+                    return Err(format!("the text of this call is too long (more than {MAX_ARG_CHARS} characters in all)"));
+                }
+            }
+            Value::Array(items) => items.iter().try_for_each(|x| walk(x, key, depth + 1, chars))?,
+            Value::Object(m) => m.iter().try_for_each(|(k, x)| walk(x, k, depth + 1, chars))?,
+            _ => {}
+        }
+        Ok(())
+    }
+    walk(a, "", 0, &mut 0)
+}
+
 /// Applies a tool to an in-memory board. Used as is by file mode and by the application (live mode, with its undo history).
 pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name == "save_board" {
@@ -240,6 +295,30 @@ pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if !EDITOR_TOOLS.contains(&name) && !ext_is_tool(name) {
         return Err(format!("unknown tool: {name}"));
     }
+    check_args(a)?;
+    if name == "describe_board" || ext_is_read_only(name) || READ_ONLY.contains(&name) {
+        return apply_checked(ed, name, a);
+    }
+    // a tool that moves things (layout, offsets, "below the content") must not push any of them out of the area a shared session relays
+    ed.try_transact(|ed| {
+        let r = apply_checked(ed, name, a)?;
+        let outside = ed
+            .doc
+            .pages
+            .iter()
+            .flat_map(|p| p.objects.iter())
+            .filter_map(Object::frame)
+            .any(|f| ![f.x, f.y].iter().all(|v| v.abs() <= MAX_ARG_ABS) || ![f.w, f.h].iter().all(|v| (0.0..=MAX_ARG_SIZE).contains(v)));
+        if outside {
+            return Err(format!(
+                "the result would put objects outside the usable area (positions within {MAX_ARG_ABS}, sizes within {MAX_ARG_SIZE}): nothing was changed"
+            ));
+        }
+        Ok(r)
+    })
+}
+
+fn apply_checked(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name != "add_page" {
         select_page(ed, a.get("page"))?;
     }
@@ -721,7 +800,8 @@ fn add_table(ed: &mut Editor, a: &Value) -> Res<Value> {
     // column width from the longest text (at least the default width)
     for c in 0..cols {
         let widest = texts.iter().filter_map(|r| r.get(c)).map(|t| ApproxMeasurer.width(&t.to_plain(), FontFamily::Sans, 18.0, true)).fold(0.0, f64::max);
-        t.col_w[c] = t.col_w[c].max((widest + 28.0).ceil());
+        // a column is at most 2 000 wide (the text wraps): a longer line would exceed what a shared session relays
+        t.col_w[c] = t.col_w[c].max((widest + 28.0).ceil().min(2_000.0));
     }
     let id = ed.insert(Object::new(Kind::Table(t), Style { width: 2.0, fill: None, ..Style::default() }));
     let mut out = json!({"id": id.0, "rows": rows.len(), "cols": cols});
@@ -746,7 +826,13 @@ fn add_code_block(ed: &mut Editor, a: &Value) -> Res<Value> {
 
 fn add_formula(ed: &mut Editor, a: &Value) -> Res<Value> {
     let latex = s(a, "latex")?;
+    if latex.chars().count() > 5_000 {
+        return Err("the formula is too long (5,000 characters at most)".into());
+    }
     let f = inkboard_formats::math::render(latex, 36.0).map_err(|e| e.to_string())?;
+    if !(f.w.is_finite() && f.h.is_finite() && f.w <= MAX_ARG_SIZE && f.h <= MAX_ARG_SIZE) {
+        return Err("the formula is too large once typeset".into());
+    }
     let aid = ed.doc.add_asset("image/svg+xml", f.svg.into_bytes());
     let at = origin(ed, a);
     let style = Style { stroke: ocolor(a, "color")?.unwrap_or(Color::Ink), width: 0.0, fill: None, ..Style::default() };

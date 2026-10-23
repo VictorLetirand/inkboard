@@ -27,6 +27,10 @@ pub const FR: &[(&str, &str)] = &[
     ("Arrow — snaps to shapes", "Flèche — s'accroche aux formes"),
     ("Arrowhead at the end", "Pointe à la fin"),
     ("Arrowhead at the start", "Pointe au début"),
+    (
+        "Ask your IT department to allow WebSocket connections to {} (port 443).",
+        "Demandez au service informatique d'autoriser les connexions WebSocket vers {} (port 443).",
+    ),
     ("Ask your IT department to allow this domain: {}", "Demandez au service informatique d'autoriser ce domaine : {}"),
     ("At most {} relays.", "{} relais au maximum."),
     ("Auto", "Auto"),
@@ -405,6 +409,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Unlock", "Déverrouiller"),
     ("Unlock the selection", "Déverrouiller la sélection"),
     ("Unreadable image", "Image illisible"),
+    ("Use \"Copy the diagnostic\" and send it to your IT department.", "Utilisez « Copier le diagnostic » et envoyez-le au service informatique."),
     ("Use built-in fonts", "Utiliser les polices intégrées"),
     (
         "This vector image uses features that are not allowed in a shared session (filter, mask, link...): this change was cancelled.",
@@ -432,6 +437,10 @@ pub const FR: &[(&str, &str)] = &[
         "Vos modifications sont conservées et seront envoyées dès que la connexion reviendra.",
     ),
     ("Your name", "Votre nom"),
+    (
+        "Your network lets this page reach the connection service, but seems to block the connection itself (WebSocket). The exact cause cannot be told from here.",
+        "Votre réseau laisse cette page atteindre le service de connexion, mais semble bloquer la connexion elle-même (WebSocket). La cause exacte ne peut pas être connue d'ici.",
+    ),
     ("Zoom 100 %", "Zoom 100 %"),
     ("Zoom in", "Zoom avant"),
     ("Zoom out", "Zoom arrière"),

@@ -464,6 +464,9 @@ fn bar(ctx: &egui::Context, id: &str, anchor: Align2, offset: egui::Vec2, fill: 
     });
 }
 
+/// Height taken by the session bar once it sits under the tools (phone): what is placed below it moves down by as much.
+pub const PHONE_BAR_SHIFT: f32 = 60.0;
+
 fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
     let host = app.guest.as_ref().map(|g| g.host_name().to_owned()).unwrap_or_default();
     let view = app.view_only();
@@ -473,8 +476,12 @@ fn banners(app: &mut App, ctx: &egui::Context, state: &GuestState) {
     let attempt = app.guest.as_ref().map_or(0, |g| g.reconnect_attempt());
     // under the row of tools when it moves below the title (narrow window or phone)
     let top = if ctx.content_rect().width() < 1180.0 { 124.0 } else { 72.0 };
+    // on a phone the session bar would cover the title of the board (top left): it goes under the tools, the other bars under it
+    let phone = ctx.content_rect().width() < 560.0;
+    let (bar_anchor, bar_offset) = if phone { (Align2::CENTER_TOP, vec2(0.0, top - 8.0)) } else { (Align2::RIGHT_TOP, vec2(-12.0, 12.0)) };
+    let top = if phone { top + PHONE_BAR_SHIFT } else { top };
     let (mut leave, mut save, mut retry) = (false, false, false);
-    bar(ctx, "guest-bar", Align2::RIGHT_TOP, vec2(-12.0, 12.0), Color32::from_rgb(0x2b, 0x4c, 0xb8), |ui| {
+    bar(ctx, "guest-bar", bar_anchor, bar_offset, Color32::from_rgb(0x2b, 0x4c, 0xb8), |ui| {
         ui.label(white(title).strong());
         if view {
             ui.label(white(format!("· {}", t("Read-only"))));

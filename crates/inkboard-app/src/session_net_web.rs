@@ -7,20 +7,17 @@
 use crate::join_ui::SessionFactory;
 use crate::session_guest::{Clock, ConnectError, Diagnosis, GuestConfig, GuestLink, GuestSession, NetWatch, RelayDiagnoser};
 use crate::session_link::{Dialing, connect_error};
+use inkboard_net::relay_signals::{Cause, Signals};
 use inkboard_net::{CancelToken, NetConfig, WebTransport};
 use inkboard_session::crypto::{OsEntropy, Ticket};
-use inkboard_session::error::{Error, NetCause};
 use inkboard_session::transport::Connection;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use wasm_bindgen_futures::spawn_local;
-
-/// A guest gives up on a handshake after this long (shorter than the session's own 20 s, so that the network says why).
-const GUEST_CONNECT: Duration = Duration::from_secs(15);
 
 /// A custom relay list that cannot be used.
 #[derive(Debug)]
@@ -48,20 +45,50 @@ pub fn wait_background_closes(_max: Duration) {}
 
 /* ---------------------------------------------------------------------------------------------------------------- diagnosis */
 
-/// What the last dial found out about the relay (set by the dial, read by the diagnosis).
-const RELAY_UNKNOWN: u8 = 0;
-const RELAY_REACHED: u8 = 1;
-const RELAY_NOT_REACHED: u8 = 2;
+/// What the last dial observed about the relay (set by the dial task, read by the diagnosis): `None` until a dial failed on the network.
+type Observed = Arc<Mutex<Option<Signals>>>;
 
-/// A page cannot look at the relay (no TCP, and cross-origin answers are opaque): it only knows whether the transport reached it.
-/// "Reached" gives the same diagnosis as a relay that answers normally (the host cannot be reached); anything else is generic.
-struct WebDiagnoser(Arc<AtomicU8>);
+/// A page cannot read what the relay (or a gateway in front of it) answers: cross-origin answers are opaque. It can tell whether an
+/// HTTPS request gets through and whether iroh is really connected to the relay; the two crossed give the cause (see
+/// `inkboard_net::relay_signals`). "The relay answers" is only said when iroh holds a relay connection.
+struct WebDiagnoser(Observed);
 
 impl RelayDiagnoser for WebDiagnoser {
     fn diagnose(&self, _relay_url: &str) -> Diagnosis {
-        let reached = self.0.load(Ordering::SeqCst) == RELAY_REACHED;
-        let summary = if reached { "the relay answers (connected by the browser)" } else { "the browser could not connect to the relay" };
-        Diagnosis { reachable: reached, summary: summary.to_owned(), ..Diagnosis::default() }
+        let Some(signals) = self.0.lock().unwrap_or_else(PoisonError::into_inner).clone() else {
+            return Diagnosis { summary: "the browser could not connect to the relay".to_owned(), ..Diagnosis::default() };
+        };
+        let cause = signals.cause();
+        Diagnosis {
+            reachable: cause == Cause::HostUnreachable,
+            websocket_blocked: cause == Cause::WebSocketBlocked,
+            facts: signals.facts(),
+            summary: signals.summary().to_owned(),
+            ..Diagnosis::default()
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------------------------------------- timings (bench knob) */
+
+static CONNECT_MS: AtomicU64 = AtomicU64::new(15_000);
+static PROBE_MS: AtomicU64 = AtomicU64::new(5_000);
+static PROBE_DELAY_MS: AtomicU64 = AtomicU64::new(2_000);
+
+/// Test hook of the browser bench (`web_test`): shorter time-outs, so that the silent-block scenarios do not take minutes.
+#[cfg(feature = "web-test")]
+pub fn set_timeouts(connect_ms: u64, probe_ms: u64, probe_delay_ms: u64) {
+    CONNECT_MS.store(connect_ms, Ordering::SeqCst);
+    PROBE_MS.store(probe_ms, Ordering::SeqCst);
+    PROBE_DELAY_MS.store(probe_delay_ms, Ordering::SeqCst);
+}
+
+fn net_config() -> NetConfig {
+    NetConfig {
+        connect_timeout: Duration::from_millis(CONNECT_MS.load(Ordering::SeqCst)),
+        probe_timeout: Duration::from_millis(PROBE_MS.load(Ordering::SeqCst)),
+        probe_delay: Duration::from_millis(PROBE_DELAY_MS.load(Ordering::SeqCst)),
+        ..NetConfig::default()
     }
 }
 
@@ -72,7 +99,7 @@ struct WebLink {
     transport: Rc<WebTransport>,
     ticket: Ticket,
     failure: Arc<Mutex<Option<ConnectError>>>,
-    relay: Arc<AtomicU8>,
+    observed: Observed,
 }
 
 impl GuestLink for WebLink {
@@ -80,14 +107,11 @@ impl GuestLink for WebLink {
     fn connect(&mut self, _host: &str) -> Result<Box<dyn Connection>, ConnectError> {
         let (tx, rx) = channel();
         let cancel = CancelToken::new();
-        let (transport, ticket, relay, task_cancel) = (Rc::clone(&self.transport), self.ticket.clone(), Arc::clone(&self.relay), cancel.clone());
+        let (transport, ticket, observed, task_cancel) = (Rc::clone(&self.transport), self.ticket.clone(), Arc::clone(&self.observed), cancel.clone());
         spawn_local(async move {
-            let result = transport.connect_ticket_cancellable(&ticket, &task_cancel).await;
-            let seen = match &result {
-                Err(Error::Network { cause: NetCause::RelayUnreachable | NetCause::Local, .. }) => RELAY_NOT_REACHED,
-                _ => RELAY_REACHED,
-            };
-            relay.store(seen, Ordering::SeqCst);
+            let (result, signals) = transport.connect_ticket_observed(&ticket, &task_cancel).await;
+            // stored before the failure is reported: the diagnosis (asked for when the failure arrives) reads it
+            *observed.lock().unwrap_or_else(PoisonError::into_inner) = signals;
             let _ = tx.send(result.map_err(|e| connect_error(&e)));
         });
         Ok(Box::new(Dialing::new(self.ticket.host.clone(), rx, Arc::clone(&self.failure), cancel)))
@@ -125,10 +149,10 @@ impl Drop for WebLink {
 /// created when the session first dials.
 pub fn guest_factory() -> SessionFactory {
     Box::new(|ticket, name| {
-        let relay = Arc::new(AtomicU8::new(RELAY_UNKNOWN));
-        let transport = Rc::new(WebTransport::guest(NetConfig { connect_timeout: GUEST_CONNECT, ..NetConfig::default() }));
-        let link = Box::new(WebLink { transport, ticket: ticket.clone(), failure: Arc::default(), relay: Arc::clone(&relay) });
-        let mut session = GuestSession::new(link, Arc::new(WebDiagnoser(relay)), ticket, name, Box::new(OsEntropy), Clock::real(), GuestConfig::default());
+        let observed = Observed::default();
+        let transport = Rc::new(WebTransport::guest(net_config()));
+        let link = Box::new(WebLink { transport, ticket: ticket.clone(), failure: Arc::default(), observed: Arc::clone(&observed) });
+        let mut session = GuestSession::new(link, Arc::new(WebDiagnoser(observed)), ticket, name, Box::new(OsEntropy), Clock::real(), GuestConfig::default());
         session.set_net_watch(Box::new(BrowserNetWatch));
         session
     })

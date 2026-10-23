@@ -26,5 +26,9 @@ inkboard-icons = { path = "../inkboard-icons", features = ["embedded"] }
 [build-dependencies]
 embed-resource = "3"
 
+[dev-dependencies]
+# The limits a shared session applies to what a host relays: nothing an agent adds may exceed them.
+inkboard-session = { path = "../inkboard-session" }
+
 [lints]
 workspace = true

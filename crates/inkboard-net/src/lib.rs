@@ -14,6 +14,7 @@ mod cancel;
 pub mod config;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod diagnose;
+pub mod relay_signals;
 pub mod ticket;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod transport;

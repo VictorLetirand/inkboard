@@ -216,6 +216,11 @@ pub struct Diagnosis {
     pub server_header: Option<String>,
     /// Security gateway recognized from the answer (e.g. "Zscaler").
     pub gateway: Option<String>,
+    /// A plain HTTPS request reaches the service but the connection itself (WebSocket) never comes up: a browser can tell, a page
+    /// cannot read what a gateway answers.
+    pub websocket_blocked: bool,
+    /// Observed facts, one per line, copied as they are into the diagnostic (English, technical, nothing secret).
+    pub facts: Vec<String>,
     pub summary: String,
 }
 
@@ -293,6 +298,9 @@ pub enum NetClass {
     Blocked { gateway: Option<String>, status: Option<u16> },
     /// The service answers normally: the host cannot be reached (closed session, host offline).
     HostUnreachable,
+    /// A plain HTTPS request gets through but the connection itself (WebSocket) does not: the network lets the service be reached
+    /// and still stops the connection. Browser only; the exact cause is not known.
+    WebSocketBlocked,
     /// Nothing answers, and nothing more is known: a firewall is the usual cause.
     Unreachable,
 }
@@ -322,13 +330,21 @@ pub fn relay_domain(url: &str) -> String {
     host.trim_end_matches('.').to_owned()
 }
 
+/// What to ask IT to allow: the whole family of n0 relays (`*.relay.n0.iroh.link`, the link names one of them), else the exact domain.
+fn allow_pattern(domain: &str) -> String {
+    const FAMILY: &str = ".relay.n0.iroh.link";
+    if domain.ends_with(FAMILY) { format!("*{FAMILY}") } else { domain.to_owned() }
+}
+
 /// Decides what to tell the user. `diagnosis` is what was found out about the connection service, if anything.
 pub fn classify_failure(kind: ConnectErrorKind, detail: &str, relay_url: &str, diagnosis: Option<&Diagnosis>) -> NetIssue {
     let class = if kind == ConnectErrorKind::NoNetwork {
         NetClass::Offline
     } else if let Some(d) = diagnosis {
         // 401/403/407/451/511: the answers of proxies and gateways that stop or put a page in front of a connection
-        if d.gateway.is_some() || matches!(d.http_status, Some(401 | 403 | 407 | 451 | 511)) {
+        if d.websocket_blocked {
+            NetClass::WebSocketBlocked
+        } else if d.gateway.is_some() || matches!(d.http_status, Some(401 | 403 | 407 | 451 | 511)) {
             NetClass::Blocked { gateway: d.gateway.clone(), status: d.http_status }
         } else if d.reachable && d.http_status.is_none_or(|s| s < 400) {
             NetClass::HostUnreachable
@@ -359,6 +375,9 @@ impl NetIssue {
             NetClass::HostUnreachable => {
                 t("The connection service answers, but the host cannot be reached. The host may have closed the session or be offline.")
             }
+            NetClass::WebSocketBlocked => t(
+                "Your network lets this page reach the connection service, but seems to block the connection itself (WebSocket). The exact cause cannot be told from here.",
+            ),
             NetClass::Blocked { gateway: None, .. } | NetClass::Unreachable => {
                 t("Cannot reach the connection service. A firewall or a security gateway (often at work or at school) is probably blocking it.")
             }
@@ -371,6 +390,11 @@ impl NetIssue {
             NetClass::Offline | NetClass::HostUnreachable => Vec::new(),
             // a domain chosen by the author of the link: never advise to open it or to have it allowed
             _ if self.unknown_relay => vec![t("Try another network, for example your phone's connection sharing.")],
+            NetClass::WebSocketBlocked => vec![
+                tr!("Ask your IT department to allow WebSocket connections to {} (port 443).", allow_pattern(&self.domain)),
+                t("Try another network, for example your phone's connection sharing."),
+                t("Use \"Copy the diagnostic\" and send it to your IT department."),
+            ],
             _ => vec![
                 t("Try another network, for example your phone's connection sharing."),
                 tr!("Open the address of the service in your browser (https://{}) and accept the warning if there is one, then try again.", self.domain),
@@ -394,6 +418,10 @@ impl NetIssue {
         s += &format!("Server header: {}\n", d.server_header.as_deref().unwrap_or("none"));
         s += &format!("Security gateway: {}\n", d.gateway.as_deref().unwrap_or("not detected"));
         s += &format!("Diagnosis: {}\n", if d.summary.is_empty() { "none" } else { &d.summary });
+        for fact in &d.facts {
+            s += fact;
+            s += "\n";
+        }
         s += &format!("Error: {}\n", if self.detail.is_empty() { "none" } else { &self.detail });
         s
     }
