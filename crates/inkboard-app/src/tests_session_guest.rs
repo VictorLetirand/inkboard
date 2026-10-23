@@ -513,6 +513,7 @@ fn cursors_names_strokes_and_the_agent_of_the_others_are_shown() {
     assert_eq!(p.state.selection.len(), 1);
     assert_eq!(app.agent.remote.strokes.len(), 1);
     assert_eq!(app.agent.outbox.len(), 1, "the agent's event was recorded");
+    assert_eq!(app.agent.state.participant.name, "Claude (agent)", "an agent is always shown as one");
     assert_eq!(app.ed.page().get(&Id("seed-2".into())).unwrap().frame().unwrap().x, moving.frame().unwrap().x, "the gesture of the other is shown");
     // the final state of the host replaces the intermediate one
     let page_id = page;
@@ -524,6 +525,10 @@ fn cursors_names_strokes_and_the_agent_of_the_others_are_shown() {
     w.host.apply_local(vec![WireOp::Put { page: page_id, object: Box::new(original) }]);
     w.pump(4);
     assert!(w.mirrors_host());
+    // S-14: an agent that calls itself like a person of the session still shows as an agent
+    w.host.broadcast(&Message::Agent(inkboard_session::proto::AgentEvent { name: "Anna".into(), action: "add_shape".into(), targets: vec![], at: None }));
+    w.pump(4);
+    assert_eq!(w.app().agent.state.participant.name, "Anna (agent)");
 }
 
 /* ------------------------------------------------------------------ reconnection */

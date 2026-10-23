@@ -1319,6 +1319,13 @@ impl SessionHost {
         self.events.push(HostEvent::Excluded { id: pid, name: m.name, reason });
     }
 
+    /// Display name of the guest who modified `id` last, when it was a guest (and not the host) and the session still remembers it.
+    /// Used to mark text that reaches the host's agent as written by somebody else (S-14).
+    pub fn guest_author_of(&self, id: &Id) -> Option<String> {
+        let author = self.histories.last_author(id).filter(|a| *a != 0)?;
+        Some(self.members.get(&ParticipantId(author)).map_or_else(|| t("a guest who left"), |m| m.name.clone()))
+    }
+
     fn name_of(&self, author: Author) -> String {
         if author == 0 {
             return self.cfg.host_name.clone();

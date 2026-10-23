@@ -1807,7 +1807,9 @@ impl App {
                 let look = ev.action == "look" || presence::is_look_tool(&ev.action);
                 let action = if look { presence::Action::Look } else { presence::Action::Act };
                 let steps = if steps.is_empty() { Vec::new() } else { vec![steps] };
-                self.agent.state.participant.name = ev.name.clone();
+                // S-14: the name comes from the host's side (whatever its agent calls itself): it is always shown as an agent's, so
+                // that it cannot pass for a person of the session
+                self.agent.state.participant.name = tr!("{} (agent)", ev.name);
                 self.agent.record(presence::AgentEvent { name: ev.name, tool: ev.action, action, steps, at: now }, anchor, now);
             }
             _ => {}
