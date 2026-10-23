@@ -142,6 +142,18 @@ impl Room {
         self.pump(1);
     }
 
+    fn host_move_to(&mut self, at: (f64, f64)) {
+        let p = self.host.at(at.0, at.1);
+        self.host.h.event(Event::PointerMoved(p));
+        self.pump(1);
+    }
+
+    fn host_button(&mut self, at: (f64, f64), pressed: bool) {
+        let pos = self.host.at(at.0, at.1);
+        self.host.h.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        self.pump(1);
+    }
+
     /// The guest draws with the pen up to `steps` points of a diagonal; the button stays down.
     fn draw_without_release(&mut self, guest: usize, steps: u32) {
         self.guests[guest].tool(Tool::Pen);
@@ -216,6 +228,56 @@ fn a_move_in_progress_is_visible_to_the_host_and_the_other_guest() {
     r.pump(6);
     assert!(r.host.app().agent.remote.ghosts.is_empty(), "the ghost goes away with the gesture");
     let (h, g) = (r.host.frame(&id).x, r.guests[b].frame(&id).x);
+    assert!(h > start_x + 20.0 && (h - g).abs() < 0.01, "validated: host {h}, guest {g}");
+}
+
+#[test]
+fn a_stroke_of_the_host_in_progress_is_seen_by_the_guests_then_replaced_by_the_object() {
+    let mut r = Room::new();
+    let a = r.join("Anna", Role::Edit);
+    let b = r.join("Marc", Role::Edit);
+    r.host.tool(Tool::Pen);
+    // to the right of the Share window, which opened on the join requests
+    r.host_move_to((400.0, -60.0));
+    r.host_button((400.0, -60.0), true);
+    for k in 1..=8 {
+        r.host_move_to((400.0 + 20.0 * f64::from(k), -60.0 + 8.0 * f64::from(k)));
+    }
+    r.pump(3);
+    for guest in [a, b] {
+        let strokes = &r.guests[guest].app().agent.remote.strokes;
+        assert_eq!(strokes.len(), 1, "guest {guest} sees the host's stroke in progress");
+        let s = strokes.values().next().unwrap();
+        assert_eq!(s.author, ParticipantId::HOST.0);
+        assert!(s.pts.len() >= 5, "{} points", s.pts.len());
+        assert_eq!(pen_objects(&mut r.guests[guest]), 0, "nothing is in their board yet");
+    }
+    r.host_button((560.0, 4.0), false);
+    r.pump(6);
+    for guest in [a, b] {
+        assert!(r.guests[guest].app().agent.remote.strokes.is_empty(), "the temporary drawing goes away with the object");
+        assert_eq!(pen_objects(&mut r.guests[guest]), 1);
+    }
+    assert_eq!(pen_objects(&mut r.host), 1);
+}
+
+#[test]
+fn a_move_of_the_host_in_progress_is_seen_by_a_guest_then_validated() {
+    let mut r = Room::new();
+    let id = r.host.add_rect(-60.0, -40.0, 120.0, 80.0);
+    r.pump(2);
+    let a = r.join("Anna", Role::Edit);
+    let start_x = r.guests[a].frame(&id).x;
+    r.host_button((0.0, 0.0), true);
+    for k in 1..=8 {
+        r.host_move_to((12.0 * f64::from(k), 0.0));
+    }
+    r.pump(3);
+    let seen = r.guests[a].frame(&id).x;
+    assert!(seen > start_x + 20.0, "the guest sees the object moving: {seen} vs {start_x}");
+    r.host_button((96.0, 0.0), false);
+    r.pump(6);
+    let (h, g) = (r.host.frame(&id).x, r.guests[a].frame(&id).x);
     assert!(h > start_x + 20.0 && (h - g).abs() < 0.01, "validated: host {h}, guest {g}");
 }
 

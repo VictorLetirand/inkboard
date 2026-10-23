@@ -313,6 +313,11 @@ pub enum Message {
         have: u64,
         status: UploadStatus,
     },
+    /// Host -> guests: images the board has gained since the snapshot (the host's own: their identifier is not a hash), so that the
+    /// guests already in can ask for them by hash. Additive: a peer that does not know it drops the frame.
+    Assets {
+        list: Vec<AssetInfo>,
+    },
     // modifications
     Submit(Submit),
     Applied(Applied),

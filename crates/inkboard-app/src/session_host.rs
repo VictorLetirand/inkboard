@@ -114,6 +114,8 @@ const SILENT_GRACE_MS: u64 = 2_000;
 /// Revoked key sets kept for the resumption of admitted guests (the oldest go first: a guest that stayed away through this many
 /// regenerations has to ask to join again).
 const MAX_REVOKED_KEYS: usize = 16;
+/// Images announced to the guests in one message.
+const ANNOUNCE_PER_MESSAGE: usize = 200;
 const MAX_FRAMES_PER_POLL: usize = 1024;
 /// Bytes of frames read per `poll`, all connections together (what is left waits for the next `poll`): the work of one frame is
 /// proportional to its size, so this bounds how long one `poll` can take.
@@ -439,17 +441,22 @@ struct AssetIndex {
 }
 
 impl AssetIndex {
-    fn refresh(&mut self, doc: &Document) {
+    /// Indexes the images of `doc` not seen before; returns them.
+    fn refresh(&mut self, doc: &Document) -> Vec<AssetInfo> {
+        let mut added = Vec::new();
         if self.info.len() == doc.assets.len() && doc.assets.keys().all(|k| self.info.contains_key(k)) {
-            return;
+            return added;
         }
         for (id, a) in &doc.assets {
             if !self.info.contains_key(id) {
                 let hash = hash_hex(&a.data);
                 self.by_hash.entry(hash.clone()).or_insert_with(|| id.clone());
-                self.info.insert(id.clone(), AssetInfo { id: id.clone(), hash, size: a.data.len() as u64, mime: a.mime.clone() });
+                let info = AssetInfo { id: id.clone(), hash, size: a.data.len() as u64, mime: a.mime.clone() };
+                self.info.insert(id.clone(), info.clone());
+                added.push(info);
             }
         }
+        added
     }
     fn manifest(&self) -> Vec<AssetInfo> {
         self.info.values().cloned().collect()
@@ -843,6 +850,16 @@ impl SessionHost {
         self.broadcast(&Message::Agent(WireAgent { name: ev.name.clone(), action, targets, at }), None);
     }
 
+    /// The state of an object the host is moving, resizing or editing right now (shown by the guests, never written to their board).
+    pub fn send_host_transient(&mut self, object: Id, state: Object) {
+        self.broadcast(&Message::Transient { object, state: Box::new(state), author: Some(ParticipantId::HOST) }, None);
+    }
+
+    /// New points of a stroke the host is drawing right now.
+    pub fn send_host_stroke(&mut self, stroke: Id, points: Vec<Pt>) {
+        self.broadcast(&Message::StrokePoints { stroke, points, author: Some(ParticipantId::HOST) }, None);
+    }
+
     /// Relays the host's own cursor and selection.
     pub fn send_host_presence(&mut self, mut p: Presence) {
         p.participant = Some(ParticipantId::HOST);
@@ -1056,7 +1073,12 @@ impl SessionHost {
                 self.seqr.insert_asset(id.clone(), a.clone());
             }
         }
-        self.assets.refresh(self.seqr.doc());
+        // images the host gained since the guests got the manifest (their identifiers are not hashes): announced before the
+        // modification that uses them, so that the guests already in can fetch them
+        let added = self.assets.refresh(self.seqr.doc());
+        for list in added.chunks(ANNOUNCE_PER_MESSAGE) {
+            self.broadcast(&Message::Assets { list: list.to_vec() }, None);
+        }
         if ed.revision() == self.synced_rev {
             return;
         }

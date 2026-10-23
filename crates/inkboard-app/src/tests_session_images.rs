@@ -415,6 +415,25 @@ fn an_image_the_host_already_has_is_not_sent_again() {
 }
 
 #[test]
+fn an_image_the_host_adds_after_the_guest_joined_reaches_it_without_a_new_snapshot() {
+    let mut r = Room::new(12, |_| {});
+    let a = r.join("Anna", Role::Edit);
+    let b = r.join("Marc", Role::View);
+    r.rounds(10);
+    let png = noise_png(120, 100, 41);
+    // the host places an image (an identifier that is not a hash) once everybody is in
+    let aid = r.ed.doc.add_asset("image/png", png.clone());
+    let obj = Object::new(
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 60.0, 50.0), asset: aid, latex: None, mono: false }),
+        Style { width: 0.0, fill: None, ..Style::default() },
+    );
+    r.ed.insert(obj);
+    r.until("both guests to show the host's new image", |r| shows(&r.guests[a].app().ed, &png) && shows(&r.guests[b].app().ed, &png));
+    assert_eq!(r.session(a).chunks_sent, 0);
+    assert!(r.session(a).state() == GuestState::Live, "no reconnection was needed");
+}
+
+#[test]
 fn a_reader_cannot_upload() {
     let mut r = Room::new(9, |_| {});
     let v = r.join("Viewer", Role::View);

@@ -45,6 +45,8 @@ const MAX_FRAME: usize = 16 << 20;
 pub(crate) const MAX_IMAGE: u64 = 15 << 20;
 /// Images asked for at the same time.
 const MAX_IMAGES_IN_FLIGHT: usize = 4;
+/// Images learnt after the snapshot (announced by the host or used by others' modifications) that a guest keeps.
+const MAX_LEARNT: usize = 10_000;
 /// Size of the pieces of an image sent to the host (the host accepts up to 256 KiB).
 const UPLOAD_CHUNK: usize = 128 << 10;
 /// Bytes sent but not yet acknowledged by the host at most (the transfer is paced by the acknowledgements).
@@ -1375,6 +1377,7 @@ impl GuestSession {
                     let now = self.clock.now_ms();
                     self.on_ack(&hash, have, status, now);
                 }
+                Message::Assets { list } => self.learn_announced(&list),
                 Message::Agent(mut ev) => {
                     ev.name = crate::names::clean_name(&ev.name).unwrap_or_else(|| t("Agent"));
                     ev.targets.truncate(MAX_AGENT_TARGETS);
@@ -1479,11 +1482,22 @@ impl GuestSession {
         self.changes.doc = true;
     }
 
+    /// Images the host announces after the snapshot (its own, whose identifier is not a hash): fetched by hash like the others. What
+    /// the host says is bounded: a real hash, a size we would take, and no more than `MAX_LEARNT` images kept in all.
+    fn learn_announced(&mut self, list: &[AssetInfo]) {
+        for info in list {
+            if self.extra.len() >= MAX_LEARNT || !is_hash(&info.hash) || self.host_knows(&info.id) {
+                continue;
+            }
+            self.extra.push(info.clone());
+        }
+    }
+
     /// Images that modifications of others use and that the manifest of the snapshot does not list: when the identifier is a hash
     /// (guests upload under their hash), the image can be asked for by it.
     fn learn_images(&mut self, ops: &[WireOp]) {
         for id in image_assets(ops) {
-            if is_hash(id.as_str()) && !self.host_knows(&id) {
+            if is_hash(id.as_str()) && !self.host_knows(&id) && self.extra.len() < MAX_LEARNT {
                 self.extra.push(AssetInfo { hash: id.0.clone(), id, size: 0, mime: String::new() });
             }
         }
