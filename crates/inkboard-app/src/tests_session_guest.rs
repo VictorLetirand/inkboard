@@ -257,6 +257,7 @@ fn zscaler() -> Diagnosis {
         server_header: Some("Zscaler/6.2".into()),
         gateway: Some("Zscaler".into()),
         summary: "HTTP 403 with a Zscaler block page".into(),
+        ..Diagnosis::default()
     }
 }
 
@@ -735,6 +736,39 @@ fn a_timeout_without_diagnosis_gives_the_generic_message_and_no_network_a_distin
 }
 
 #[test]
+fn https_passing_but_no_websocket_gives_its_own_message_and_the_facts_go_in_the_diagnostic() {
+    let blocked = Diagnosis {
+        websocket_blocked: true,
+        facts: vec!["HTTPS probe of the relay: answered".to_owned(), "Cause retained: WebSocket blocked".to_owned()],
+        summary: "an HTTPS request is answered, the WebSocket never connected".to_owned(),
+        ..Diagnosis::default()
+    };
+    set_for_thread(Some(Lang::En));
+    let issue = classify_failure(ConnectErrorKind::Other, "no answer within 15 s", "https://euc1-1.relay.n0.iroh.link./", Some(&blocked));
+    assert_eq!(issue.class, NetClass::WebSocketBlocked);
+    assert!(issue.headline().contains("WebSocket") && issue.headline().contains("cannot be told"), "{}", issue.headline());
+    let tips = issue.tips();
+    assert_eq!(tips.len(), 3);
+    assert!(tips[0].contains("WebSocket") && tips[0].contains("*.relay.n0.iroh.link") && tips[0].contains("443"), "{}", tips[0]);
+    let text = issue.diagnostic_text();
+    for needle in ["Reachable: no", "HTTPS probe of the relay: answered", "Cause retained: WebSocket blocked", "Error: no answer within 15 s"] {
+        assert!(text.contains(needle), "{needle} in {text}");
+    }
+    // a relay of somebody else's link: never advise to have it allowed
+    let unknown = NetIssue { unknown_relay: true, ..issue.clone() };
+    assert_eq!(unknown.tips().len(), 1);
+    // a relay that is not one of n0's: the exact domain is what IT must allow
+    let other = classify_failure(ConnectErrorKind::Other, "", "https://relay.example.org/", Some(&blocked));
+    assert!(other.tips()[0].contains("relay.example.org") && !other.tips()[0].contains('*'), "{}", other.tips()[0]);
+    // the relay connection is up (reachable) and no WebSocket problem: the host is the problem
+    let host = Diagnosis { reachable: true, ..Diagnosis::default() };
+    assert_eq!(classify_failure(ConnectErrorKind::Other, "", DEFAULT_RELAY_URL, Some(&host)).class, NetClass::HostUnreachable);
+    set_for_thread(Some(Lang::Fr));
+    assert!(issue.tips()[0].contains("service informatique") && issue.tips()[0].contains("WebSocket"), "{}", issue.tips()[0]);
+    set_for_thread(None);
+}
+
+#[test]
 fn the_failure_messages_are_translated() {
     MISSING.with(|m| m.borrow_mut().clear());
     let en = {
@@ -758,6 +792,12 @@ fn the_failure_messages_are_translated() {
             "",
             "https://r.example/",
             Some(&Diagnosis { reachable: true, http_status: Some(200), ..Diagnosis::default() }),
+        ),
+        classify_failure(
+            ConnectErrorKind::Other,
+            "",
+            "https://euc1-1.relay.n0.iroh.link./",
+            Some(&Diagnosis { websocket_blocked: true, ..Diagnosis::default() }),
         ),
     ] {
         let _ = (issue.headline(), issue.tips());

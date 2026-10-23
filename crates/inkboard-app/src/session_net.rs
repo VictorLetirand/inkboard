@@ -409,6 +409,7 @@ impl RelayDiagnoser for NetDiagnoser {
             // other gateways are still recognized by their status code (401, 403, 407, 451, 511) in `classify_failure`
             gateway: (d.gateway == Some(GatewayKind::Zscaler)).then(|| "Zscaler".to_owned()),
             summary: d.summary,
+            ..Diagnosis::default()
         }
     }
 }

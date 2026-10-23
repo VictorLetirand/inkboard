@@ -161,7 +161,8 @@ Many company and school networks block unknown internet services. If you cannot 
 
 - *"Cannot reach the connection service. A firewall or a security gateway (often at work or at school) is probably blocking it."* The "connection service" is the relay, the server that lets two computers find each other. Your network does not let Inkboard reach it. If Inkboard recognises the gateway (for example Zscaler), the message names it.
 - *"No connection: this computer does not seem to be connected to the Internet."* Check your Wi-Fi or cable.
-- *"The connection service answers, but the host cannot be reached."* Your network is fine; the host closed the session or is offline. Ask them to check.
+- *"The connection service answers, but the host cannot be reached."* Your network is fine; the host closed the session or is offline. Ask them to check. (In the web page this is only said when the browser really holds a connection to the connection service.)
+- *"Your network lets this page reach the connection service, but seems to block the connection itself (WebSocket). The exact cause cannot be told from here."* (web page only.) A plain HTTPS request to the connection service gets an answer, but the live connection (WebSocket) to it never comes up. That is typical of a proxy or gateway that lets web pages through but filters WebSocket connections, or that answers the service with a block page. The window lists three tips: **ask your IT department to allow WebSocket connections to `*.relay.n0.iroh.link` (port 443)**, try another network, and send them the diagnostic. We do not know the exact cause on your network, and we could not reproduce a real gateway such as Zscaler; the message only reports what the browser observed.
 
 ### The three things to try
 
@@ -173,7 +174,7 @@ When the network is likely to blame, the window lists three tips:
 
 ### The "Copy the diagnostic" button
 
-The button **Copy the diagnostic** puts a short text (in English, so that your IT department can read it) in the clipboard. It contains: the Inkboard version, the connection service's domain and address, whether it was reachable, the HTTP status code, the `Server` header, the security gateway if one was recognised, and the error. It contains **nothing about your board, your name or the invitation link**. Paste it in your message to the IT department. **Try again** repeats the attempt; **Close** closes the window.
+The button **Copy the diagnostic** puts a short text (in English, so that your IT department can read it) in the clipboard. It contains: the Inkboard version, the connection service's domain and address, whether it was reachable, the HTTP status code, the `Server` header, the security gateway if one was recognised, and the error. In the web page it also lists what the browser observed: the browser's name (user agent), the address of the connection service as the link carries it and as the browser used it, the result of a plain HTTPS request to the service (answered, failed or timed out, and how long it took), whether the browser is really connected to the service, how long the attempt lasted before it was abandoned, and the cause retained. It contains **nothing about your board, your name or the invitation link**. Paste it in your message to the IT department. **Try again** repeats the attempt; **Close** closes the window.
 
 ### What to tell the IT department
 

@@ -169,6 +169,10 @@ pub struct NetConfig {
     pub connect_timeout: Duration,
     /// How long `ticket`/`hints` wait for the relay connection and the local addresses before giving up on them.
     pub ready_timeout: Duration,
+    /// Browser guest only: time-out of the HTTPS probe of the relay that explains a failed connection (see [`crate::relay_signals`]).
+    pub probe_timeout: Duration,
+    /// Browser guest only: how long a connection attempt runs before the probe starts (an attempt that succeeds first costs no probe).
+    pub probe_delay: Duration,
     /// Largest accepted/sent frame, in bytes (already encrypted: payload limit plus the AEAD overhead).
     pub max_frame: usize,
     /// Host only: bind `127.0.0.1` only and advertise it (tests, two processes on one machine).
@@ -184,6 +188,8 @@ impl Default for NetConfig {
             idle_timeout: IDLE_TIMEOUT,
             connect_timeout: Duration::from_secs(30),
             ready_timeout: Duration::from_secs(10),
+            probe_timeout: Duration::from_secs(5),
+            probe_delay: Duration::from_secs(2),
             max_frame: (1 << 20) + 1024,
             loopback_only: false,
             allow_private_relays: false,

@@ -3,12 +3,13 @@
 //! Nothing here needs a thread or an async runtime: only iroh's own types, which are the same in a browser.
 
 use crate::config::{NetConfig, RelaySetting};
+use crate::relay_signals::RelayLink;
 use crate::ticket::ticket_to_addr;
 use inkboard_session::crypto::Ticket;
 use inkboard_session::error::{Error, NetCause, Result};
 use iroh::endpoint::{Connection as QuicConn, ConnectionError, IdleTimeout, QuicTransportConfig, ReadError, ReadExactError, RecvStream, SendStream};
 use iroh::endpoint::{VarInt, WriteError, presets};
-use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, TransportAddr};
+use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, TransportAddr, Watcher as _};
 use std::fmt::Display;
 use std::time::Duration;
 
@@ -160,9 +161,16 @@ pub(crate) fn dial_plan(cfg: &NetConfig, mut addr: EndpointAddr) -> Result<(Endp
     Ok((addr, relays))
 }
 
-/// A failed dial: when relays were expected but the endpoint never reached one, the relay is the culprit.
+/// What iroh says about the endpoint's connection to its home relay. `Endpoint::addr()` is not that: it holds the home relay's URL as
+/// soon as one is selected, connected or not (a relay behind a silent firewall is "selected" and never connects).
+pub(crate) fn relay_link_of(endpoint: &Endpoint) -> RelayLink {
+    let Some(status) = endpoint.home_relay_status().get().into_iter().next() else { return RelayLink::default() };
+    RelayLink { url: Some(status.url().to_string()), connected: status.is_connected(), last_error: status.last_error().map(|e| e.to_string()) }
+}
+
+/// A failed dial: when relays were expected but the endpoint is not connected to one, the relay is the culprit.
 pub(crate) fn dial_failure(endpoint: &Endpoint, relays_on: bool, detail: String) -> Error {
-    if relays_on && endpoint.addr().relay_urls().next().is_none() {
+    if relays_on && !relay_link_of(endpoint).connected {
         net(NetCause::RelayUnreachable, format!("no connection to a relay ({detail})"))
     } else {
         net(NetCause::HostUnreachable, detail)

@@ -161,7 +161,8 @@ Beaucoup de réseaux d'entreprise et d'école bloquent les services Internet inc
 
 - *« Impossible de joindre le service de connexion. Un pare-feu ou une passerelle de sécurité (souvent en entreprise ou à l'école) le bloque probablement. »* Le « service de connexion » est le relais, le serveur qui permet à deux ordinateurs de se trouver. Votre réseau ne laisse pas Inkboard l'atteindre. Si Inkboard reconnaît la passerelle (par exemple Zscaler), le message la nomme.
 - *« Pas de connexion : cet ordinateur ne semble pas relié à Internet. »* Vérifiez votre Wi-Fi ou votre câble.
-- *« Le service de connexion répond, mais l'hôte est injoignable. »* Votre réseau est correct ; l'hôte a fermé la session ou n'est plus en ligne. Demandez-lui de vérifier.
+- *« Le service de connexion répond, mais l'hôte est injoignable. »* Votre réseau est correct ; l'hôte a fermé la session ou n'est plus en ligne. Demandez-lui de vérifier. (Dans la page web, ce message n'apparaît que si le navigateur détient réellement une connexion au service de connexion.)
+- *« Votre réseau laisse cette page atteindre le service de connexion, mais semble bloquer la connexion elle-même (WebSocket). La cause exacte ne peut pas être connue d'ici. »* (page web uniquement.) Une simple requête HTTPS vers le service de connexion reçoit une réponse, mais la connexion en direct (WebSocket) ne s'établit jamais. C'est typique d'un proxy ou d'une passerelle qui laisse passer les pages web mais filtre les connexions WebSocket, ou qui répond au service par une page de blocage. La fenêtre propose trois pistes : **demandez au service informatique d'autoriser les connexions WebSocket vers `*.relay.n0.iroh.link` (port 443)**, essayez un autre réseau, et envoyez-lui le diagnostic. Nous ne connaissons pas la cause exacte sur votre réseau, et nous n'avons pas pu reproduire une vraie passerelle comme Zscaler ; le message rapporte seulement ce que le navigateur a observé.
 
 ### Les trois pistes
 
@@ -173,7 +174,7 @@ Quand le réseau est probablement en cause, la fenêtre propose trois pistes :
 
 ### Le bouton « Copier le diagnostic »
 
-Le bouton **Copier le diagnostic** place dans le presse-papiers un court texte (en anglais, pour que votre service informatique puisse le lire). Il contient : la version d'Inkboard, le domaine et l'adresse du service de connexion, s'il était joignable, le code d'état HTTP, l'en-tête `Server`, la passerelle de sécurité si elle a été reconnue, et l'erreur. Il ne contient **rien sur votre tableau, votre nom ou le lien d'invitation**. Collez-le dans votre message au service informatique. **Réessayer** refait la tentative ; **Fermer** ferme la fenêtre.
+Le bouton **Copier le diagnostic** place dans le presse-papiers un court texte (en anglais, pour que votre service informatique puisse le lire). Il contient : la version d'Inkboard, le domaine et l'adresse du service de connexion, s'il était joignable, le code d'état HTTP, l'en-tête `Server`, la passerelle de sécurité si elle a été reconnue, et l'erreur. Dans la page web, il liste aussi ce que le navigateur a observé : le nom du navigateur (user agent), l'adresse du service de connexion telle que le lien la porte et telle que le navigateur l'a utilisée, le résultat d'une simple requête HTTPS vers le service (réponse, échec ou délai dépassé, et sa durée), si le navigateur est réellement connecté au service, la durée de la tentative avant abandon, et la cause retenue. Il ne contient **rien sur votre tableau, votre nom ou le lien d'invitation**. Collez-le dans votre message au service informatique. **Réessayer** refait la tentative ; **Fermer** ferme la fenêtre.
 
 ### Quoi dire au service informatique
 
