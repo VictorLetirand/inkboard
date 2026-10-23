@@ -633,6 +633,8 @@ pub fn follow_ui(app: &mut App, ctx: &egui::Context) {
         if !people.is_empty() {
             // below the row of tools when it sits under the title (narrow window, phone)
             let top = if ctx.content_rect().width() < 1180.0 { 116.0 } else { 52.0 };
+            // on a phone the session bar sits under the tools (join_ui::banners)
+            let top = if ctx.content_rect().width() < 560.0 { top + crate::join_ui::PHONE_BAR_SHIFT } else { top };
             egui::Area::new(egui::Id::new("guest-people")).anchor(egui::Align2::RIGHT_TOP, vec2(-12.0, top)).order(egui::Order::Foreground).show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     for (id, name, color) in &people {
