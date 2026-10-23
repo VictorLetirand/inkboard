@@ -130,7 +130,7 @@ Inkboard embeds a library of about 28,000 icons (`crates/inkboard-app/assets/ico
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | ctr | 0.9.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-modes |
-| ctutils | 0.4.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
+| ctutils | 0.4.5 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | https://github.com/rust-windowing/cursor-icon |
 | curve25519-dalek | 5.0.0 | BSD-3-Clause | https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek |
 | curve25519-dalek-derive | 0.1.1 | MIT/Apache-2.0 | https://github.com/dalek-cryptography/curve25519-dalek |
@@ -4819,7 +4819,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### Text 69 — ctutils 0.4.3
+### Text 69 — ctutils 0.4.5
 
 ```text
 Copyright (c) 2025-2026 The RustCrypto Project Developers
