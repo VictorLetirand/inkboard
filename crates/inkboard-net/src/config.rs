@@ -43,6 +43,7 @@ impl RelaySetting {
         Ok(if urls.is_empty() { Self::Default } else { Self::Custom(urls) })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn mode(&self) -> RelayMode {
         match self {
             Self::Default => RelayMode::Default,
@@ -51,6 +52,7 @@ impl RelaySetting {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn is_disabled(&self) -> bool {
         matches!(self, Self::Disabled)
     }
