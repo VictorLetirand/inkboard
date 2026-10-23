@@ -130,7 +130,10 @@ impl GuestRelays {
 }
 
 pub(crate) async fn bind_guest(cfg: &NetConfig, relays: &GuestRelays) -> Result<Endpoint> {
-    Endpoint::builder(presets::Minimal).relay_mode(relays.mode()).transport_config(quic_config(cfg.idle_timeout)).bind().await.map_err(local)
+    let builder = Endpoint::builder(presets::Minimal).relay_mode(relays.mode()).transport_config(quic_config(cfg.idle_timeout));
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = if cfg.relay_only { builder.clear_ip_transports() } else { builder };
+    builder.bind().await.map_err(local)
 }
 
 /// The address of a ticket, without the relays this guest may not use (see `IrohTransport::connect_ticket`).

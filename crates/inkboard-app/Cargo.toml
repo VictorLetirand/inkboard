@@ -57,4 +57,5 @@ workspace = true
 
 [dev-dependencies]
 base64 = "0.23.1"
+inkboard-crowd = { path = "../inkboard-crowd" }
 egui_kittest = { version = "0.33.3", features = ["eframe", "snapshot", "wgpu"] }

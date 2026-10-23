@@ -270,6 +270,10 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_crowd;
+#[cfg(test)]
+mod tests_crowd_ui;
+#[cfg(test)]
 mod tests_session_e2e;
 #[cfg(test)]
 mod tests_session_guest;

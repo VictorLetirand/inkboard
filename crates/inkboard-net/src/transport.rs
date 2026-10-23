@@ -103,6 +103,27 @@ impl Shared {
     }
 }
 
+/// Sizes of the two queues of a connection, readable from any thread (load tests, diagnostics).
+#[derive(Clone)]
+pub struct QueueProbe(Arc<Shared>);
+
+impl std::fmt::Debug for QueueProbe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueueProbe").field("out_bytes", &self.out_bytes()).field("in_bytes", &self.in_bytes()).finish()
+    }
+}
+
+impl QueueProbe {
+    /// Bytes handed to `send` that the network has not taken yet.
+    pub fn out_bytes(&self) -> usize {
+        self.0.out_bytes.load(Ordering::Relaxed)
+    }
+    /// Bytes received that `recv` has not returned yet.
+    pub fn in_bytes(&self) -> usize {
+        self.0.in_bytes.load(Ordering::Relaxed)
+    }
+}
+
 /// One connection to one peer. Frames received before the end of the connection stay readable with `recv`.
 pub struct IrohConn {
     peer: String,
@@ -147,6 +168,11 @@ impl IrohConn {
             return None;
         }
         Some(self.shared.fault.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or(Error::Closed))
+    }
+
+    /// A handle on the queue sizes of this connection that outlives it (it can be read while another thread owns the connection).
+    pub fn probe(&self) -> QueueProbe {
+        QueueProbe(Arc::clone(&self.shared))
     }
 
     /// Host side: closes the connection and tells the peer that it was refused (it sees `Network { Refused }`).
@@ -273,6 +299,8 @@ async fn bind_host(cfg: &NetConfig) -> Result<Endpoint> {
         Endpoint::builder(presets::Minimal).alpns(vec![ALPN.to_vec()]).relay_mode(cfg.relays.mode()).transport_config(quic_config(cfg.idle_timeout));
     if cfg.loopback_only {
         builder = builder.clear_ip_transports().bind_addr(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).map_err(local)?;
+    } else if cfg.relay_only {
+        builder = builder.clear_ip_transports();
     }
     builder.bind().await.map_err(local)
 }

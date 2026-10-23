@@ -1,0 +1,24 @@
+[package]
+name = "inkboard-crowd"
+description = "Load tests of shared sessions: realistic seed boards, simulated guests (real client, real transport), measurements."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "crowd"
+path = "src/bin/crowd.rs"
+
+[dependencies]
+inkboard-core = { path = "../inkboard-core" }
+inkboard-session = { path = "../inkboard-session" }
+inkboard-net = { path = "../inkboard-net" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+
+[lints]
+workspace = true

@@ -616,6 +616,22 @@ pub enum HostEvent {
     },
 }
 
+/// Sizes of what a running host keeps (see [`SessionHost::stats`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostStats {
+    pub seq: Seq,
+    /// Modifications kept to catch guests up, and their estimated bytes.
+    pub log_entries: usize,
+    pub log_bytes: usize,
+    /// Objects whose last author is remembered.
+    pub tracked_objects: usize,
+    pub connections: usize,
+    pub members: usize,
+    /// Image pieces waiting to be sent, all connections together.
+    pub queued_messages: usize,
+    pub dropped_frames: u64,
+}
+
 /* ----------------------------------------------------------------------------------------------------------- the host */
 
 pub struct SessionHost {
@@ -731,6 +747,21 @@ impl SessionHost {
 
     pub fn take_events(&mut self) -> Vec<HostEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Sizes of what the host keeps (load tests, diagnostics).
+    pub fn stats(&self) -> HostStats {
+        let (log_entries, log_bytes) = self.seqr.log_stats();
+        HostStats {
+            seq: self.seqr.seq(),
+            log_entries,
+            log_bytes,
+            tracked_objects: self.seqr.tracked_objects(),
+            connections: self.conns.len(),
+            members: self.members.len(),
+            queued_messages: self.conns.iter().map(|c| c.out.len()).sum(),
+            dropped_frames: self.dropped_frames,
+        }
     }
 
     pub fn pending(&self) -> Vec<PendingView> {
