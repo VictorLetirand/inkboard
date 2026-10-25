@@ -94,7 +94,8 @@ pub(crate) fn is_public_ip(ip: std::net::IpAddr) -> bool {
                 return is_public_ip(IpAddr::V4(v4));
             }
             if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
-                let v4 = std::net::Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8);
+                let ([b0, b1], [b2, b3]) = (s[6].to_be_bytes(), s[7].to_be_bytes());
+                let v4 = std::net::Ipv4Addr::new(b0, b1, b2, b3);
                 return is_public_ip(IpAddr::V4(v4));
             }
             !(a.is_loopback()
@@ -149,6 +150,7 @@ pub fn known_relay_hosts(setting: &RelaySetting) -> Vec<String> {
 
 /// Is the relay of this URL one of the public relays of n0 or of `configured` (host names or URLs)? A relay that is neither is
 /// *unknown*: a link that uses it must be confirmed by the user, and no advice about it is ever given.
+#[must_use]
 pub fn is_known_relay(url: &str, configured: &[String]) -> bool {
     let Ok(url) = parse_relay_url(url) else { return false };
     let Some(host) = relay_host(&url) else { return false };
@@ -203,6 +205,7 @@ impl Default for NetConfig {
 
 impl NetConfig {
     /// No relay, host bound to the loopback interface: works offline and deterministically.
+    #[must_use]
     pub fn loopback() -> Self {
         Self { relays: RelaySetting::Disabled, loopback_only: true, allow_private_relays: true, ..Self::default() }
     }

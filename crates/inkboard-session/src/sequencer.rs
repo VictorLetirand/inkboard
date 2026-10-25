@@ -74,6 +74,7 @@ impl Sequencer {
     pub const DEFAULT_CHANGED_CAP: usize = 200_000;
 
     /// `log_cap`: number of `Applied` kept to catch guests up (the plan suggests 1 000).
+    #[must_use]
     pub fn new(doc: Document, log_cap: usize) -> Self {
         Self {
             doc,
@@ -96,11 +97,13 @@ impl Sequencer {
     }
 
     /// Entries of the log and their estimated bytes.
+    #[must_use]
     pub fn log_stats(&self) -> (usize, usize) {
         (self.log.len(), self.log_bytes)
     }
 
     /// Objects whose last change is remembered.
+    #[must_use]
     pub fn tracked_objects(&self) -> usize {
         self.changed.len()
     }
@@ -112,9 +115,11 @@ impl Sequencer {
         }
     }
 
+    #[must_use]
     pub fn doc(&self) -> &Document {
         &self.doc
     }
+    #[must_use]
     pub fn seq(&self) -> Seq {
         self.seq
     }
@@ -168,6 +173,7 @@ impl Sequencer {
         self.doc.assets.insert(id, asset);
     }
 
+    #[must_use]
     pub fn snapshot(&self, assets: Vec<crate::proto::AssetInfo>) -> Snapshot {
         Snapshot::new(&self.doc, self.seq, assets)
     }
@@ -179,6 +185,7 @@ impl Sequencer {
 
     /// The `Applied`s after `last_seq` (possibly none), or `None` when they are not all retained or `last_seq` is in the future: the
     /// guest needs the whole document. Unlike [`Sequencer::catch_up`] it builds no snapshot.
+    #[must_use]
     pub fn applied_since(&self, last_seq: Seq) -> Option<Vec<Applied>> {
         if last_seq > self.seq {
             return None;
@@ -193,6 +200,7 @@ impl Sequencer {
     }
 
     /// The `Applied`s after `last_seq`, or a `Snapshot` when they are not all retained (or `last_seq` is in the future).
+    #[must_use]
     pub fn catch_up(&self, last_seq: Seq, assets: Vec<crate::proto::AssetInfo>) -> CatchUp {
         if last_seq > self.seq {
             return CatchUp::Snapshot(self.snapshot(assets));

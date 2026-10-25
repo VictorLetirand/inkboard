@@ -19,6 +19,7 @@ pub enum Op {
 }
 
 impl Op {
+    #[must_use]
     pub fn inverse(&self) -> Op {
         match self.clone() {
             Op::Insert { page, index, obj } => Op::Remove { page, index, obj },
@@ -78,7 +79,7 @@ impl Document {
             }
             Op::SetLayers { page, after, .. } => {
                 if let Some(p) = self.page_mut(page) {
-                    p.layers = after.clone();
+                    p.layers.clone_from(after);
                 }
             }
             Op::AddPage { index, page } => {
@@ -92,11 +93,11 @@ impl Document {
             }
             Op::RenamePage { page, after, .. } => {
                 if let Some(p) = self.page_mut(page) {
-                    p.name = after.clone();
+                    p.name.clone_from(after);
                 }
             }
             Op::SetBackground { after, .. } => self.background = *after,
-            Op::SetName { after, .. } => self.name = after.clone(),
+            Op::SetName { after, .. } => self.name.clone_from(after),
         }
     }
 }
@@ -116,6 +117,7 @@ impl Default for History {
 }
 
 impl History {
+    #[must_use]
     pub fn new(limit: usize) -> Self {
         Self { undo: Vec::new(), redo: Vec::new(), limit }
     }
@@ -129,9 +131,11 @@ impl History {
             self.undo.remove(0);
         }
     }
+    #[must_use]
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
+    #[must_use]
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
@@ -181,6 +185,7 @@ pub struct AuthorOutcome {
 
 impl AuthorOutcome {
     /// Number of skipped objects per last author ("2 objects modified by Anna, not undone").
+    #[must_use]
     pub fn skipped_by(&self) -> Vec<(Option<Author>, usize)> {
         let mut out: Vec<(Option<Author>, usize)> = Vec::new();
         for s in &self.skipped {
@@ -307,12 +312,14 @@ impl AuthorHistories {
     pub const DEFAULT_TRACKED: usize = 100_000;
 
     /// `limit`: undo steps kept per author.
+    #[must_use]
     pub fn new(limit: usize) -> Self {
         Self::with_budgets(limit, Self::DEFAULT_AUTHOR_BYTES, Self::DEFAULT_TOTAL_BYTES, Self::DEFAULT_TRACKED)
     }
 
     /// `limit` steps per author, at most `author_bytes` per author and `total_bytes` overall (estimates, see [`Self::bytes`]),
     /// and the last author of at most `tracked` objects.
+    #[must_use]
     pub fn with_budgets(limit: usize, author_bytes: usize, total_bytes: usize, tracked: usize) -> Self {
         Self {
             stacks: HashMap::new(),
@@ -331,11 +338,13 @@ impl AuthorHistories {
     }
 
     /// Objects whose last author is remembered.
+    #[must_use]
     pub fn tracked(&self) -> usize {
         self.last.len()
     }
 
     /// Who modified `id` last, if still remembered.
+    #[must_use]
     pub fn last_author(&self, id: &Id) -> Option<Author> {
         self.last.get(id).map(|(a, _)| *a)
     }
@@ -384,9 +393,11 @@ impl AuthorHistories {
         self.enforce_budgets(author);
     }
 
+    #[must_use]
     pub fn can_undo(&self, author: Author) -> bool {
         self.stacks.get(&author).is_some_and(|s| !s.undo.is_empty())
     }
+    #[must_use]
     pub fn can_redo(&self, author: Author) -> bool {
         self.stacks.get(&author).is_some_and(|s| !s.redo.is_empty())
     }

@@ -36,7 +36,7 @@ fn every_altered_character_of_a_ticket_is_refused() {
         let altered: String = chars.into_iter().collect();
         let err = Ticket::decode(&altered).expect_err(&format!("alteration at {i} accepted"));
         assert!(matches!(err, Error::BadTicket(_)));
-        assert!(!err.to_string().is_empty());
+        assert_ne!(err.to_string(), "");
     }
 }
 

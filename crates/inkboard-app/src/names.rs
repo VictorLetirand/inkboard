@@ -85,7 +85,7 @@ pub fn file_stem(raw: &str) -> String {
     let cut: String = kept.trim_matches(['.', ' ']).chars().take(FILE_STEM_MAX).collect();
     let mut stem = cut.trim_end_matches(['.', ' ']).to_owned();
     if stem.is_empty() {
-        stem = "board".to_owned();
+        "board".clone_into(&mut stem);
     }
     if is_reserved_windows_name(&stem) {
         stem.insert(0, '_');

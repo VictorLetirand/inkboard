@@ -55,6 +55,7 @@ const VENDORS: [&str; 12] =
 const WARNING_WORDS: [&str; 7] = ["access denied", "blocked", "caution", "security policy", "firewall", "web filter", "not allowed"];
 
 /// Does the answer come from a security gateway rather than from the relay? Pure, so that it is easy to test.
+#[must_use]
 pub fn classify_gateway(status: u16, server: Option<&str>, body: &str, tls_trusted: Option<bool>) -> Option<GatewayKind> {
     let server = server.unwrap_or("").to_ascii_lowercase();
     let body = body.to_ascii_lowercase();
@@ -88,11 +89,13 @@ pub struct DiagnoseOptions {
 /// small margin). Strict policy (see [`DiagnoseOptions`]): an *unknown* relay (neither one of n0 nor configured) is only contacted
 /// over `https` on a public address, at `/`, with the name resolved first and the connection made to a checked address, and the
 /// certificate must be valid (no retry without verification). A redirect is never followed.
+#[must_use]
 pub fn diagnose_relay(url: &str, timeout: Duration) -> Diagnosis {
     diagnose_relay_with(url, timeout, &DiagnoseOptions::default())
 }
 
 /// [`diagnose_relay`] with explicit options.
+#[must_use]
 pub fn diagnose_relay_with(url: &str, timeout: Duration, opts: &DiagnoseOptions) -> Diagnosis {
     let Ok(parsed) = url.trim().parse::<RelayUrl>() else {
         return Diagnosis { summary: format!("invalid relay URL: {}", printable(url)), ..Diagnosis::new(url) };
@@ -121,16 +124,15 @@ pub fn diagnose_relay_with(url: &str, timeout: Duration, opts: &DiagnoseOptions)
     });
     let mut d = Diagnosis::new(&host);
     if spawned.is_err() {
-        d.summary = "cannot start the diagnosis thread".to_owned();
+        "cannot start the diagnosis thread".clone_into(&mut d.summary);
         return d;
     }
     // The worker may be stuck in a name resolution (no timeout in the standard library): give up on it, it ends by itself.
-    match rx.recv_timeout(timeout + Duration::from_secs(1)) {
-        Ok(done) => done,
-        Err(_) => {
-            d.summary = format!("{host}:{port}: no answer within {} s", timeout.as_secs_f32());
-            d
-        }
+    if let Ok(done) = rx.recv_timeout(timeout + Duration::from_secs(1)) {
+        done
+    } else {
+        d.summary = format!("{host}:{port}: no answer within {} s", timeout.as_secs_f32());
+        d
     }
 }
 

@@ -50,6 +50,7 @@ pub fn shared_icons() -> Option<&'static inkboard_icons::Library> {
 }
 
 /// The pack bytes when they are available without waiting.
+#[allow(clippy::unnecessary_wraps, reason = "same signature as the web build, where the pack may not be there yet")]
 pub fn icon_pack() -> Option<&'static [u8]> {
     Some(inkboard_icons::PACK)
 }

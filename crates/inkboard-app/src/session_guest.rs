@@ -29,6 +29,7 @@ use inkboard_session::transport::{Connection, Transport};
 use inkboard_session::wire::{WireOp, ops_to_wire};
 use inkboard_session::{Client, ClientConfig, ClientEvent, Error, JsonCodec, Message, ParticipantId, Role};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -413,16 +414,16 @@ impl NetIssue {
         let d = self.diagnosis.clone().unwrap_or_default();
         let yes_no = |b: bool| if b { "yes" } else { "no" };
         let mut s = format!("Inkboard {}\nConnection service: {} ({})\n", env!("CARGO_PKG_VERSION"), self.domain, self.relay_url);
-        s += &format!("Reachable: {}\n", if self.diagnosis.is_some() { yes_no(d.reachable) } else { "unknown" });
-        s += &format!("HTTP status: {}\n", d.http_status.map_or("none".to_owned(), |c| c.to_string()));
-        s += &format!("Server header: {}\n", d.server_header.as_deref().unwrap_or("none"));
-        s += &format!("Security gateway: {}\n", d.gateway.as_deref().unwrap_or("not detected"));
-        s += &format!("Diagnosis: {}\n", if d.summary.is_empty() { "none" } else { &d.summary });
+        let _ = writeln!(s, "Reachable: {}", if self.diagnosis.is_some() { yes_no(d.reachable) } else { "unknown" });
+        let _ = writeln!(s, "HTTP status: {}", d.http_status.map_or("none".to_owned(), |c| c.to_string()));
+        let _ = writeln!(s, "Server header: {}", d.server_header.as_deref().unwrap_or("none"));
+        let _ = writeln!(s, "Security gateway: {}", d.gateway.as_deref().unwrap_or("not detected"));
+        let _ = writeln!(s, "Diagnosis: {}", if d.summary.is_empty() { "none" } else { &d.summary });
         for fact in &d.facts {
             s += fact;
             s += "\n";
         }
-        s += &format!("Error: {}\n", if self.detail.is_empty() { "none" } else { &self.detail });
+        let _ = writeln!(s, "Error: {}", if self.detail.is_empty() { "none" } else { &self.detail });
         s
     }
 }
@@ -442,7 +443,7 @@ impl Clock {
     }
     pub fn now_ms(&self) -> u64 {
         match self {
-            Clock::Real(t0) => t0.elapsed().as_millis() as u64,
+            Clock::Real(t0) => u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX),
             Clock::Virtual(v) => v.load(Ordering::Relaxed),
         }
     }
@@ -568,6 +569,7 @@ struct PendingDiagnosis {
     unknown_relay: bool,
 }
 
+#[allow(clippy::struct_excessive_bools, reason = "independent flags of the join state machine")]
 pub struct GuestSession {
     link: Box<dyn GuestLink>,
     diagnoser: Arc<dyn RelayDiagnoser>,
@@ -645,9 +647,9 @@ impl GuestSession {
         cfg: GuestConfig,
     ) -> Self {
         let name = sanitize_name(name);
-        let mut ccfg = ClientConfig::new(&name, ticket.role, join_proof(&ticket.key, &name, ticket.role));
+        let mut client_cfg = ClientConfig::new(&name, ticket.role, join_proof(&ticket.key, &name, ticket.role));
         // a reply is waited for a little longer than on a local network
-        ccfg.resend_after_ms = 2_000;
+        client_cfg.resend_after_ms = 2_000;
         let chan = SecureChannel::new(FrameCipher::new(&ticket.key, Side::Guest), Box::new(JsonCodec), entropy, MAX_FRAME);
         Self {
             link,
@@ -655,7 +657,7 @@ impl GuestSession {
             ticket,
             cfg,
             chan,
-            client: Client::new(ccfg),
+            client: Client::new(client_cfg),
             clock,
             conn: None,
             conn_opened: false,
@@ -908,7 +910,7 @@ impl GuestSession {
     pub fn upload_progress(&self) -> Option<UploadProgress> {
         let front = self.uploads.front()?;
         let done = (self.batch_done + front.acked).min(self.batch_total);
-        let percent = (done * 100).checked_div(self.batch_total).unwrap_or(0) as u32;
+        let percent = (done * 100).checked_div(self.batch_total).map_or(0, |p| u32::try_from(p).unwrap_or(100));
         Some(UploadProgress { percent, images: self.uploads.len() })
     }
 
@@ -930,7 +932,13 @@ impl GuestSession {
         let mut out = Vec::new();
         while u.sent < total && u.sent - u.acked < UPLOAD_WINDOW && self.upload_rl.allow(now) {
             let end = (u.sent + UPLOAD_CHUNK as u64).min(total);
-            out.push(AssetChunk { hash: u.hash.clone(), offset: u.sent, data: u.data[u.sent as usize..end as usize].to_vec(), last: end == total });
+            out.push(AssetChunk {
+                hash: u.hash.clone(),
+                offset: u.sent,
+                data: u.data[usize::try_from(u.sent).unwrap_or(usize::MAX).min(u.data.len())..usize::try_from(end).unwrap_or(usize::MAX).min(u.data.len())]
+                    .to_vec(),
+                last: end == total,
+            });
             u.sent = end;
         }
         self.chunks_sent += out.len() as u64;
@@ -1331,7 +1339,7 @@ impl GuestSession {
                 self.welcomed = true;
             }
             Message::Snapshot(s) if s.seq >= self.manifest_seq => {
-                self.manifest = s.assets.clone();
+                self.manifest.clone_from(&s.assets);
                 self.manifest_seq = s.seq;
                 self.changes.doc = true;
             }
@@ -1397,9 +1405,9 @@ impl GuestSession {
                 // the host forgot this guest: what it held of the images is gone with the modifications that needed them
                 let gone: Vec<String> = self.uploads.drain(..).map(|u| u.hash).collect();
                 self.extra.retain(|i| !gone.contains(&i.hash));
-                gone.iter().for_each(|h| {
+                for h in &gone {
                     self.images.remove(h);
-                });
+                }
                 self.held.clear();
                 self.image_submits.clear();
                 self.batch_total = 0;
@@ -1458,16 +1466,13 @@ impl GuestSession {
             // a size of 0 is "not known": the image was learnt from a modification, the hash alone vouches for it
             let asm = if info.size == 0 {
                 AssetAssembler::with_unknown_size(&info.hash, MAX_IMAGE)
+            } else if let Ok(a) = AssetAssembler::new(&info.hash, info.size, MAX_IMAGE) {
+                a
             } else {
-                match AssetAssembler::new(&info.hash, info.size, MAX_IMAGE) {
-                    Ok(a) => a,
-                    Err(_) => {
-                        // declared larger than any image we take: shown as unreadable, never asked for
-                        self.images.insert(info.hash.clone(), unreadable_asset());
-                        self.changes.doc = true;
-                        continue;
-                    }
-                }
+                // declared larger than any image we take: shown as unreadable, never asked for
+                self.images.insert(info.hash.clone(), unreadable_asset());
+                self.changes.doc = true;
+                continue;
             };
             self.assemblers.insert(info.hash.clone(), asm);
             self.in_flight.insert(info.hash.clone());
@@ -1647,7 +1652,7 @@ impl App {
             self.drag = None;
             self.draft = None;
             self.textures.clear();
-            self.caches = Default::default();
+            self.caches = crate::app::Caches::default();
         }
     }
 
@@ -1667,7 +1672,7 @@ impl App {
         self.drag = None;
         self.draft = None;
         self.textures.clear();
-        self.caches = Default::default();
+        self.caches = crate::app::Caches::default();
         self.fit_pending = true;
         self.saved_rev = self.ed.revision();
         self.dialog = None;
@@ -1752,6 +1757,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::match_same_arms, reason = "one arm per case of the notice table")]
     fn notice(&mut self, n: &Notice) {
         let msg = match n {
             Notice::Rejected(RejectReason::ReadOnly) => t("You have read-only access: this change was refused."),
@@ -1853,6 +1859,7 @@ impl App {
     }
 
     /// Own cursor, selection and tool, and the intermediate state of a gesture in progress.
+    #[allow(clippy::many_single_char_names, reason = "`g` the session, `o` an object, `i` an index: short-lived loop names")]
     fn send_local_state(&mut self, g: &mut GuestSession, ctx: &egui::Context) {
         if g.state() != GuestState::Live {
             return;

@@ -2,6 +2,38 @@
 //!
 //! The protocol is implemented by hand (JSON-RPC 2.0, one JSON message per line on stdin/stdout): `initialize`, `ping`, `tools/list`, `tools/call`.
 //! See [`tools`] for the list of tools.
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::float_cmp,
+        clippy::many_single_char_names,
+        clippy::similar_names,
+        clippy::assert_is_empty,
+        clippy::default_trait_access,
+        clippy::format_collect,
+        clippy::format_push_string,
+        clippy::too_many_lines,
+        clippy::items_after_statements,
+        clippy::needless_raw_string_hashes,
+        clippy::needless_pass_by_value,
+        clippy::explicit_iter_loop,
+        clippy::needless_for_each,
+        clippy::collapsible_else_if,
+        clippy::single_match_else,
+        clippy::manual_assert,
+        clippy::redundant_closure_for_method_calls,
+        clippy::unnested_or_patterns,
+        clippy::range_plus_one,
+        clippy::clone_on_copy,
+        clippy::match_same_arms,
+        clippy::struct_excessive_bools
+    )
+)]
 
 pub mod live;
 pub mod resources;
@@ -31,7 +63,9 @@ pub struct Server {
 }
 
 fn ok(id: &Value, result: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
+    let mut v = json!({"jsonrpc": "2.0", "id": id});
+    v["result"] = result;
+    v
 }
 
 fn err(id: &Value, code: i64, message: &str) -> Value {
@@ -40,9 +74,9 @@ fn err(id: &Value, code: i64, message: &str) -> Value {
 
 /// MCP content of a tool result: one text block, except when the result is a JSON object with the reserved key `_image`
 /// (`{"mime", "data_base64"}`): the content is then an image block followed by a text block holding the rest of the object.
-fn content_blocks(text: String) -> Value {
+fn content_blocks(text: &str) -> Value {
     if text.contains("\"_image\"")
-        && let Ok(Value::Object(mut m)) = serde_json::from_str::<Value>(&text)
+        && let Ok(Value::Object(mut m)) = serde_json::from_str::<Value>(text)
         && let Some(img) = m.remove("_image")
         && let (Some(mime), Some(data)) = (img["mime"].as_str(), img["data_base64"].as_str())
     {
@@ -101,7 +135,7 @@ impl Server {
                 let name = msg.pointer("/params/name").and_then(Value::as_str).unwrap_or("");
                 let args = msg.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
                 match tools::call(self, name, &args) {
-                    Ok(text) => ok(id, json!({"content": content_blocks(text), "isError": false})),
+                    Ok(text) => ok(id, json!({"content": content_blocks(&text), "isError": false})),
                     Err(e) if e.starts_with("unknown tool") => err(id, -32602, &e),
                     Err(e) => ok(id, json!({"content": [{"type": "text", "text": e}], "isError": true})),
                 }

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 /// Hash of the name, background, pages (identifier, name, layers, every object in stacking order). The view of a page is local and
 /// ignored, and so are the image bytes (the guests fetch them separately).
+#[must_use]
 pub fn doc_digest(doc: &Document) -> String {
     let mut h = Sha256::new();
     h.update(doc.name.as_bytes());

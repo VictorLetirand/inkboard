@@ -60,6 +60,7 @@ pub struct Starting {
 }
 
 /// Everything the interface keeps about sharing. Absent (`host == None`) = the application is offline, as it is by default.
+#[allow(clippy::struct_excessive_bools, reason = "independent switches of the Share window")]
 pub struct Share {
     /// Network side (`session_net::host_net`, `iroh`): a configuration only, nothing connects before "Start sharing".
     pub net: Option<Box<dyn SessionNet>>,
@@ -309,6 +310,7 @@ fn send_host_gesture(app: &mut App, now: u64) {
     }
 }
 
+#[allow(clippy::many_single_char_names, reason = "`r, g, b` are a color")]
 fn on_event(app: &mut App, ev: HostEvent, members: &[MemberView]) {
     let now = app.agent.remote.now();
     match ev {
@@ -515,6 +517,7 @@ fn consent_window(ctx: &egui::Context, pending: &[PendingView], acts: &mut Vec<A
         });
 }
 
+#[allow(clippy::too_many_lines, reason = "the whole Share window, top to bottom")]
 fn share_window(app: &mut App, ctx: &egui::Context, acts: &mut Vec<Act>) {
     let mut open = true;
     let running = app.share.is_running();

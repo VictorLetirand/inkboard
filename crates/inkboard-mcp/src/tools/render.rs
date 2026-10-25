@@ -3,8 +3,9 @@
 //! `render`: a PNG of the board (or of a region of it) returned to the agent as an MCP image. The tool result is a JSON value carrying the
 //! reserved key `_image` (`{"mime", "data_base64"}`); `lib.rs` turns it into an image content block followed by the rest as text.
 
-use super::{Res, lower_name, obj, os, page_prop, path_prop};
+use super::{Res, obj, os, page_prop, path_prop};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use inkboard_core::num;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
 use inkboard_core::{ApproxMeasurer, Editor, Id, Kind, Rect};
 use serde_json::{Value, json};
@@ -78,7 +79,7 @@ fn parse_region(v: &Value) -> Res<Rect> {
 /// Image size in pixels and zoom (pixels per board unit) so that the longest side is `max_px`.
 fn pixel_size(r: &Rect, max_px: u32) -> (u32, u32, f64) {
     let zoom = (f64::from(max_px) / r.w.max(r.h)).min(MAX_ZOOM);
-    let px = |len: f64| ((len * zoom).round() as u32).clamp(1, max_px);
+    let px = |len: f64| num::to_u32((len * zoom).round()).clamp(1, max_px);
     (px(r.w), px(r.h), zoom)
 }
 
@@ -91,10 +92,10 @@ fn badges(page: &inkboard_core::Page, region: &Rect, zoom: f64) -> (String, usiz
     let (font, line) = (BADGE_PX / zoom, 1.0 / zoom);
     let (mut out, mut shown) = (String::new(), 0);
     for o in page.objects.iter().filter(|o| page.is_visible(o) && !matches!(o.kind, Kind::Pen(_))) {
-        let (w, h) = (o.id.0.chars().count() as f64 * font * 0.6 + font * 0.8, font * 1.4);
+        let (w, h) = (num::f64_of(o.id.0.chars().count()) * font * 0.6 + font * 0.8, font * 1.4);
         // anchor of the object, and where its badge goes: just above it, so the badge never hides the object's own text or arrow label
-        let ((ax, ay), (x, y)) = match &o.kind {
-            Kind::Connector(c) => match page.connector_path(c) {
+        let ((ax, ay), (x, y)) = if let Kind::Connector(c) = &o.kind {
+            match page.connector_path(c) {
                 // a quarter of the way along the first segment: the middle is where the arrow's label sits
                 Some(path) if path.len() >= 2 => {
                     let (a, b) = (path[0], path[1]);
@@ -102,11 +103,10 @@ fn badges(page: &inkboard_core::Page, region: &Rect, zoom: f64) -> (String, usiz
                     ((px, py), (px - w / 2.0, py - h * 1.2))
                 }
                 _ => continue,
-            },
-            _ => {
-                let b = page.bounds(o);
-                ((b.x, b.y), (b.x, b.y - h))
             }
+        } else {
+            let b = page.bounds(o);
+            ((b.x, b.y), (b.x, b.y - h))
         };
         // the badge belongs to the picture when the object's anchor does (it may be cut at the edge)
         if ax < region.x || ay < region.y || ax > region.right() || ay > region.bottom() {
@@ -184,7 +184,7 @@ fn render(ed: &mut Editor, a: &Value) -> Res<Value> {
     };
     let output = os(a, "output").map(PathBuf::from);
     if let Some(p) = &output
-        && !lower_name(p).ends_with(".png")
+        && !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("png"))
     {
         return Err("\"output\" must be a .png file (the picture is a PNG)".into());
     }
@@ -227,7 +227,7 @@ fn render(ed: &mut Editor, a: &Value) -> Res<Value> {
             break (png, size, shown);
         }
         // the PNG size grows roughly with the number of pixels: aim a little below the limit
-        let next = (f64::from(limit) * 0.9 * (PNG_MAX_BYTES as f64 / png.len() as f64).sqrt()).floor() as u32;
+        let next = num::to_u32((f64::from(limit) * 0.9 * (num::f64_of(PNG_MAX_BYTES) / num::f64_of(png.len())).sqrt()).floor());
         if next < MAX_PX_MIN {
             return Err(format!("the picture stays above {} MiB even at {MAX_PX_MIN} px: show a smaller region", PNG_MAX_BYTES >> 20));
         }

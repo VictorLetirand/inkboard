@@ -1,7 +1,11 @@
 //! Import of the boards saved by the web prototype (`.tableau.json` version 1).
 
 use crate::common::{FormatError, Imported, Report, parse_color, parse_data_url};
-use inkboard_core::*;
+use inkboard_core::num;
+use inkboard_core::{
+    Align, Arrowhead, Asset, AssetId, Background, BgPreset, BoxGeom, Color, Connector, Dash, Document, FontFamily, Frame, Id, ImageObj, Kind, Label, Object,
+    Pattern, Pt, RichText, Style, View,
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -16,6 +20,11 @@ fn color(v: &Value, k: &str) -> Option<Color> {
     s(v, k).and_then(|c| if c == "ink" { Some(Color::Ink) } else { parse_color(c) })
 }
 
+/// Imports a board of the web prototype (`.tableau.json`).
+///
+/// # Errors
+///
+/// [`FormatError`] when the content is not a board of the prototype.
 pub fn import(content: &str) -> Result<Imported, FormatError> {
     let v: Value = serde_json::from_str(content)?;
     let objs = v.get("objects").and_then(Value::as_array).ok_or_else(|| FormatError::Invalid("no list of objects".into()))?;
@@ -58,35 +67,35 @@ pub fn import(content: &str) -> Result<Imported, FormatError> {
     Ok(Imported { doc, report })
 }
 
-fn convert(o: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> Option<Object> {
-    let ty = s(o, "type")?;
-    let (x, y, w, h, angle) = (f(o, "x"), f(o, "y"), f(o, "w"), f(o, "h"), f(o, "angle"));
-    let stroke = color(o, "stroke").unwrap_or(Color::Ink);
-    let fill = color(o, "fill");
-    let width = f(o, "sw");
-    let opacity = o.get("opacity").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+fn convert(raw: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> Option<Object> {
+    let ty = s(raw, "type")?;
+    let (x, y, w, h, angle) = (f(raw, "x"), f(raw, "y"), f(raw, "w"), f(raw, "h"), f(raw, "angle"));
+    let stroke = color(raw, "stroke").unwrap_or(Color::Ink);
+    let fill = color(raw, "fill");
+    let width = f(raw, "sw");
+    let opacity = num::f32(raw.get("opacity").and_then(Value::as_f64).unwrap_or(1.0));
     let style = Style {
         stroke,
         fill,
         width,
-        dash: match s(o, "dash") {
+        dash: match s(raw, "dash") {
             Some("dashed") => Dash::Dashed,
             Some("dotted") => Dash::Dotted,
             _ => Dash::Solid,
         },
         opacity,
-        roundness: if o.get("round").and_then(Value::as_bool).unwrap_or(false) { 0.45 } else { 0.0 },
+        roundness: if raw.get("round").and_then(Value::as_bool).unwrap_or(false) { 0.45 } else { 0.0 },
     };
     let label = || Label {
-        text: RichText::plain(s(o, "text").unwrap_or("")),
-        family: match s(o, "font") {
+        text: RichText::plain(s(raw, "text").unwrap_or("")),
+        family: match s(raw, "font") {
             Some("hand") => FontFamily::Hand,
             Some("serif") => FontFamily::Serif,
             Some("mono") => FontFamily::Mono,
             _ => FontFamily::Sans,
         },
-        size: o.get("fontSize").and_then(Value::as_f64).unwrap_or(20.0),
-        align: match s(o, "align") {
+        size: raw.get("fontSize").and_then(Value::as_f64).unwrap_or(20.0),
+        align: match s(raw, "align") {
             Some("center") => Align::Center,
             Some("right") => Align::Right,
             _ => Align::Left,
@@ -94,13 +103,13 @@ fn convert(o: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> Op
     };
     let frame = Frame { x, y, w, h, angle };
     let abs_pts = || -> Vec<Pt> {
-        o.get("pts")
+        raw.get("pts")
             .and_then(Value::as_array)
             .map(|a| {
                 a.iter()
                     .filter_map(|p| {
-                        let p = p.as_array()?;
-                        let local = Pt::new((p.first()?.as_f64()? - 0.5) * w, (p.get(1)?.as_f64()? - 0.5) * h);
+                        let coords = p.as_array()?;
+                        let local = Pt::new((coords.first()?.as_f64()? - 0.5) * w, (coords.get(1)?.as_f64()? - 0.5) * h);
                         Some(frame.to_world(local))
                     })
                     .collect()
@@ -131,20 +140,20 @@ fn convert(o: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> Op
             if pts.is_empty() {
                 return None;
             }
-            Object::new_pen(pts, o.get("hl").and_then(Value::as_bool).unwrap_or(false), Style { dash: Dash::Solid, fill: None, ..style })
+            Object::new_pen(pts, raw.get("hl").and_then(Value::as_bool).unwrap_or(false), Style { dash: Dash::Solid, fill: None, ..style })
         }
         "line" => {
             let pts = abs_pts();
             if pts.len() < 2 {
                 return None;
             }
-            let mut c = Connector::straight(pts[0], pts[1]);
-            c.head_start = if o.get("arrowStart").and_then(Value::as_bool).unwrap_or(false) { Arrowhead::Arrow } else { Arrowhead::None };
-            c.head_end = if o.get("arrowEnd").and_then(Value::as_bool).unwrap_or(false) { Arrowhead::Arrow } else { Arrowhead::None };
-            Object::new(Kind::Connector(c), Style { fill: None, ..style })
+            let mut conn = Connector::straight(pts[0], pts[1]);
+            conn.head_start = if raw.get("arrowStart").and_then(Value::as_bool).unwrap_or(false) { Arrowhead::Arrow } else { Arrowhead::None };
+            conn.head_end = if raw.get("arrowEnd").and_then(Value::as_bool).unwrap_or(false) { Arrowhead::Arrow } else { Arrowhead::None };
+            Object::new(Kind::Connector(conn), Style { fill: None, ..style })
         }
         "image" => {
-            let asset = Id::from(s(o, "asset")?);
+            let asset = Id::from(s(raw, "asset")?);
             if !assets.contains_key(&asset) {
                 return None;
             }
@@ -152,16 +161,17 @@ fn convert(o: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> Op
         }
         _ => return None,
     };
-    if let Some(g) = s(o, "gid") {
+    if let Some(g) = s(raw, "gid") {
         obj.group = Some(Id::from(g));
     }
-    obj.locked = o.get("locked").and_then(Value::as_bool).unwrap_or(false);
+    obj.locked = raw.get("locked").and_then(Value::as_bool).unwrap_or(false);
     Some(obj)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inkboard_core::End;
 
     const SAMPLE: &str = r##"{
       "app":"inkboard","version":1,"name":"Ancien","bg":"slate","pattern":"grid","cam":{"x":10,"y":20,"z":1.5},
@@ -180,12 +190,12 @@ mod tests {
 
     #[test]
     fn imports_prototype_file() {
-        let r = import(SAMPLE).unwrap();
-        let d = &r.doc;
+        let imported = import(SAMPLE).unwrap();
+        let d = &imported.doc;
         assert_eq!(d.name, "Ancien");
         assert_eq!(d.background.preset, BgPreset::Slate);
         assert_eq!(d.background.pattern, Pattern::Grid);
-        assert_eq!(r.report.skipped, 2, "image without an asset + unknown type");
+        assert_eq!(imported.report.skipped, 2, "image without an asset + unknown type");
         let p = &d.pages[0];
         assert_eq!(p.objects.len(), 6);
         assert_eq!(p.view.zoom, 1.5);
@@ -213,7 +223,7 @@ mod tests {
 
     #[test]
     fn rotated_pen_points_use_object_center() {
-        let j = r##"{"objects":[{"id":"p","type":"pen","x":0,"y":0,"w":100,"h":0,"angle":1.5707963267948966,"stroke":"ink","sw":3,"opacity":1,"pts":[[0,0],[1,0]]}]}"##;
+        let j = r#"{"objects":[{"id":"p","type":"pen","x":0,"y":0,"w":100,"h":0,"angle":1.5707963267948966,"stroke":"ink","sw":3,"opacity":1,"pts":[[0,0],[1,0]]}]}"#;
         let r = import(j).unwrap();
         let Kind::Pen(p) = &r.doc.pages[0].objects[0].kind else { panic!() };
         // horizontal stroke of 100 centered at (50, 0), rotated by 90° → vertical

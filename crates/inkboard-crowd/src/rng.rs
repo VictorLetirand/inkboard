@@ -4,6 +4,7 @@
 pub struct Rng(u64);
 
 impl Rng {
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         let mut r = Self(seed ^ 0x9E37_79B9_7F4A_7C15);
         r.next_u64();
@@ -11,6 +12,7 @@ impl Rng {
     }
 
     /// A generator for sub-stream `k` of `seed` (one per guest, per board page...).
+    #[must_use]
     pub fn stream(seed: u64, k: u64) -> Self {
         Self::new(seed.wrapping_mul(0xD134_2543_DE82_EF95) ^ k.wrapping_mul(0xA24B_AED4_963E_E407).wrapping_add(k))
     }

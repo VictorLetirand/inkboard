@@ -23,6 +23,7 @@ pub struct NetConfig {
 
 impl NetConfig {
     /// Instant, reliable and ordered.
+    #[must_use]
     pub fn ideal() -> Self {
         Self::default()
     }
@@ -96,6 +97,7 @@ impl fmt::Debug for SimNet {
 }
 
 impl SimNet {
+    #[must_use]
     pub fn new(seed: u64, cfg: NetConfig) -> Self {
         Self(Arc::new(Mutex::new(Inner {
             now: 0,
@@ -122,6 +124,7 @@ impl SimNet {
     }
 
     /// Virtual time in milliseconds.
+    #[must_use]
     pub fn now(&self) -> u64 {
         self.lock().now
     }
@@ -134,6 +137,7 @@ impl SimNet {
     }
 
     /// Jumps to the delivery time of the next frame in flight. Returns `false` when nothing is in flight.
+    #[must_use]
     pub fn advance_to_next(&self) -> bool {
         let mut g = self.lock();
         let Some(&(t, _)) = g.in_flight.keys().next() else { return false };
@@ -162,11 +166,13 @@ impl SimNet {
         self.lock().cfg = cfg;
     }
 
+    #[must_use]
     pub fn stats(&self) -> NetStats {
         self.lock().stats
     }
 
     /// Endpoint named `id` (a host registers under the identity put in its ticket).
+    #[must_use]
     pub fn transport(&self, id: &str) -> SimTransport {
         self.lock().listeners.entry(id.to_owned()).or_default();
         SimTransport { net: self.clone(), me: id.to_owned() }
@@ -215,6 +221,7 @@ impl fmt::Debug for SimConn {
 
 impl SimConn {
     /// Number of this connection (the same on both ends).
+    #[must_use]
     pub fn id(&self) -> u64 {
         self.conn
     }

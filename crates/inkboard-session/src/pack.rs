@@ -17,6 +17,7 @@ const LEVEL: u8 = 3;
 const MIN_BYTES: usize = 2 * 1024;
 
 /// The message `m` in its compressed form, when it is big enough and gets smaller; `None` otherwise (send `m` as it is).
+#[must_use]
 pub fn pack(m: &Message) -> Option<Message> {
     let json = serde_json::to_vec(m).ok()?;
     if json.len() < MIN_BYTES {

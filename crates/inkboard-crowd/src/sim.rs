@@ -14,6 +14,7 @@ pub struct SimDialer {
 }
 
 impl SimDialer {
+    #[must_use]
     pub fn new(transport: SimTransport, host: &str, ticket: Ticket) -> Self {
         Self { transport, host: host.to_owned(), ticket }
     }

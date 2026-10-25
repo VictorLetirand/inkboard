@@ -9,6 +9,40 @@
 //!   browser). Same wire format and error causes as the native transport (see `wire`); asynchronous instead of blocking.
 //!
 //! Everything that needs sockets, threads or tokio's runtime (`transport`, `diagnose`) is native only.
+// Internal protocol crate: what can fail is told by the error types (`Error`, `Violation`), not repeated in a `# Errors` section on each function.
+#![allow(clippy::missing_errors_doc)]
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::float_cmp,
+        clippy::many_single_char_names,
+        clippy::similar_names,
+        clippy::assert_is_empty,
+        clippy::default_trait_access,
+        clippy::format_collect,
+        clippy::format_push_string,
+        clippy::too_many_lines,
+        clippy::items_after_statements,
+        clippy::needless_raw_string_hashes,
+        clippy::needless_pass_by_value,
+        clippy::explicit_iter_loop,
+        clippy::needless_for_each,
+        clippy::collapsible_else_if,
+        clippy::single_match_else,
+        clippy::manual_assert,
+        clippy::redundant_closure_for_method_calls,
+        clippy::unnested_or_patterns,
+        clippy::range_plus_one,
+        clippy::clone_on_copy,
+        clippy::match_same_arms,
+        clippy::struct_excessive_bools
+    )
+)]
 
 mod cancel;
 pub mod config;

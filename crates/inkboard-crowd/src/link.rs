@@ -80,6 +80,7 @@ pub struct LinkSpec {
 }
 
 impl LinkSpec {
+    #[must_use]
     pub fn is_perfect(&self) -> bool {
         *self == Self::default()
     }

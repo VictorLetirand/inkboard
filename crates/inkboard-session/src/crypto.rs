@@ -41,11 +41,12 @@ impl Entropy for OsEntropy {
     }
 }
 
-/// Deterministic generator (SplitMix64) for tests and simulations. NOT secure: never use it for a real session.
+/// Deterministic generator (`SplitMix64`) for tests and simulations. NOT secure: never use it for a real session.
 #[derive(Clone, Debug)]
 pub struct SeededEntropy(u64);
 
 impl SeededEntropy {
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         Self(seed)
     }
@@ -79,6 +80,7 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 pub struct SessionKey([u8; KEY_LEN]);
 
 impl SessionKey {
+    #[must_use]
     pub fn from_bytes(b: [u8; KEY_LEN]) -> Self {
         Self(b)
     }
@@ -87,6 +89,7 @@ impl SessionKey {
         e.fill(&mut b)?;
         Ok(Self(b))
     }
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
         &self.0
     }
@@ -110,6 +113,7 @@ impl PartialEq for SessionKey {
 impl Eq for SessionKey {}
 
 /// Proof, sent in `Hello`, that the guest knows the key of the link it uses.
+#[must_use]
 pub fn join_proof(key: &SessionKey, name: &str, role: Role) -> Vec<u8> {
     let mut info = b"join/v1".to_vec();
     info.push(role_byte(role));
@@ -119,6 +123,7 @@ pub fn join_proof(key: &SessionKey, name: &str, role: Role) -> Vec<u8> {
     out.to_vec()
 }
 
+#[must_use]
 pub fn verify_join_proof(key: &SessionKey, name: &str, role: Role, proof: &[u8]) -> bool {
     ct_eq(&join_proof(key, name, role), proof)
 }
@@ -151,6 +156,7 @@ impl fmt::Debug for FrameCipher {
 }
 
 impl FrameCipher {
+    #[must_use]
     pub fn new(key: &SessionKey, side: Side) -> Self {
         let sub = |info: &[u8]| {
             let mut k = [0u8; KEY_LEN];
@@ -203,6 +209,7 @@ impl HostKeys {
         Ok(Self { edit: SessionKey::generate(e)?, view: SessionKey::generate(e)? })
     }
 
+    #[must_use]
     pub fn key(&self, role: Role) -> &SessionKey {
         match role {
             Role::Edit => &self.edit,
@@ -245,6 +252,7 @@ impl fmt::Debug for SecureChannel {
 }
 
 impl SecureChannel {
+    #[must_use]
     pub fn new(cipher: FrameCipher, codec: Box<dyn Codec>, entropy: Box<dyn Entropy>, max_frame: usize) -> Self {
         Self { cipher, codec, entropy, max_frame }
     }
@@ -288,7 +296,7 @@ pub struct Ticket {
 }
 
 fn put_str(b: &mut Vec<u8>, s: &str) {
-    b.extend_from_slice(&(s.len() as u16).to_be_bytes());
+    b.extend_from_slice(&u16::try_from(s.len()).unwrap_or(u16::MAX).to_be_bytes());
     b.extend_from_slice(s.as_bytes());
 }
 
@@ -335,13 +343,14 @@ impl Ticket {
 
     /// Compact text (base64url) of the ticket, with a checksum that detects accidental damage. The checksum is not a security
     /// feature: authenticity comes from the AEAD key.
+    #[must_use]
     pub fn encode(&self) -> String {
         let mut b = TICKET_MAGIC.to_vec();
         b.push(TICKET_VERSION);
         b.push(role_byte(self.role));
         b.extend_from_slice(self.key.as_bytes());
         put_str(&mut b, &self.host);
-        b.push(self.relays.len() as u8);
+        b.push(u8::try_from(self.relays.len()).unwrap_or(u8::MAX));
         for r in &self.relays {
             put_str(&mut b, r);
         }
@@ -393,6 +402,7 @@ pub struct Link {
 }
 
 impl Link {
+    #[must_use]
     pub fn to_url(&self) -> String {
         format!("{}#{}", self.base, self.ticket.encode())
     }

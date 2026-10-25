@@ -53,6 +53,7 @@ pub enum WireOp {
 
 impl WireOp {
     /// Ids of the objects this operation replaces or deletes (used to detect concurrent changes).
+    #[must_use]
     pub fn object_ids(&self) -> Vec<&Id> {
         match self {
             WireOp::Put { object, .. } => vec![&object.id],
@@ -63,6 +64,7 @@ impl WireOp {
 }
 
 /// Order obtained by `Op::Reorder`: the known ids of `wanted` first (first occurrence), then the remaining objects in their order.
+#[must_use]
 pub fn normalize_order(before: &[Id], wanted: &[Id]) -> Vec<Id> {
     let exists: HashSet<&Id> = before.iter().collect();
     let mut seen: HashSet<&Id> = HashSet::new();
@@ -172,6 +174,7 @@ pub struct OpEncoder<'a> {
 
 impl<'a> OpEncoder<'a> {
     /// `doc_before`: the document before the first operation that will be encoded.
+    #[must_use]
     pub fn new(doc_before: &'a Document) -> Self {
         Self { doc: doc_before, orders: HashMap::new() }
     }
@@ -221,6 +224,7 @@ impl<'a> OpEncoder<'a> {
 }
 
 /// Converts a list of core operations (applied in order starting from `doc_before`) into `WireOp`s.
+#[must_use]
 pub fn ops_to_wire(ops: &[Op], doc_before: &Document) -> Vec<WireOp> {
     let mut enc = OpEncoder::new(doc_before);
     ops.iter().flat_map(|o| enc.encode(o)).collect()

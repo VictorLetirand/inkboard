@@ -74,14 +74,15 @@ pub fn t(s: &str) -> String {
     match current() {
         Lang::En => s.to_owned(),
         Lang::Fr if s.is_empty() => String::new(),
-        Lang::Fr => match table().get(s) {
-            Some(fr) => (*fr).to_owned(),
-            None => {
+        Lang::Fr => {
+            if let Some(fr) = table().get(s) {
+                (*fr).to_owned()
+            } else {
                 #[cfg(test)]
                 MISSING.with(|m| m.borrow_mut().push(s.to_owned()));
                 s.to_owned()
             }
-        },
+        }
     }
 }
 
@@ -92,9 +93,9 @@ thread_local! {
 }
 
 /// Fills the `{}` placeholders of a (translated) template with `args`, in order.
-pub fn fill(template: String, args: &[&dyn Display]) -> String {
+pub fn fill(template: &str, args: &[&dyn Display]) -> String {
     let mut out = String::with_capacity(template.len() + 16);
-    let mut rest = template.as_str();
+    let mut rest = template;
     let mut it = args.iter();
     while let Some(i) = rest.find("{}") {
         out.push_str(&rest[..i]);
@@ -111,7 +112,7 @@ pub fn fill(template: String, args: &[&dyn Display]) -> String {
 /// `tr!("Cell row {} · column {}", r, c)` : translated template, then arguments inserted in order.
 macro_rules! tr {
     ($t:literal $(, $a:expr)* $(,)?) => {
-        $crate::i18n::fill($crate::i18n::t($t), &[$(&$a as &dyn std::fmt::Display),*])
+        $crate::i18n::fill(&$crate::i18n::t($t), &[$(&$a as &dyn std::fmt::Display),*])
     };
 }
 pub(crate) use tr;
@@ -149,9 +150,9 @@ mod tests {
 
     #[test]
     fn placeholders_are_filled_in_order_and_missing_arguments_are_kept() {
-        assert_eq!(fill("{} of {}".to_owned(), &[&3, &"five"]), "3 of five");
-        assert_eq!(fill("only {} {}".to_owned(), &[&1]), "only 1 {}");
-        assert_eq!(fill("none".to_owned(), &[]), "none");
+        assert_eq!(fill("{} of {}", &[&3, &"five"]), "3 of five");
+        assert_eq!(fill("only {} {}", &[&1]), "only 1 {}");
+        assert_eq!(fill("none", &[]), "none");
     }
 
     #[test]

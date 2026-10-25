@@ -1,6 +1,7 @@
 //! PNG rendering of an SVG exported by the engine (pure Rust, no window).
 
 use crate::common::FormatError;
+use inkboard_core::num;
 use resvg::{tiny_skia, usvg};
 
 use resvg::usvg::fontdb as render_fontdb;
@@ -86,6 +87,10 @@ pub struct Raster {
 }
 
 /// Rasterizes an SVG so that its longest side is exactly `longest_px` pixels (the size comes from the parsed document, whatever its attributes).
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or its pixel size is invalid or too large.
 pub fn svg_to_raster_fit(svg: &str, longest_px: u32, with_fonts: bool) -> Result<Raster, FormatError> {
     let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
     let opt = sandboxed_options!(usvg, fontdb);
@@ -95,27 +100,37 @@ pub fn svg_to_raster_fit(svg: &str, longest_px: u32, with_fonts: bool) -> Result
     if longest.is_nan() || longest <= 0.0 {
         return Err(FormatError::Unsupported("invalid image dimensions".into()));
     }
-    let scale = longest_px as f32 / longest;
-    let (w, h) = (((size.width() * scale).round() as u32).clamp(1, longest_px), ((size.height() * scale).round() as u32).clamp(1, longest_px));
+    let scale = num::f32(f64::from(longest_px)) / longest;
+    let (w, h) = (
+        num::to_u32(f64::from((size.width() * scale).round())).clamp(1, longest_px),
+        num::to_u32(f64::from((size.height() * scale).round())).clamp(1, longest_px),
+    );
     let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image too large".into()))?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height()), &mut pixmap.as_mut());
+    resvg::render(&tree, tiny_skia::Transform::from_scale(num::f32(f64::from(w)) / size.width(), num::f32(f64::from(h)) / size.height()), &mut pixmap.as_mut());
     Ok(Raster { width: w, height: h, rgba_premultiplied: pixmap.take() })
 }
 
 /// Rasterizes an SVG. `with_fonts`: loads the system fonts (only needed when the SVG contains text; icons have none).
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or its pixel size is invalid or too large.
 pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, FormatError> {
     svg_to_raster_max_side(svg, scale, u32::MAX, with_fonts)
 }
 
 /// Like [`svg_to_raster`], but the scale is lowered when needed so that the longest side does not exceed `max_side` pixels (a texture limit).
+#[allow(clippy::missing_errors_doc, reason = "as `svg_to_raster`: the error says what the SVG lacked")]
 pub fn svg_to_raster_max_side(svg: &str, scale: f32, max_side: u32, with_fonts: bool) -> Result<Raster, FormatError> {
     let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
     let opt = sandboxed_options!(usvg, fontdb);
     let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     let size = tree.size();
     let longest = size.width().max(size.height()) * scale;
-    let scale = if longest.is_finite() && longest > max_side as f32 { scale * max_side as f32 / longest } else { scale };
-    let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
+    #[allow(clippy::cast_precision_loss, reason = "pixel sizes are far below 2^24")]
+    let limit = max_side as f32;
+    let scale = if longest.is_finite() && longest > limit { scale * limit / longest } else { scale };
+    let (w, h) = (num::to_u32(f64::from((size.width() * scale).ceil())), num::to_u32(f64::from((size.height() * scale).ceil())));
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
         return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
@@ -125,6 +140,10 @@ pub fn svg_to_raster_max_side(svg: &str, scale: f32, max_side: u32, with_fonts: 
 }
 
 /// Converts an SVG to PNG. `scale`: 1.0 = SVG size, 2.0 = double resolution.
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or rasterized, or the PNG encoding fails.
 pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, FormatError> {
     svg_to_png_with(svg, scale, system_fonts())
 }
@@ -133,7 +152,7 @@ fn svg_to_png_with(svg: &str, scale: f32, fontdb: std::sync::Arc<usvg::fontdb::D
     let opt = sandboxed_options!(usvg, fontdb);
     let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     let size = tree.size();
-    let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
+    let (w, h) = (num::to_u32(f64::from((size.width() * scale).ceil())), num::to_u32(f64::from((size.height() * scale).ceil())));
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
         return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
@@ -143,6 +162,10 @@ fn svg_to_png_with(svg: &str, scale: f32, fontdb: std::sync::Arc<usvg::fontdb::D
 }
 
 /// Converts an SVG to vector PDF (text and images preserved).
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or converted.
 pub fn svg_to_pdf(svg: &str) -> Result<Vec<u8>, FormatError> {
     svg_to_pdf_with(svg, pdf_fonts(use_system_fonts()))
 }
@@ -166,6 +189,8 @@ const MAX_SVG_USES: usize = 200;
 const MAX_SVG_GEOMETRY_BYTES: usize = 1 << 20;
 
 /// Width and height a PNG, GIF, JPEG or WebP declares in its header (no decoding); `None` when unknown or unreadable.
+#[must_use]
+#[allow(clippy::many_single_char_names, reason = "`be`/`le16`/`le32`-style readers of the headers")]
 pub fn declared_dimensions(d: &[u8]) -> Option<(u32, u32)> {
     let be = |i: usize| d.get(i..i + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
     let le16 = |i: usize| d.get(i..i + 2).map(|b| u32::from(u16::from_le_bytes([b[0], b[1]])));
@@ -260,6 +285,7 @@ fn css_is_safe(css: &str) -> bool {
 /// elements, no filter/pattern/mask/script/`foreignObject`/animation/DOCTYPE, `use`/`href` only inside the document, `href` of an image only a
 /// `data:` bitmap within the pixel bounds, `url()` only inside the document, bounded element count, nesting and `use` count. `Err` is a short
 /// English reason. The user's own SVG files are not subject to this (rendering is sandboxed anyway: see `sandboxed_options`).
+#[allow(clippy::missing_errors_doc, clippy::too_many_lines, reason = "the refusal is a sentence; one pass over the document, rule after rule")]
 pub fn check_untrusted_svg(svg: &str) -> Result<(), String> {
     use base64::Engine as _;
     use quick_xml::XmlVersion;
@@ -451,7 +477,7 @@ mod tests {
 
     fn svg_with_image(href: &str) -> String {
         format!(
-            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="10"><image xlink:href="{href}" width="10" height="10"/></svg>"##
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="10"><image xlink:href="{href}" width="10" height="10"/></svg>"#
         )
     }
 
@@ -514,7 +540,7 @@ mod tests {
         let png = LocalPng::new();
         let svg = svg_with_image(&png.href());
         let blank = svg_to_png(&svg, 1.0).unwrap();
-        let none = svg_to_png(r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"##, 1.0).unwrap();
+        let none = svg_to_png(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#, 1.0).unwrap();
         assert_eq!(blank, none, "the export of the PNG shows the local file");
         let has_image = |pdf: &[u8]| pdf.windows(15).any(|w| w == b"/Subtype /Image");
         assert!(!has_image(&svg_to_pdf(&svg).unwrap()), "the PDF embeds the local file");
@@ -523,7 +549,7 @@ mod tests {
 
     #[test]
     fn the_raster_is_lowered_to_the_texture_limit() {
-        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40000" height="10"><rect width="40000" height="10"/></svg>"##;
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="40000" height="10"><rect width="40000" height="10"/></svg>"#;
         let r = svg_to_raster_max_side(svg, 4.0, 8192, false).unwrap();
         assert!(r.width <= 8192 && r.height >= 1, "{}x{}", r.width, r.height);
     }
@@ -531,42 +557,40 @@ mod tests {
     /* ---- S-02: SVG written by somebody else ---- */
 
     fn untrusted(inner: &str) -> Result<(), String> {
-        check_untrusted_svg(&format!(
-            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10">{inner}</svg>"##
-        ))
+        check_untrusted_svg(&format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10">{inner}</svg>"#))
     }
 
     #[test]
     fn a_plain_svg_from_a_guest_is_accepted() {
         let plain = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/></linearGradient></defs><g fill="url(#g)" style="stroke:#000"><circle cx="12" cy="12" r="10"/><path d="M0 0L5 5"/><text x="1" y="2">Hi</text><use href="#g"/></g></svg>"##;
         assert_eq!(check_untrusted_svg(plain), Ok(()));
-        assert_eq!(untrusted(&format!(r##"<image href="{}" width="10" height="10"/>"##, data_png())), Ok(()));
+        assert_eq!(untrusted(&format!(r#"<image href="{}" width="10" height="10"/>"#, data_png())), Ok(()));
     }
 
     #[test]
     fn dangerous_svg_features_are_refused_for_a_guest() {
         let png = LocalPng::new();
         let cases = [
-            r##"<filter id="f"><feGaussianBlur stdDeviation="300"/></filter><rect filter="url(#f)" width="5" height="5"/>"##.to_owned(),
-            r##"<filter id="f"><feImage href="x"/></filter>"##.to_owned(),
-            r##"<pattern id="p" width="2" height="2"><rect width="1" height="1"/></pattern>"##.to_owned(),
-            r##"<mask id="m"><rect width="1" height="1"/></mask>"##.to_owned(),
-            r##"<script>alert(1)</script>"##.to_owned(),
-            r##"<foreignObject width="5" height="5"><div/></foreignObject>"##.to_owned(),
-            r##"<use href="http://evil.invalid/a.svg#x"/>"##.to_owned(),
-            r##"<use href="other.svg#x"/>"##.to_owned(),
-            format!(r##"<image href="{}" width="5" height="5"/>"##, png.href()),
-            r##"<image href="\\evil.invalid\s\a.png" width="5" height="5"/>"##.to_owned(),
-            r##"<image href="http://evil.invalid/a.png" width="5" height="5"/>"##.to_owned(),
-            r##"<image href="data:image/svg+xml;base64,PHN2Zy8+" width="5" height="5"/>"##.to_owned(),
-            r##"<rect width="5" height="5" filter="blur(300)"/>"##.to_owned(),
-            r##"<rect width="5" height="5" style="filter: blur(300px)"/>"##.to_owned(),
-            r##"<style>rect { filter: blur(300px) }</style>"##.to_owned(),
-            r##"<style>@import url(http://evil.invalid/x.css);</style>"##.to_owned(),
-            r##"<rect width="5" height="5" fill="url(http://evil.invalid/x)"/>"##.to_owned(),
-            r##"<rect width="5" height="5" onload="x()"/>"##.to_owned(),
-            r##"<a href="http://evil.invalid"><rect width="5" height="5"/></a>"##.to_owned(),
-            r##"<animate attributeName="x"/>"##.to_owned(),
+            r#"<filter id="f"><feGaussianBlur stdDeviation="300"/></filter><rect filter="url(#f)" width="5" height="5"/>"#.to_owned(),
+            r#"<filter id="f"><feImage href="x"/></filter>"#.to_owned(),
+            r#"<pattern id="p" width="2" height="2"><rect width="1" height="1"/></pattern>"#.to_owned(),
+            r#"<mask id="m"><rect width="1" height="1"/></mask>"#.to_owned(),
+            r"<script>alert(1)</script>".to_owned(),
+            r#"<foreignObject width="5" height="5"><div/></foreignObject>"#.to_owned(),
+            r#"<use href="http://evil.invalid/a.svg#x"/>"#.to_owned(),
+            r#"<use href="other.svg#x"/>"#.to_owned(),
+            format!(r#"<image href="{}" width="5" height="5"/>"#, png.href()),
+            r#"<image href="\\evil.invalid\s\a.png" width="5" height="5"/>"#.to_owned(),
+            r#"<image href="http://evil.invalid/a.png" width="5" height="5"/>"#.to_owned(),
+            r#"<image href="data:image/svg+xml;base64,PHN2Zy8+" width="5" height="5"/>"#.to_owned(),
+            r#"<rect width="5" height="5" filter="blur(300)"/>"#.to_owned(),
+            r#"<rect width="5" height="5" style="filter: blur(300px)"/>"#.to_owned(),
+            r"<style>rect { filter: blur(300px) }</style>".to_owned(),
+            r"<style>@import url(http://evil.invalid/x.css);</style>".to_owned(),
+            r#"<rect width="5" height="5" fill="url(http://evil.invalid/x)"/>"#.to_owned(),
+            r#"<rect width="5" height="5" onload="x()"/>"#.to_owned(),
+            r#"<a href="http://evil.invalid"><rect width="5" height="5"/></a>"#.to_owned(),
+            r#"<animate attributeName="x"/>"#.to_owned(),
         ];
         for c in &cases {
             assert!(untrusted(c).is_err(), "accepted: {c}");
@@ -590,7 +614,7 @@ mod tests {
         png.extend_from_slice(&[8, 6, 0, 0, 0]);
         use base64::Engine as _;
         let href = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png));
-        assert!(untrusted(&format!(r##"<image href="{href}" width="5" height="5"/>"##)).is_err());
+        assert!(untrusted(&format!(r#"<image href="{href}" width="5" height="5"/>"#)).is_err());
     }
 
     #[test]

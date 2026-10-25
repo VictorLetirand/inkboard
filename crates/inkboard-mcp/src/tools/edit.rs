@@ -5,6 +5,7 @@
 
 use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, summary};
 use inkboard_core::editor::{AlignMode, Axis, Order};
+use inkboard_core::num;
 use inkboard_core::{Align, ApproxMeasurer, Arrowhead, Color, Dash, Editor, FontFamily, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -145,9 +146,9 @@ fn frame_box(page: &Page, o: &Object) -> Rect {
 /// `describe_board` object with `detail: "full"`: the brief summary plus style, font, stacking order, group, lock, rotation, arrow.
 pub(super) fn full(z: usize, o: &Object) -> Value {
     let mut v = summary(o);
-    let m = v.as_object_mut().expect("object");
+    let map = v.as_object_mut().expect("object");
     let st = &o.style;
-    m.insert(
+    map.insert(
         "style".into(),
         json!({"stroke": st.stroke.to_hex(), "fill": st.fill.map(Color::to_hex), "width": st.width, "dash": name_of(&DASHES, st.dash),
             "opacity": r3(f64::from(st.opacity)), "roundness": r3(f64::from(st.roundness))}),
@@ -155,24 +156,24 @@ pub(super) fn full(z: usize, o: &Object) -> Value {
     let font = |l: &Label| json!({"family": name_of(&FAMILIES, l.family), "size": l.size, "align": name_of(&ALIGNS, l.align)});
     match &o.kind {
         Kind::Box(b) => {
-            m.insert("font".into(), font(&b.label));
+            map.insert("font".into(), font(&b.label));
             if b.frame.angle != 0.0 {
-                m.insert("rotation".into(), json!(degrees(b.frame.angle)));
+                map.insert("rotation".into(), json!(degrees(b.frame.angle)));
             }
         }
         Kind::Image(i) if i.frame.angle != 0.0 => {
-            m.insert("rotation".into(), json!(degrees(i.frame.angle)));
+            map.insert("rotation".into(), json!(degrees(i.frame.angle)));
         }
         Kind::Table(t) => {
-            m.insert("font".into(), json!({"family": name_of(&FAMILIES, t.family), "size": t.size}));
+            map.insert("font".into(), json!({"family": name_of(&FAMILIES, t.family), "size": t.size}));
             let rows: Vec<Vec<String>> = t.cells.chunks(t.cols().max(1)).map(|r| r.iter().map(RichText::to_plain).collect()).collect();
-            m.insert("cells".into(), json!(rows));
+            map.insert("cells".into(), json!(rows));
         }
         Kind::Connector(c) => {
             if let Some(l) = &c.label {
-                m.insert("font".into(), font(l));
+                map.insert("font".into(), font(l));
             }
-            m.insert("route".into(), json!(name_of(&ROUTES, c.route)));
+            map.insert("route".into(), json!(name_of(&ROUTES, c.route)));
             let has = |h: Arrowhead| h != Arrowhead::None;
             let arrow = match (has(c.head_start), has(c.head_end)) {
                 (false, true) => "end",
@@ -180,21 +181,21 @@ pub(super) fn full(z: usize, o: &Object) -> Value {
                 (true, true) => "both",
                 (false, false) => "none",
             };
-            m.insert("arrow".into(), json!(arrow));
+            map.insert("arrow".into(), json!(arrow));
             let head = |h: Arrowhead| format!("{h:?}").to_lowercase();
             if ![Arrowhead::None, Arrowhead::Arrow].contains(&c.head_start) || ![Arrowhead::None, Arrowhead::Arrow].contains(&c.head_end) {
-                m.insert("heads".into(), json!({"start": head(c.head_start), "end": head(c.head_end)}));
+                map.insert("heads".into(), json!({"start": head(c.head_start), "end": head(c.head_end)}));
             }
-            m.insert("stroke".into(), json!(st.stroke.to_hex()));
+            map.insert("stroke".into(), json!(st.stroke.to_hex()));
         }
         _ => {}
     }
-    m.insert("z".into(), json!(z));
+    map.insert("z".into(), json!(z));
     if let Some(g) = &o.group {
-        m.insert("group".into(), json!(g.0));
+        map.insert("group".into(), json!(g.0));
     }
     if o.locked {
-        m.insert("locked".into(), json!(true));
+        map.insert("locked".into(), json!(true));
     }
     v
 }
@@ -210,9 +211,9 @@ fn searchable(o: &Object) -> String {
     }
 }
 
-fn find_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
-    let text = opt_str(a, "text")?;
-    let pattern = opt_str(a, "regex")?;
+fn find_objects(ed: &mut Editor, args: &Value) -> Res<Value> {
+    let text = opt_str(args, "text")?;
+    let pattern = opt_str(args, "regex")?;
     if text.is_some() && pattern.is_some() {
         return Err("give either \"text\" or \"regex\", not both".into());
     }
@@ -224,23 +225,23 @@ fn find_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
         Some(p) if p.is_empty() || p.len() > 500 => return Err("\"regex\" must be 1 to 500 characters".into()),
         Some(p) => Some(regex::RegexBuilder::new(p).size_limit(1 << 20).dfa_size_limit(1 << 22).build().map_err(|e| format!("invalid regex: {e}"))?),
     };
-    let kind = opt_str(a, "type")?;
+    let kind = opt_str(args, "type")?;
     if let Some(k) = kind
         && !TYPES.contains(&k)
     {
         return Err(format!("unknown type \"{k}\" (one of: {})", TYPES.join(", ")));
     }
-    let region = match a.get("in_region").filter(|v| !v.is_null()) {
+    let region = match args.get("in_region").filter(|v| !v.is_null()) {
         None => None,
-        Some(v) => {
-            let g = |k: &str| v.get(k).and_then(Value::as_f64);
-            match (g("x"), g("y"), g("w"), g("h")) {
+        Some(spec) => {
+            let field = |k: &str| spec.get(k).and_then(Value::as_f64);
+            match (field("x"), field("y"), field("w"), field("h")) {
                 (Some(x), Some(y), Some(w), Some(h)) if w >= 0.0 && h >= 0.0 => Some(Rect::new(x, y, w, h)),
                 _ => return Err("\"in_region\" must be {\"x\", \"y\", \"w\", \"h\"}: four numbers, w and h not negative".into()),
             }
         }
     };
-    let limit = int_arg(a, "limit", 1, 500, 50)? as usize;
+    let limit = usize::try_from(int_arg(args, "limit", 1, 500, 50)?).map_err(|e| e.to_string())?;
     let needle = text.map(str::to_lowercase);
     let page = ed.page();
     let (mut count, mut found) = (0usize, Vec::new());
@@ -303,8 +304,8 @@ impl Patch {
         let mut p = Patch {
             width: num_arg(a, "stroke_width", 0.0, 100.0)?,
             dash: enum_arg(a, "dash", &DASHES)?,
-            opacity: num_arg(a, "opacity", 0.0, 1.0)?.map(|v| v as f32),
-            roundness: num_arg(a, "roundness", 0.0, 1.0)?.map(|v| v as f32),
+            opacity: num_arg(a, "opacity", 0.0, 1.0)?.map(num::f32),
+            roundness: num_arg(a, "roundness", 0.0, 1.0)?.map(num::f32),
             size: num_arg(a, "font_size", 4.0, 400.0)?,
             family: enum_arg(a, "font_family", &FAMILIES)?,
             align: enum_arg(a, "align", &ALIGNS)?,
@@ -326,9 +327,9 @@ impl Patch {
                 return Err(format!("cell [{row}, {col}] is outside the table ({} rows, {} columns; indices start at 0)", t.rows(), t.cols()));
             }
             let text = os(a, "text").ok_or("\"cell\" needs the new cell \"text\"")?;
-            let mut w = Vec::new();
-            let rt = richtext::rich(text, richtext::markdown_flag(a)?, &mut w);
-            p.warnings = w.into_iter().map(|w| format!("cell [{row}, {col}]: {w}")).collect();
+            let mut cell_warnings = Vec::new();
+            let rt = richtext::rich(text, richtext::markdown_flag(a)?, &mut cell_warnings);
+            p.warnings = cell_warnings.into_iter().map(|w| format!("cell [{row}, {col}]: {w}")).collect();
             p.cell = Some(Cell { row, col, text: rt });
         }
         Ok(p)
@@ -431,7 +432,7 @@ impl Patch {
                 match &mut c.label {
                     Some(l) => self.font(l),
                     None if self.has_font() => {
-                        warn.push("font_size, font_family and align apply to the label, and this connector has no label (give `text` too)".into())
+                        warn.push("font_size, font_family and align apply to the label, and this connector has no label (give `text` too)".into());
                     }
                     None => {}
                 }
@@ -580,7 +581,7 @@ fn manage_pages(ed: &mut Editor, a: &Value) -> Res<Value> {
 fn duplicate_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
     let ids = ids_arg(ed, a, "ids")?;
     let (dx, dy) = (num_arg(a, "dx", -MAX_COORD, MAX_COORD)?.unwrap_or(40.0), num_arg(a, "dy", -MAX_COORD, MAX_COORD)?.unwrap_or(40.0));
-    let count = int_arg(a, "count", 1, 50, 1)? as usize;
+    let count = usize::try_from(int_arg(a, "count", 1, 50, 1)?).map_err(|e| e.to_string())?;
     if ids.len() * count > 10_000 {
         return Err(format!("too many copies ({} objects x {count}; 10000 at most)", ids.len()));
     }
@@ -589,7 +590,7 @@ fn duplicate_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
     let created = ed.transact(|e| {
         let mut all = Vec::new();
         for k in 1..=count {
-            all.extend(e.duplicate(&ids, Pt::new(dx * k as f64, dy * k as f64)));
+            all.extend(e.duplicate(&ids, Pt::new(dx * num::f64_of(k), dy * num::f64_of(k))));
         }
         all
     });

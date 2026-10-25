@@ -182,7 +182,7 @@ impl PresenceState {
         if idle >= IDLE {
             0.0
         } else if idle + FADE > IDLE {
-            (IDLE - idle).as_secs_f32() / FADE.as_secs_f32()
+            IDLE.checked_sub(idle).unwrap().as_secs_f32() / FADE.as_secs_f32()
         } else {
             1.0
         }
@@ -420,7 +420,7 @@ fn setting_path() -> std::path::PathBuf {
 
 /// Reads the "Animate the agent" setting (on by default).
 pub fn load_animate() -> bool {
-    std::fs::read_to_string(setting_path()).map(|s| s.trim() != "0").unwrap_or(true)
+    std::fs::read_to_string(setting_path()).map_or(true, |s| s.trim() != "0")
 }
 
 pub fn save_animate(on: bool) {
@@ -522,6 +522,7 @@ pub fn draw_presence(painter: &Painter, cam: &Cam, st: &PresenceState, now: Inst
     // trail: the positions of the last few hundred milliseconds, fading with age
     let mut prev: Option<Pos2> = None;
     for i in (0..=TRAIL_SAMPLES).rev() {
+        #[allow(clippy::cast_precision_loss, reason = "a few dozen samples")]
         let age = TRAIL_LIFE.mul_f32(i as f32 / TRAIL_SAMPLES as f32);
         let Some(p) = now.checked_sub(age).and_then(|t| st.position_at(t)).map(|p| cam.s(p)) else { continue };
         if let Some(q) = prev.filter(|q| q.distance(p) > 0.5) {
@@ -543,6 +544,7 @@ pub fn draw_presence(painter: &Painter, cam: &Cam, st: &PresenceState, now: Inst
     for p in &pts {
         mesh.colored_vertex(*p, color.gamma_multiply(a));
     }
+    #[allow(clippy::cast_possible_truncation, reason = "vertex indices of a 7-point arrow")]
     for t in ARROW_TRIS {
         mesh.add_triangle(t[0] as u32, t[1] as u32, t[2] as u32);
     }

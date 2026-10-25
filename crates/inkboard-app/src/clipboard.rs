@@ -3,7 +3,8 @@
 use crate::app::App;
 use crate::i18n::{t, tr};
 use crate::tools::Tool;
-use inkboard_core::*;
+use inkboard_core::num;
+use inkboard_core::{Align, BoxGeom, Frame, Id, ImageObj, Kind, Label, Object, Pt, RichText, Style};
 
 /// Text placed in the system clipboard to signal "the content to paste is in the internal clipboard".
 pub const MARKER: &str = "__inkboard_objects__";
@@ -59,7 +60,8 @@ impl App {
 
     /// Inserts an image given by its RGBA pixels, centered on `at` (shrunk to fit the view).
     pub fn insert_rgba(&mut self, w: usize, h: usize, rgba: &[u8], at: Pt) {
-        let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, rgba.to_vec()) else {
+        let img = u32::try_from(w).ok().zip(u32::try_from(h).ok()).and_then(|(w, h)| image::RgbaImage::from_raw(w, h, rgba.to_vec()));
+        let Some(img) = img else {
             return self.toast(&t("Clipboard image unreadable"));
         };
         let mut png = Vec::new();
@@ -67,7 +69,7 @@ impl App {
             return self.toast(&t("Clipboard image unreadable"));
         }
         let aid = self.ed.doc.add_asset("image/png", png);
-        let (fw, fh) = (w as f64, h as f64);
+        let (fw, fh) = (num::f64_of(w), num::f64_of(h));
         let k = (480.0 / fw).min(360.0 / fh).min(1.0);
         let frame = Frame::new(at.x - fw * k / 2.0, at.y - fh * k / 2.0, fw * k, fh * k);
         let id = self
@@ -81,7 +83,7 @@ impl App {
     pub fn copy_as_image(&mut self) {
         let page = self.ed.page().clone();
         let ids: Option<Vec<Id>> = (!self.sel.is_empty()).then(|| self.sel.clone());
-        let Some(svg) = inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &Default::default()) else {
+        let Some(svg) = inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &inkboard_core::svg::SvgOptions::default()) else {
             return self.toast(&t("Nothing to copy"));
         };
         let png = match inkboard_formats::raster::svg_to_png(&svg, 2.0) {

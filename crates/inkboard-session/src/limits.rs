@@ -81,6 +81,7 @@ pub struct Limits {
 impl Limits {
     /// Bounds for what the host says: the same numeric and structural checks as for a guest (nothing non-finite, nothing huge), but
     /// with the counts lifted, since the host legitimately sends whole pages or deletes thousands of objects in one modification.
+    #[must_use]
     pub fn host_trust() -> Self {
         Self {
             max_message_bytes: 16 << 20,
@@ -144,10 +145,12 @@ pub fn check_message_size(l: &Limits, size: usize) -> Result<(), Violation> {
     if size > l.max_message_bytes { Err(Violation::MessageTooLarge { size, max: l.max_message_bytes }) } else { Ok(()) }
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a configured limit: the saturating float-to-integer cast is what is wanted")]
 fn check_num(l: &Limits, field: &'static str, v: f64) -> Result<(), Violation> {
     if v.is_finite() && v.abs() <= l.max_abs_value { Ok(()) } else { Err(Violation::OutOfBounds { field, max: l.max_abs_value as u64 }) }
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a configured limit: the saturating float-to-integer cast is what is wanted")]
 fn check_len(field: &'static str, v: f64, max: f64, allow_zero: bool) -> Result<(), Violation> {
     if v.is_finite() && v <= max && (v > 0.0 || (allow_zero && v == 0.0)) { Ok(()) } else { Err(Violation::OutOfBounds { field, max: max as u64 }) }
 }
@@ -462,6 +465,7 @@ pub struct Quota {
 }
 
 impl Quota {
+    #[must_use]
     pub fn used(&self) -> u64 {
         self.used
     }
@@ -489,6 +493,7 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
+    #[must_use]
     pub fn new(per_sec: u32, burst: u32) -> Self {
         let capacity = u64::from(burst.max(1)) * 1000;
         Self { tokens: capacity, capacity, refill: u64::from(per_sec), last_ms: 0 }

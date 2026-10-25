@@ -15,6 +15,7 @@ impl Default for CancelToken {
 }
 
 impl CancelToken {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -23,6 +24,7 @@ impl CancelToken {
         self.0.send_replace(true);
     }
 
+    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         *self.0.borrow()
     }

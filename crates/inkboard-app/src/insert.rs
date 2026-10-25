@@ -4,7 +4,7 @@ use crate::app::{App, Dialog, FormulaPreview};
 use crate::i18n::t;
 use crate::tools::Tool;
 use inkboard_core::highlight::Lang;
-use inkboard_core::*;
+use inkboard_core::{Align, BoxGeom, Color, FontFamily, Frame, Id, ImageObj, Kind, Label, Object, Pt, RichText, Style};
 
 /// Text size of a formula when inserted (board units).
 const FORMULA_SIZE: f64 = 36.0;

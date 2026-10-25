@@ -267,7 +267,8 @@ pub fn save_display_name(name: &str) {
 fn color_for(pid: ParticipantId, used: &[(u8, u8, u8)]) -> (u8, u8, u8) {
     PALETTE.iter().copied().find(|c| !used.contains(c)).unwrap_or_else(|| {
         let n = pid.0;
-        (((n * 67) % 190 + 40) as u8, ((n * 131) % 190 + 40) as u8, ((n * 29) % 190 + 40) as u8)
+        let channel = |k: u32| u8::try_from((n * k) % 190 + 40).unwrap_or(u8::MAX);
+        (channel(67), channel(131), channel(29))
     })
 }
 
@@ -515,6 +516,7 @@ enum ConnState {
     },
 }
 
+#[allow(clippy::struct_field_names, reason = "`conn` is the transport connection of a `Conn`")]
 struct Conn {
     id: u64,
     conn: Box<dyn Connection>,
@@ -1163,6 +1165,7 @@ impl SessionHost {
 
     /// The connection cannot be written to: it is closed at once. A guest keeps its place for a while, as after any lost connection
     /// (it can come back and resume); the host is told.
+    #[allow(clippy::needless_pass_by_value, reason = "owned: the reason is moved into the event of a caller that has built it")]
     fn fail_conn(&mut self, i: usize, why: String) {
         let id = self.conns[i].id;
         match self.conns[i].state {
@@ -1548,8 +1551,7 @@ impl SessionHost {
                 }
                 return self.welcome(i, pid, h.resume.map(|r| r.last_seq));
             }
-            ConnState::Pending(_) => return,
-            ConnState::Closing { .. } => return,
+            ConnState::Pending(_) | ConnState::Closing { .. } => return,
             ConnState::New => {}
         }
         let proof_key = self.conns[i].revoked_key.as_ref().unwrap_or_else(|| self.keys.key(key_role));
@@ -1624,6 +1626,7 @@ impl SessionHost {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value, reason = "owned: the strings come out of a request that is consumed")]
     fn admit(&mut self, i: usize, name: String, role: Role, peer: String) {
         let pid = ParticipantId(self.next_pid);
         self.next_pid += 1;
@@ -1743,6 +1746,7 @@ impl SessionHost {
 
     /* ------------------------------------------------------------------------------------------------------- messages */
 
+    #[allow(clippy::too_many_lines, reason = "the message table of the host")]
     fn on_message(&mut self, pid: ParticipantId, msg: Message, ed: &mut Editor) {
         let now = self.now;
         let len = self.frame_len as u64;
@@ -1972,6 +1976,7 @@ impl SessionHost {
     }
 
     /// An image uploaded by a guest, chunk by chunk, before the modification that uses it.
+    #[allow(clippy::needless_pass_by_value, reason = "owned: the chunk is a message taken out of the frame")]
     fn on_chunk(&mut self, pid: ParticipantId, c: AssetChunk) {
         let limits = self.cfg.limits.clone();
         if !self.members.contains_key(&pid) {

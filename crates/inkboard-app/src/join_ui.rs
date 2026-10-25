@@ -277,6 +277,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 }
 
 /// "This link uses an unknown relay": Cancel / Continue, before anything connects.
+#[allow(clippy::needless_pass_by_value, reason = "owned: copied out of `app.join`, which the window then borrows mutably")]
 fn unknown_relay_window(app: &mut App, ctx: &egui::Context, mut w: JoinWindow, domain: String) {
     let (mut go, mut cancel) = (false, false);
     modal(t("Unknown relay")).show(ctx, |ui| {
@@ -393,6 +394,7 @@ fn joining_window(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "owned: copied out of `app.guest`, which the window then borrows mutably")]
 fn failed_window(app: &mut App, ctx: &egui::Context, issue: NetIssue) {
     let diagnosing = app.guest.as_ref().is_some_and(|g| g.is_diagnosing());
     let (mut copy, mut retry, mut close) = (false, false, false);
@@ -420,6 +422,7 @@ fn failed_window(app: &mut App, ctx: &egui::Context, issue: NetIssue) {
     }
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "owned: copied out of `app.guest`, which the window then borrows mutably")]
 fn ended_window(app: &mut App, ctx: &egui::Context, reason: EndReason) {
     let mut close = false;
     modal(t("Cannot join the session")).show(ctx, |ui| {

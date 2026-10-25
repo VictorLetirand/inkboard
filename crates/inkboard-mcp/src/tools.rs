@@ -1,9 +1,13 @@
 //! MCP tools: each tool opens the file `path`, applies a change through the engine's `Editor` and saves it again (atomically).
 
 use crate::Server;
+use base64::Engine;
 use inkboard_core::layout::{Direction, auto_layout};
 use inkboard_core::svg::{SvgOptions, export as export_svg};
-use inkboard_core::*;
+use inkboard_core::{
+    Align, ApproxMeasurer, Arrowhead, BoxGeom, Color, Connector, Document, Editor, End, FontFamily, Frame, Id, ImageObj, Kind, Label, Measurer, Object, Pt,
+    Rect, RichText, Route, Style, Table, connector,
+};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -19,7 +23,9 @@ type Res<T> = Result<T, String>;
 const EXPORTS: [&str; 9] = [".inkboard", ".inkboard.json", ".drawio", ".excalidraw", ".canvas", ".svg", ".png", ".pdf", ".json"];
 
 fn obj(props: Value, required: &[&str]) -> Value {
-    json!({"type": "object", "properties": props, "required": required})
+    let mut v = json!({"type": "object", "required": required});
+    v["properties"] = props;
+    v
 }
 
 fn path_prop() -> Value {
@@ -40,6 +46,7 @@ fn pos_props(mut p: Value) -> Value {
 }
 
 /// Description of the tools (name, description, input schema) for `tools/list`.
+#[must_use]
 pub fn list() -> Vec<Value> {
     let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
     let mut tools = vec![
@@ -288,6 +295,10 @@ fn check_args(a: &Value) -> Res<()> {
 }
 
 /// Applies a tool to an in-memory board. Used as is by file mode and by the application (live mode, with its undo history).
+///
+/// # Errors
+///
+/// A message for the agent when the tool is unknown or its arguments are invalid; the board is then unchanged.
 pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name == "save_board" {
         return Ok(json!({"saved": true}));
@@ -365,6 +376,10 @@ fn apply_checked(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
 
 /// Runs the tool `name`: in the open application if it is reachable and shows this board (live mode), otherwise on the file `path`.
 /// The result is a JSON text intended for the agent.
+///
+/// # Errors
+///
+/// A message for the agent when the tool fails (see [`apply`]) or the board file cannot be read or written.
 pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     if name != "create_board" && name != "save_board" && !EDITOR_TOOLS.contains(&name) && !ext_is_tool(name) {
         return Err(format!("unknown tool: {name}"));
@@ -383,10 +398,9 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
         // the file is read here (confined to the root); only the data is passed to the application
         let abs = resolve(srv, &src)?;
         let meta = std::fs::metadata(&abs).map_err(|e| format!("reading {}: {e}", abs.display()))?;
-        if meta.len() as usize > IMAGE_MAX_BYTES {
+        if usize::try_from(meta.len()).map_or(true, |n| n > IMAGE_MAX_BYTES) {
             return Err(format!("image too large ({} MiB, maximum {})", meta.len() >> 20, IMAGE_MAX_BYTES >> 20));
         }
-        use base64::Engine;
         let bytes = std::fs::read(&abs).map_err(|e| format!("reading {}: {e}", abs.display()))?;
         a["data_base64"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
         a.as_object_mut().map(|m| m.remove("source"));
@@ -461,8 +475,9 @@ fn end_json(e: &connector::End) -> Value {
 
 /// JSON summary of an object (id, type, position, text, links).
 pub fn summary(o: &Object) -> Value {
-    let mut v = json!({"id": o.id.0, "type": kind_name(o)});
-    let m = v.as_object_mut().expect("object");
+    let mut m = serde_json::Map::new();
+    m.insert("id".into(), json!(o.id.0));
+    m.insert("type".into(), json!(kind_name(o)));
     if let Some(f) = o.frame() {
         m.insert("x".into(), json!(f.x.round()));
         m.insert("y".into(), json!(f.y.round()));
@@ -506,7 +521,7 @@ pub fn summary(o: &Object) -> Value {
         }
         Kind::Pen(_) => {}
     }
-    v
+    Value::Object(m)
 }
 
 fn describe(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -533,6 +548,7 @@ pub struct Snapshot {
 const TRACK_MAX_OBJECTS: usize = 20_000;
 
 impl Snapshot {
+    #[must_use]
     pub fn of(ed: &Editor) -> Self {
         use std::hash::{Hash, Hasher};
         let mut objects = std::collections::HashMap::new();
@@ -589,12 +605,16 @@ fn absorb(reference: &mut Snapshot, before: &Snapshot, after: &Snapshot) {
         reference.objects.remove(id);
     }
     if before.pages != after.pages {
-        reference.pages = after.pages.clone();
+        reference.pages.clone_from(&after.pages);
     }
 }
 
 /// Like [`apply`], while tracking changes: `board_changes` reports what the user modified since the agent's last look
 /// (a `describe_board` or `board_changes` call); the agent's own changes are not reported.
+///
+/// # Errors
+///
+/// Same as [`apply`].
 pub fn apply_tracked(ed: &mut Editor, name: &str, a: &Value, tracker: &mut Option<Snapshot>) -> Res<Value> {
     if Snapshot::too_big(ed) {
         return if name == "board_changes" { Err("board too large for change tracking".into()) } else { apply(ed, name, a) };
@@ -655,7 +675,6 @@ fn image_size(mime: &str, data: &[u8]) -> Option<(f64, f64)> {
 }
 
 fn add_image(ed: &mut Editor, a: &Value) -> Res<Value> {
-    use base64::Engine;
     let b64 = s(a, "data_base64").map_err(|_| "missing \"source\" (image file) or \"data_base64\" parameter".to_owned())?;
     let data = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| format!("invalid base64: {e}"))?;
     if data.len() > IMAGE_MAX_BYTES {
@@ -862,14 +881,14 @@ fn import_mermaid(ed: &mut Editor, a: &Value) -> Res<Value> {
     Ok(json!({"created": ids.len(), "ids": ids.iter().map(|i| i.0.clone()).collect::<Vec<_>>()}))
 }
 
-fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
-    let id = find(ed, s(a, "id")?)?.id.clone();
-    let (fill, stroke) = (ocolor(a, "fill")?, ocolor(a, "stroke")?);
-    let (text, x, y, w, h) = (os(a, "text").map(str::to_owned), of(a, "x"), of(a, "y"), of(a, "w"), of(a, "h"));
+fn update_object(ed: &mut Editor, args: &Value) -> Res<Value> {
+    let id = find(ed, s(args, "id")?)?.id.clone();
+    let (fill, stroke) = (ocolor(args, "fill")?, ocolor(args, "stroke")?);
+    let (text, x, y, w, h) = (os(args, "text").map(str::to_owned), of(args, "x"), of(args, "y"), of(args, "w"), of(args, "h"));
     let mut warn: Vec<String> = Vec::new();
-    let markdown = richtext::markdown_flag(a)?;
+    let markdown = richtext::markdown_flag(args)?;
     // everything is validated here, before the first change
-    let patch = edit::Patch::parse(ed, a, find(ed, &id.0)?)?;
+    let patch = edit::Patch::parse(ed, args, find(ed, &id.0)?)?;
     let mut md_warnings = Vec::new();
     // with `cell`, `text` is the text of that cell (parsed by the patch)
     let rich = text.as_deref().filter(|_| !patch.has_cell()).map(|t| richtext::rich(t, markdown, &mut md_warnings));
@@ -882,21 +901,21 @@ fn update_object(ed: &mut Editor, a: &Value) -> Res<Value> {
             o.style.stroke = s;
         }
         match &mut o.kind {
-            Kind::Box(b) => {
+            Kind::Box(shape) => {
                 if let Some(t) = &rich {
-                    b.label.text = t.clone();
+                    shape.label.text = t.clone();
                 }
                 if let Some(w) = w {
-                    b.frame.w = w.max(4.0);
+                    shape.frame.w = w.max(4.0);
                 }
                 if let Some(h) = h {
-                    b.frame.h = h.max(4.0);
+                    shape.frame.h = h.max(4.0);
                 }
-                b.fit(&ApproxMeasurer);
+                shape.fit(&ApproxMeasurer);
             }
-            Kind::Connector(c) => {
+            Kind::Connector(conn) => {
                 if let Some(t) = &rich {
-                    c.label = (!t.is_empty()).then(|| Label { text: t.clone(), ..Label::new("", 16.0, Align::Center) });
+                    conn.label = (!t.is_empty()).then(|| Label { text: t.clone(), ..Label::new("", 16.0, Align::Center) });
                 }
             }
             _ if text.is_some() && !patch.has_cell() => warn.push("text can only be changed on shapes and connectors".to_owned()),
@@ -929,20 +948,21 @@ fn export(ed: &mut Editor, a: &Value) -> Res<Value> {
     if !EXPORTS.iter().any(|e| name.ends_with(e)) {
         return Err(format!("unsupported output extension (expected: {})", EXPORTS.join(", ")));
     }
+    let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let doc = &ed.doc;
     let page = ed.page();
     let svg = || export_svg(doc, page, None, &ApproxMeasurer, &SvgOptions::default()).ok_or_else(|| "the page is empty: nothing to export".to_owned());
-    let bytes: Vec<u8> = if name.ends_with(".svg") {
+    let bytes: Vec<u8> = if ext == "svg" {
         svg()?.into_bytes()
-    } else if name.ends_with(".png") {
+    } else if ext == "png" {
         inkboard_formats::raster::svg_to_png(&svg()?, 2.0).map_err(|e| e.to_string())?
-    } else if name.ends_with(".pdf") {
+    } else if ext == "pdf" {
         inkboard_formats::raster::svg_to_pdf(&svg()?).map_err(|e| e.to_string())?
-    } else if name.ends_with(".drawio") {
+    } else if ext == "drawio" {
         inkboard_formats::drawio::export(doc, &ApproxMeasurer).into_bytes()
-    } else if name.ends_with(".excalidraw") {
+    } else if ext == "excalidraw" {
         inkboard_formats::excalidraw::export(doc, page, &ApproxMeasurer).into_bytes()
-    } else if name.ends_with(".canvas") {
+    } else if ext == "canvas" {
         inkboard_formats::jsoncanvas::export(page).0.into_bytes()
     } else {
         inkboard_core::serial::to_json(doc, true).into_bytes()

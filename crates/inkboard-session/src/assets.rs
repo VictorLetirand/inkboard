@@ -7,16 +7,23 @@ use inkboard_core::model::Document;
 use sha2::{Digest, Sha256};
 
 /// Lowercase hexadecimal SHA-256 of `data`.
+#[must_use]
 pub fn hash_hex(data: &[u8]) -> String {
-    Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    Sha256::digest(data).iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Manifest of the images of a document (what a `Snapshot` lists instead of their bytes).
+#[must_use]
 pub fn manifest(doc: &Document) -> Vec<AssetInfo> {
     doc.assets.iter().map(|(id, a)| AssetInfo { id: id.clone(), hash: hash_hex(&a.data), size: a.data.len() as u64, mime: a.mime.clone() }).collect()
 }
 
 /// Splits an image into chunks of at most `chunk_size` bytes (at least one chunk; the last one is flagged).
+#[must_use]
 pub fn chunks(data: &[u8], hash: &str, chunk_size: usize) -> Vec<AssetChunk> {
     let size = chunk_size.max(1);
     let n = data.len().div_ceil(size).max(1);
@@ -49,6 +56,7 @@ impl AssetAssembler {
     }
 
     /// For an image whose size is not known in advance: at most `max_size` bytes are taken, the hash alone vouches for the content.
+    #[must_use]
     pub fn with_unknown_size(hash: &str, max_size: u64) -> Self {
         Self { hash: hash.to_owned(), size: max_size, exact: false, buf: Vec::new() }
     }

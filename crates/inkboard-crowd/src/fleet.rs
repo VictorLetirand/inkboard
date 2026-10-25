@@ -159,7 +159,7 @@ pub fn run_fleet(cfg: &FleetConfig, env: Arc<GuestEnv>, make_dialer: Arc<dyn Fn(
                 s.machine_cpu_pct
             );
         }
-        if workers.iter().all(|w| w.as_ref().map_or(true, |h| h.is_finished())) {
+        if workers.iter().all(|w| w.as_ref().map_or(true, std::thread::JoinHandle::is_finished)) {
             break;
         }
     }

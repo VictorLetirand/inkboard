@@ -18,6 +18,7 @@ pub enum Mode {
 }
 
 impl Mode {
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "loopback" => Some(Self::Loopback),
@@ -27,6 +28,7 @@ impl Mode {
         }
     }
 
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::Loopback => "loopback",
@@ -36,6 +38,7 @@ impl Mode {
     }
 
     /// Configuration of a guest endpoint.
+    #[must_use]
     pub fn guest_config(self) -> NetConfig {
         let base = NetConfig { connect_timeout: Duration::from_secs(40), ..NetConfig::default() };
         match self {
@@ -46,6 +49,7 @@ impl Mode {
     }
 
     /// Configuration of the host endpoint.
+    #[must_use]
     pub fn host_config(self) -> NetConfig {
         match self {
             Self::Loopback => NetConfig::loopback(),

@@ -41,8 +41,12 @@ pub struct LiveServer {
 }
 
 fn new_token() -> String {
+    use std::fmt::Write;
     use std::hash::{BuildHasher, Hasher};
-    (0..4).map(|_| format!("{:016x}", std::collections::hash_map::RandomState::new().build_hasher().finish())).collect()
+    (0..4).fold(String::with_capacity(64), |mut s, _| {
+        let _ = write!(s, "{:016x}", std::collections::hash_map::RandomState::new().build_hasher().finish());
+        s
+    })
 }
 
 fn same_token(a: &str, b: &str) -> bool {
@@ -64,7 +68,7 @@ impl LiveServer {
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let (tx, ctx, t) = (tx.clone(), ctx.clone(), t.clone());
-                std::thread::spawn(move || serve(stream, &tx, &ctx, &t));
+                std::thread::spawn(move || serve(&stream, &tx, &ctx, &t));
             }
         });
         Ok(Self { rx, token, file })
@@ -89,22 +93,22 @@ fn respond(mut s: &TcpStream, v: &Value) {
     let _ = s.flush();
 }
 
-fn serve(stream: TcpStream, tx: &mpsc::Sender<Request>, ctx: &eframe::egui::Context, token: &str) {
+fn serve(stream: &TcpStream, tx: &mpsc::Sender<Request>, ctx: &eframe::egui::Context, token: &str) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let mut line = String::new();
     // a request fits on one line; 16 MiB at most
-    if BufReader::new((&stream).take(16 << 20)).read_line(&mut line).is_err() {
+    if BufReader::new(stream.take(16 << 20)).read_line(&mut line).is_err() {
         return;
     }
-    let Ok(req) = serde_json::from_str::<Value>(&line) else { return respond(&stream, &json!({"ok": false, "error": "invalid request"})) };
+    let Ok(req) = serde_json::from_str::<Value>(&line) else { return respond(stream, &json!({"ok": false, "error": "invalid request"})) };
     if !req.get("token").and_then(Value::as_str).is_some_and(|t| same_token(t, token)) {
-        return respond(&stream, &json!({"ok": false, "error": "token refused"}));
+        return respond(stream, &json!({"ok": false, "error": "token refused"}));
     }
     let tool = req.get("tool").and_then(Value::as_str).unwrap_or("").to_owned();
     let args = req.get("args").cloned().unwrap_or_else(|| json!({}));
     let (rtx, rrx) = mpsc::channel();
     if tx.send(Request { tool, args, reply: rtx }).is_err() {
-        return respond(&stream, &json!({"ok": false, "error": "application is closing"}));
+        return respond(stream, &json!({"ok": false, "error": "application is closing"}));
     }
     ctx.request_repaint();
     let out = match rrx.recv_timeout(Duration::from_secs(30)) {
@@ -113,7 +117,7 @@ fn serve(stream: TcpStream, tx: &mpsc::Sender<Request>, ctx: &eframe::egui::Cont
         Ok(Reply::OtherFile) => json!({"ok": false, "other_file": true}),
         Err(_) => json!({"ok": false, "error": "the application did not answer (window busy or stuck)"}),
     };
-    respond(&stream, &out);
+    respond(stream, &out);
 }
 
 /// Answer to the agent when the host's confirmation would be needed (a refusal: the host decides outside the agent's reach).

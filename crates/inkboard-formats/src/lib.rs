@@ -7,6 +7,38 @@
 //! | Excalidraw (`.excalidraw`) | yes | yes |
 //! | JSON Canvas (`.canvas`) | yes | yes |
 //! | Mermaid (flowchart, stateDiagram, sequenceDiagram) | yes | – |
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::float_cmp,
+        clippy::many_single_char_names,
+        clippy::similar_names,
+        clippy::assert_is_empty,
+        clippy::default_trait_access,
+        clippy::format_collect,
+        clippy::format_push_string,
+        clippy::too_many_lines,
+        clippy::items_after_statements,
+        clippy::needless_raw_string_hashes,
+        clippy::needless_pass_by_value,
+        clippy::explicit_iter_loop,
+        clippy::needless_for_each,
+        clippy::collapsible_else_if,
+        clippy::single_match_else,
+        clippy::manual_assert,
+        clippy::redundant_closure_for_method_calls,
+        clippy::unnested_or_patterns,
+        clippy::range_plus_one,
+        clippy::clone_on_copy,
+        clippy::match_same_arms,
+        clippy::struct_excessive_bools
+    )
+)]
 
 pub mod common;
 pub mod drawio;
@@ -70,11 +102,19 @@ pub fn detect(file_name: &str, content: &str) -> Option<Format> {
 }
 
 /// Opens content in any recognized format.
+///
+/// # Errors
+///
+/// [`FormatError`] when the format is not recognized or the content is invalid for it.
 pub fn import_any(file_name: &str, content: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
     import_any_with_icons(file_name, content, m, &NoIcons)
 }
 
 /// Like [`import_any`], resolving the built-in icons of draw.io (`image=img/lib/...`) in `icons` (e.g. an `inkboard_icons::Library`).
+///
+/// # Errors
+///
+/// Same as [`import_any`].
 pub fn import_any_with_icons(file_name: &str, content: &str, m: &dyn Measurer, icons: &dyn IconResolver) -> Result<Imported, FormatError> {
     let content = inkboard_core::serial::strip_bom(content);
     let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
@@ -95,7 +135,7 @@ pub fn import_any_with_icons(file_name: &str, content: &str, m: &dyn Measurer, i
 #[cfg(test)]
 pub(crate) fn sample_document() -> inkboard_core::Document {
     use inkboard_core::*;
-    let mut d = inkboard_core::Document::new("Example");
+    let mut doc = inkboard_core::Document::new("Example");
     let mut lab = Label::new("Start\nline 2", 20.0, Align::Center);
     lab.text.restyle(0, 5, |s| s.bold = true);
     let a = Object::new_box(
@@ -111,13 +151,13 @@ pub(crate) fn sample_document() -> inkboard_core::Document {
         Label::new("End", 20.0, Align::Center),
     );
     let c = Object::new_box(BoxGeom::Diamond, Frame::new(250.0, 260.0, 140.0, 100.0), Style::default(), Label::new("Choice?", 20.0, Align::Center));
-    let t = Object::new_box(
+    let table = Object::new_box(
         BoxGeom::Triangle,
         Frame::new(450.0, 260.0, 100.0, 90.0),
         Style { fill: Some(Color::rgb(255, 201, 201)), ..Default::default() },
         Label::default(),
     );
-    let n = Object::new_box(
+    let note = Object::new_box(
         BoxGeom::Sticky,
         Frame::new(100.0, 260.0, 130.0, 130.0),
         Style { fill: Some(Color::rgb(255, 216, 168)), width: 0.0, ..Default::default() },
@@ -137,11 +177,11 @@ pub(crate) fn sample_document() -> inkboard_core::Document {
     let link = Object::new(Kind::Connector(conn), Style { stroke: Color::rgb(224, 49, 49), width: 2.5, ..Default::default() });
     let free = Object::new(Kind::Connector(Connector::new(End::bound(c.id.clone()), End::free(Pt::new(300.0, 480.0)))), Style::default());
     let pen = Object::new_pen(vec![Pt::new(100.0, 450.0), Pt::new(150.0, 470.0), Pt::new(200.0, 440.0), Pt::new(260.0, 480.0)], false, Style::default());
-    let aid = d.add_asset("image/png", vec![137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+    let aid = doc.add_asset("image/png", vec![137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
     let img = Object::new(
         Kind::Image(ImageObj { frame: Frame::new(650.0, 300.0, 80.0, 60.0), asset: aid, latex: None, mono: false }),
         Style { width: 0.0, ..Default::default() },
     );
-    d.pages[0].objects.extend([a, b, c, t, n, x, link, free, pen, img]);
-    d
+    doc.pages[0].objects.extend([a, b, c, table, note, x, link, free, pen, img]);
+    doc
 }

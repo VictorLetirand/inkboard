@@ -77,15 +77,18 @@ impl Default for Profile {
 
 impl Profile {
     /// A quiet session: only cursors and the odd edit (the typical "2 to 5 people" meeting).
+    #[must_use]
     pub fn calm() -> Self {
         Self { stroke_per_min: 1.0, create_per_min: 2.0, move_per_min: 2.0, text_per_min: 1.0, image_per_min: 0.05, slow_fraction: 0.0, ..Self::default() }
     }
 
     /// Everything is turned up: a workshop where everybody draws at once.
+    #[must_use]
     pub fn busy() -> Self {
         Self { stroke_per_min: 6.0, create_per_min: 12.0, move_per_min: 10.0, delete_per_min: 2.0, text_per_min: 4.0, image_per_min: 0.4, ..Self::default() }
     }
 
+    #[must_use]
     pub fn named(name: &str) -> Option<Self> {
         match name {
             "default" | "workshop" => Some(Self::default()),
@@ -152,6 +155,7 @@ impl Args {
         self.opts.get(key).map(String::as_str)
     }
 
+    #[must_use]
     pub fn flag(&self, key: &str) -> bool {
         self.opts.contains_key(key)
     }

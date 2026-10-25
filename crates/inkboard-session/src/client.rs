@@ -30,6 +30,7 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
+    #[must_use]
     pub fn new(name: &str, role_requested: Role, join_proof: Vec<u8>) -> Self {
         Self { name: name.to_owned(), role_requested, join_proof, resend_after_ms: 1_000, sync_interval_ms: 5_000 }
     }
@@ -127,6 +128,7 @@ impl Client {
     /// Objects of a snapshot (the host's own ceiling is lower by default).
     const MAX_SNAPSHOT_OBJECTS: usize = 200_000;
 
+    #[must_use]
     pub fn new(cfg: ClientConfig) -> Self {
         let role = cfg.role_requested;
         Self {
@@ -152,29 +154,37 @@ impl Client {
     }
 
     /// The view: the host's state plus our unconfirmed modifications.
+    #[must_use]
     pub fn doc(&self) -> &Document {
         &self.doc
     }
+    #[must_use]
     pub fn phase(&self) -> Phase {
         self.phase
     }
+    #[must_use]
     pub fn is_live(&self) -> bool {
         self.phase == Phase::Live
     }
+    #[must_use]
     pub fn participant(&self) -> Option<ParticipantId> {
         self.participant
     }
+    #[must_use]
     pub fn role(&self) -> Role {
         self.role
     }
+    #[must_use]
     pub fn color(&self) -> (u8, u8, u8) {
         self.color
     }
     /// `seq` of the last host modification applied.
+    #[must_use]
     pub fn last_seq(&self) -> Seq {
         self.last_seq
     }
     /// Modifications waiting for the host.
+    #[must_use]
     pub fn pending_len(&self) -> usize {
         self.pending.len()
     }
@@ -289,12 +299,13 @@ impl Client {
 
     /// Handles a message from the host. An `Err` means the host broke the protocol (or speaks another version); the client is closed
     /// in the latter case.
+    #[allow(clippy::too_many_lines, reason = "the message table of the client")]
     pub fn handle(&mut self, msg: Message, now: u64) -> Result<()> {
         if self.phase == Phase::Closed {
             return Ok(());
         }
         match msg {
-            Message::Welcome(w) => self.on_welcome(w, now),
+            Message::Welcome(w) => self.on_welcome(&w, now),
             Message::Refused { reason } => {
                 self.phase = Phase::Closed;
                 self.events.push(ClientEvent::Refused(reason));
@@ -349,15 +360,12 @@ impl Client {
                 Ok(())
             }
             Message::Rejected { client_seq, reason } => {
-                match &reason {
-                    RejectReason::Duplicate { host_seq } => {
-                        let until = *host_seq;
-                        self.rebase(now, |s| s.pending.iter_mut().filter(|p| p.client_seq == client_seq).for_each(|p| p.parked_until = Some(until)));
-                    }
-                    _ => {
-                        self.rebase(now, |s| s.pending.retain(|p| p.client_seq != client_seq));
-                        self.events.push(ClientEvent::Rejected { client_seq, reason });
-                    }
+                if let RejectReason::Duplicate { host_seq } = &reason {
+                    let until = *host_seq;
+                    self.rebase(now, |s| s.pending.iter_mut().filter(|p| p.client_seq == client_seq).for_each(|p| p.parked_until = Some(until)));
+                } else {
+                    self.rebase(now, |s| s.pending.retain(|p| p.client_seq != client_seq));
+                    self.events.push(ClientEvent::Rejected { client_seq, reason });
                 }
                 Ok(())
             }
@@ -404,7 +412,7 @@ impl Client {
         }
     }
 
-    fn on_welcome(&mut self, w: Welcome, now: u64) -> Result<()> {
+    fn on_welcome(&mut self, w: &Welcome, now: u64) -> Result<()> {
         if let Err(e) = check_proto(w.host_proto) {
             self.phase = Phase::Closed;
             return Err(e);

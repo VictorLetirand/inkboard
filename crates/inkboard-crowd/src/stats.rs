@@ -13,12 +13,15 @@ impl Samples {
     pub fn merge(&mut self, other: &Samples) {
         self.0.extend_from_slice(&other.0);
     }
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    #[must_use]
     pub fn summary(&self) -> Summary {
         Summary::of(&self.0)
     }
@@ -56,12 +59,14 @@ impl Summary {
     }
 
     /// `p50 / p95 / p99` with one decimal, or `-` when there is no sample.
+    #[must_use]
     pub fn triple(&self) -> String {
         if self.n == 0 { "-".to_owned() } else { format!("{:.1} / {:.1} / {:.1}", self.p50, self.p95, self.p99) }
     }
 }
 
 /// Mebibytes with one decimal.
+#[must_use]
 pub fn mib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }

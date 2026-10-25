@@ -5,6 +5,7 @@
 
 use crate::geom::{Pt, Rect};
 use crate::model::{Id, Object, Page};
+use crate::num;
 use std::collections::HashMap;
 
 /// Above this number of cells an object goes in the list of "large" objects, which are always tested.
@@ -19,6 +20,7 @@ pub struct SpatialIndex {
 }
 
 /// Id → position table in `page.objects` (direct lookup is linear).
+#[must_use]
 pub fn id_index(page: &Page) -> HashMap<Id, usize> {
     page.objects.iter().enumerate().map(|(i, o)| (o.id.clone(), i)).collect()
 }
@@ -37,15 +39,15 @@ impl SpatialIndex {
             (*m * 2.0).clamp(64.0, 2048.0)
         };
         let mut idx = SpatialIndex { cell, cells: HashMap::new(), large: Vec::new(), bounds };
-        for i in 0..idx.bounds.len() {
+        for (i, id) in (0..idx.bounds.len()).zip(0u32..) {
             let ((x0, y0), (x1, y1)) = (idx.cell_of(idx.bounds[i].x, idx.bounds[i].y), idx.cell_of(idx.bounds[i].right(), idx.bounds[i].bottom()));
             if (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1) > MAX_CELLS_PER_OBJECT {
-                idx.large.push(i as u32);
+                idx.large.push(id);
                 continue;
             }
             for cx in x0..=x1 {
                 for cy in y0..=y1 {
-                    idx.cells.entry((cx, cy)).or_default().push(i as u32);
+                    idx.cells.entry((cx, cy)).or_default().push(id);
                 }
             }
         }
@@ -53,28 +55,32 @@ impl SpatialIndex {
     }
 
     fn cell_of(&self, x: f64, y: f64) -> (i32, i32) {
-        ((x / self.cell).floor().clamp(-1.0e9, 1.0e9) as i32, (y / self.cell).floor().clamp(-1.0e9, 1.0e9) as i32)
+        (num::to_i32((x / self.cell).floor().clamp(-1.0e9, 1.0e9)), num::to_i32((y / self.cell).floor().clamp(-1.0e9, 1.0e9)))
     }
 
     /// Cached bounding box of object `i`.
+    #[must_use]
     pub fn bounds(&self, i: usize) -> Rect {
         self.bounds[i]
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.bounds.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bounds.is_empty()
     }
 
     /// Indices (increasing, hence in drawing order) of the objects whose box touches `r`.
+    #[must_use]
     pub fn query(&self, r: Rect) -> Vec<usize> {
         let ((x0, y0), (x1, y1)) = (self.cell_of(r.x, r.y), self.cell_of(r.right(), r.bottom()));
         let mut out: Vec<u32> = self.large.clone();
         let span = (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1);
-        if span as usize > self.cells.len() {
+        if span > i64::try_from(self.cells.len()).unwrap_or(i64::MAX) {
             // area larger than the number of occupied cells: walk the existing cells
             for (&(cx, cy), v) in &self.cells {
                 if cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1 {
@@ -96,13 +102,14 @@ impl SpatialIndex {
     }
 
     /// Objects whose box contains or touches point `p` within `tol`.
+    #[must_use]
     pub fn query_point(&self, p: Pt, tol: f64) -> Vec<usize> {
         self.query(Rect::new(p.x - tol, p.y - tol, 2.0 * tol, 2.0 * tol))
     }
 }
 
 /// Provides the object lookup by id for the `*_with` functions.
-pub fn getter<'a>(page: &'a Page, ids: &'a HashMap<Id, usize>) -> impl Fn(&Id) -> Option<&'a Object> {
+pub fn getter<'a, S: std::hash::BuildHasher>(page: &'a Page, ids: &'a HashMap<Id, usize, S>) -> impl Fn(&Id) -> Option<&'a Object> {
     move |id| ids.get(id).map(|&i| &page.objects[i])
 }
 
@@ -120,9 +127,9 @@ mod tests {
 
     fn grid_page(n: usize) -> Page {
         let mut p = Page::new("t");
-        let cols = (n as f64).sqrt().ceil() as usize;
+        let cols = num::to_usize(num::f64_of(n).sqrt().ceil());
         for i in 0..n {
-            p.objects.push(rect((i % cols) as f64 * 200.0, (i / cols) as f64 * 200.0, 100.0, 80.0));
+            p.objects.push(rect(num::f64_of(i % cols) * 200.0, num::f64_of(i / cols) * 200.0, 100.0, 80.0));
         }
         p
     }

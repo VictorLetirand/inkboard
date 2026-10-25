@@ -7,6 +7,7 @@
 
 use crate::geom::{Frame, Pt, Rect, ray_poly_hit};
 use crate::model::{Id, Kind, Label, Object, Outline, Page};
+use crate::num;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -34,12 +35,15 @@ pub enum End {
 }
 
 impl End {
+    #[must_use]
     pub fn free(at: Pt) -> End {
         End::Free { at }
     }
+    #[must_use]
     pub fn bound(target: Id) -> End {
         End::Bound { target, anchor: Anchor::Auto }
     }
+    #[must_use]
     pub fn target(&self) -> Option<&Id> {
         match self {
             End::Bound { target, .. } => Some(target),
@@ -87,9 +91,11 @@ pub struct Connector {
 }
 
 impl Connector {
+    #[must_use]
     pub fn new(start: End, end: End) -> Self {
         Self { start, end, via: Vec::new(), route: Route::Straight, head_start: Arrowhead::None, head_end: Arrowhead::Arrow, label: None }
     }
+    #[must_use]
     pub fn straight(a: Pt, b: Pt) -> Self {
         Self::new(End::free(a), End::free(b))
     }
@@ -156,6 +162,7 @@ fn side_toward(f: &Frame, toward: Pt) -> Side {
 }
 
 /// Point of the object's outline, in the direction of `toward`.
+#[must_use]
 pub fn boundary_hit(outline: Outline, f: &Frame, toward: Pt) -> Pt {
     let mut dir = f.to_local(toward);
     if dir.len() < 1e-9 {
@@ -214,14 +221,14 @@ fn orthogonal(a: Pt, sa: Option<Side>, b: Pt, sb: Option<Side>) -> Vec<Pt> {
         let mx = match (sa, sb) {
             (Some(Side::E), Some(Side::E)) => a1.x.max(b1.x),
             (Some(Side::W), Some(Side::W)) => a1.x.min(b1.x),
-            _ => (a1.x + b1.x) / 2.0,
+            _ => f64::midpoint(a1.x, b1.x),
         };
         v.extend([Pt::new(mx, a1.y), Pt::new(mx, b1.y)]);
     } else if !ha && !hb {
         let my = match (sa, sb) {
             (Some(Side::S), Some(Side::S)) => a1.y.max(b1.y),
             (Some(Side::N), Some(Side::N)) => a1.y.min(b1.y),
-            _ => (a1.y + b1.y) / 2.0,
+            _ => f64::midpoint(a1.y, b1.y),
         };
         v.extend([Pt::new(a1.x, my), Pt::new(b1.x, my)]);
     } else if ha {
@@ -236,7 +243,7 @@ fn orthogonal(a: Pt, sa: Option<Side>, b: Pt, sb: Option<Side>) -> Vec<Pt> {
 fn flatten_cubic(p0: Pt, p1: Pt, p2: Pt, p3: Pt, n: usize) -> Vec<Pt> {
     (0..=n)
         .map(|i| {
-            let t = i as f64 / n as f64;
+            let t = num::f64_of(i) / num::f64_of(n);
             let u = 1.0 - t;
             p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t)
         })
@@ -257,6 +264,7 @@ fn catmull_rom(pts: &[Pt]) -> Vec<Pt> {
 }
 
 /// Point at half the path length, and the tangent angle at that point.
+#[must_use]
 pub fn path_midpoint(path: &[Pt]) -> (Pt, f64) {
     let total: f64 = path.windows(2).map(|w| w[0].dist(w[1])).sum();
     let mut acc = 0.0;
@@ -273,6 +281,7 @@ pub fn path_midpoint(path: &[Pt]) -> (Pt, f64) {
 }
 
 /// Vertices of the arrowhead: `tip` is the end, `from` a point upstream.
+#[must_use]
 pub fn head_points(tip: Pt, from: Pt, size: f64, head: Arrowhead) -> Vec<Pt> {
     let d = (tip - from).normalized();
     let n = Pt::new(-d.y, d.x);
@@ -330,6 +339,7 @@ impl Page {
 
     /// Index of objects by id: build it once per frame to draw many connectors
     /// (direct lookup is linear).
+    #[must_use]
     pub fn index(&self) -> HashMap<&Id, &Object> {
         self.objects.iter().map(|o| (&o.id, o)).collect()
     }
@@ -372,6 +382,7 @@ impl Page {
     }
 
     /// Path (polyline) of the connector; `None` when a target has disappeared.
+    #[must_use]
     pub fn connector_path(&self, c: &Connector) -> Option<Vec<Pt>> {
         self.connector_path_with(c, &|id| self.get(id))
     }
@@ -423,6 +434,7 @@ impl Page {
     }
 
     /// Detaches (frees) the ends bound to objects of `gone`, at their current position.
+    #[must_use]
     pub fn detach_ends_to(&self, c: &Connector, gone: &[Id]) -> Option<Connector> {
         let hits = |e: &End| e.target().is_some_and(|t| gone.contains(t));
         if !hits(&c.start) && !hits(&c.end) {
@@ -448,9 +460,9 @@ mod tests {
     use crate::style::Style;
 
     fn bx(page: &mut Page, geom: BoxGeom, x: f64, y: f64, w: f64, h: f64) -> Id {
-        let o = Object::new_box(geom, Frame::new(x, y, w, h), Style::default(), Label::default());
-        let id = o.id.clone();
-        page.objects.push(o);
+        let obj = Object::new_box(geom, Frame::new(x, y, w, h), Style::default(), Label::default());
+        let id = obj.id.clone();
+        page.objects.push(obj);
         id
     }
 
@@ -467,14 +479,14 @@ mod tests {
 
     #[test]
     fn connector_follows_moved_target() {
-        let mut p = Page::new("t");
-        let a = bx(&mut p, BoxGeom::Rect, 0.0, 0.0, 100.0, 50.0);
-        let b = bx(&mut p, BoxGeom::Ellipse, 300.0, 0.0, 100.0, 50.0);
+        let mut page = Page::new("t");
+        let a = bx(&mut page, BoxGeom::Rect, 0.0, 0.0, 100.0, 50.0);
+        let b = bx(&mut page, BoxGeom::Ellipse, 300.0, 0.0, 100.0, 50.0);
         let c = Connector::new(End::bound(a), End::bound(b.clone()));
-        let before = p.connector_path(&c).unwrap();
-        let i = p.index_of(&b).unwrap();
-        p.objects[i].translate(Pt::new(0.0, 200.0));
-        let after = p.connector_path(&c).unwrap();
+        let before = page.connector_path(&c).unwrap();
+        let i = page.index_of(&b).unwrap();
+        page.objects[i].translate(Pt::new(0.0, 200.0));
+        let after = page.connector_path(&c).unwrap();
         assert!(after.last().unwrap().y > before.last().unwrap().y + 20.0);
     }
 

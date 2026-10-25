@@ -10,6 +10,25 @@
 //! The host is the `crowd_host` test of `inkboard-app` (`--host-exe` is its test executable). Options of the profile of the simulated
 //! people: `--profile default|calm|busy`, `--cursor-hz`, `--strokes-per-min`, `--slow 0.1`, `--drops-per-hour`... (see `Profile::apply`).
 //! Method and results: `context/mcp-remote/test-charge.md`.
+// A load-test tool, not shipped: its measurements and random draws convert numbers freely.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::missing_errors_doc,
+    clippy::format_push_string,
+    clippy::format_collect,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines,
+    clippy::assigning_clones,
+    clippy::many_single_char_names,
+    clippy::unreadable_literal,
+    clippy::struct_field_names,
+    clippy::default_trait_access,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::case_sensitive_file_extension_comparisons
+)]
 
 use inkboard_crowd::board::{BoardSpec, asset_bytes, object_count, seed_document};
 use inkboard_crowd::fleet::{FleetConfig, run_fleet};

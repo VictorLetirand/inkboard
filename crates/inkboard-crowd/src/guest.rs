@@ -129,6 +129,7 @@ pub(crate) fn marker(machine: u16, index: usize, n: u64, us: u64) -> Id {
 }
 
 /// Machine and microsecond epoch read back from a marker identifier.
+#[must_use]
 pub fn parse_marker(id: &str) -> Option<(u16, u64)> {
     let rest = id.strip_prefix('m')?;
     let (machine, _) = rest.split_once('-')?;
@@ -137,6 +138,7 @@ pub fn parse_marker(id: &str) -> Option<(u16, u64)> {
 }
 
 impl SimGuest {
+    #[must_use]
     pub fn new(env: Arc<GuestEnv>, plan: GuestPlan, dialer: Box<dyn Dialer>) -> Self {
         let ticket = if plan.edit { &env.edit_ticket } else { env.view_ticket.as_ref().unwrap_or(&env.edit_ticket) };
         let role = ticket.role;
@@ -189,14 +191,17 @@ impl SimGuest {
         }
     }
 
+    #[must_use]
     pub fn is_live(&self) -> bool {
         matches!(self.stage, Stage::Live) && self.client.phase() == Phase::Live
     }
 
+    #[must_use]
     pub fn is_over(&self) -> bool {
         matches!(self.stage, Stage::Left | Stage::Dead)
     }
 
+    #[must_use]
     pub fn participant(&self) -> Option<ParticipantId> {
         self.client.participant()
     }

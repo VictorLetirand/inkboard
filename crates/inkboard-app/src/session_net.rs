@@ -158,6 +158,7 @@ pub fn with_relays_file(mut cfg: NetConfig, dir: Option<&Path>) -> std::result::
 #[derive(Debug, Default)]
 pub struct LocalAddrWatch {
     /// What the last look found: `None` before the first look, `Some(None)` when there was no route.
+    #[allow(clippy::option_option, reason = "\"not looked yet\" and \"no route\" are two different answers")]
     last: Option<Option<IpAddr>>,
 }
 

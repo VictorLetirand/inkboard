@@ -30,14 +30,14 @@ impl Node {
 }
 
 fn node_from(e: &BytesStart<'_>) -> Result<Node, String> {
-    let mut n = Node { name: String::from_utf8_lossy(e.name().as_ref()).into_owned(), ..Node::default() };
+    let mut node = Node { name: String::from_utf8_lossy(e.name().as_ref()).into_owned(), ..Node::default() };
     for a in e.attributes() {
         let a = a.map_err(|x| x.to_string())?;
         let k = String::from_utf8_lossy(a.key.as_ref()).into_owned();
         let v = a.normalized_value(XmlVersion::Implicit1_0).map_err(|x| x.to_string())?.into_owned();
-        n.attrs.insert(k, v);
+        node.attrs.insert(k, v);
     }
-    Ok(n)
+    Ok(node)
 }
 
 /// Deepest nesting accepted: the tree is walked and dropped recursively, so a file of 100 000 open tags would overflow the stack.

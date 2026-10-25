@@ -1,8 +1,37 @@
 //! Hostile-input bench of the protocol layer (decoding, validation, sequencing, the guest state machine).
 //!
-//! Every property runs from a fixed seed (ChaCha), so a CI run is reproducible: same bytes, same verdict. The same properties exist in a
+//! Every property runs from a fixed seed (`ChaCha`), so a CI run is reproducible: same bytes, same verdict. The same properties exist in a
 //! long `#[ignore]` form (`INKBOARD_FUZZ_CASES`, `INKBOARD_FUZZ_SEED`), see `context/mcp-remote/test-robustesse.md`.
 //! Nothing here measures a duration: sizes are bounded by construction, loops by a number of iterations.
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    clippy::assert_is_empty,
+    clippy::default_trait_access,
+    clippy::format_collect,
+    clippy::format_push_string,
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_raw_string_hashes,
+    clippy::needless_pass_by_value,
+    clippy::explicit_iter_loop,
+    clippy::needless_for_each,
+    clippy::collapsible_else_if,
+    clippy::single_match_else,
+    clippy::manual_assert,
+    clippy::redundant_closure_for_method_calls,
+    clippy::unnested_or_patterns,
+    clippy::range_plus_one,
+    clippy::clone_on_copy,
+    clippy::match_same_arms,
+    clippy::struct_excessive_bools
+)]
 
 use inkboard_core::connector::{Connector, End};
 use inkboard_core::geom::{Frame, Pt};
@@ -345,7 +374,7 @@ fn hostile_object(r: [u8; 8]) -> Object {
     let id = pid(r[1]);
     let mut o = match r[0] % 7 {
         0 => Object::new_box(BoxGeom::Rect, Frame::new(num(r[2]), num(r[3]), num(r[4]), num(r[5])), Style::default(), Label::default()),
-        1 => Object::new_pen((0..(r[2] % 4)).map(|i| Pt::new(num(r[3].wrapping_add(i)), num(r[4])).to_owned()).collect(), false, Style::default()),
+        1 => Object::new_pen((0..(r[2] % 4)).map(|i| Pt::new(num(r[3].wrapping_add(i)), num(r[4])).clone()).collect(), false, Style::default()),
         2 => {
             let mut t = Table::new(Pt::new(num(r[2]), num(r[3])), 1 + usize::from(r[4] % 3), 1 + usize::from(r[5] % 3));
             if r[6].is_multiple_of(5) {
@@ -544,7 +573,7 @@ fn play(c: &mut Client, m: HostMove, now: &mut u64) {
             pages: vec![page_with("p", objects)],
         })),
         HostMove::Applied { seq_delta, extreme, ops } => {
-            let seq = if extreme { u64::MAX - seq_delta.unsigned_abs() as u64 } else { c.last_seq().saturating_add_signed(i64::from(seq_delta) + 1) };
+            let seq = if extreme { u64::MAX - u64::from(seq_delta.unsigned_abs()) } else { c.last_seq().saturating_add_signed(i64::from(seq_delta) + 1) };
             Some(Message::Applied(Applied { seq, author: ParticipantId(1), client_seq: Some(1), ops, superseded: vec![] }))
         }
         HostMove::Rejected(cs, dup) => {

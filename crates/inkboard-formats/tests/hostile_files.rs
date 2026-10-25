@@ -1,6 +1,35 @@
 //! Bombs and malformed files on the paths a remote peer or an agent can reach: images and SVGs received in a shared session, imported
 //! diagrams, the native format. The question is always the same: an explicit error, no panic, no stack overflow, no unbounded memory.
 //! Sizes are chosen so that each test is quick; none measures a duration.
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    clippy::assert_is_empty,
+    clippy::default_trait_access,
+    clippy::format_collect,
+    clippy::format_push_string,
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_raw_string_hashes,
+    clippy::needless_pass_by_value,
+    clippy::explicit_iter_loop,
+    clippy::needless_for_each,
+    clippy::collapsible_else_if,
+    clippy::single_match_else,
+    clippy::manual_assert,
+    clippy::redundant_closure_for_method_calls,
+    clippy::unnested_or_patterns,
+    clippy::range_plus_one,
+    clippy::clone_on_copy,
+    clippy::match_same_arms,
+    clippy::struct_excessive_bools
+)]
 
 use base64::Engine as _;
 use inkboard_core::ApproxMeasurer;
@@ -84,19 +113,19 @@ fn an_svg_with_enormous_geometry_is_refused_to_guests() {
 #[test]
 fn svg_bombs_are_refused_to_guests_before_any_rendering() {
     let reject = |body: &str| assert!(check_untrusted_svg(&format!("{SVG_OPEN}{body}</svg>")).is_err(), "{body}");
-    reject(r##"<filter id="f"><feGaussianBlur stdDeviation="300"/></filter><rect width="9" height="9" filter="url(#f)"/>"##);
-    reject(r##"<pattern id="p" width="1" height="1"><rect width="1" height="1"/></pattern>"##);
-    reject(r##"<mask id="m"><rect width="9" height="9"/></mask>"##);
-    reject(r##"<rect width="9" height="9" style="filter:blur(99px)"/>"##);
-    reject(r##"<image href="file:///C:/secret.png" width="9" height="9"/>"##);
-    reject(r##"<image href="\\attacker\share\a.png" width="9" height="9"/>"##);
-    reject(r##"<image href="http://attacker.example/a.png" width="9" height="9"/>"##);
-    reject(r##"<use href="http://attacker.example/a.svg#x"/>"##);
-    reject(r##"<style>@import url(http://attacker.example/a.css);</style>"##);
-    reject(r##"<script>alert(1)</script>"##);
-    reject(r##"<foreignObject><div>x</div></foreignObject>"##);
+    reject(r#"<filter id="f"><feGaussianBlur stdDeviation="300"/></filter><rect width="9" height="9" filter="url(#f)"/>"#);
+    reject(r#"<pattern id="p" width="1" height="1"><rect width="1" height="1"/></pattern>"#);
+    reject(r#"<mask id="m"><rect width="9" height="9"/></mask>"#);
+    reject(r#"<rect width="9" height="9" style="filter:blur(99px)"/>"#);
+    reject(r#"<image href="file:///C:/secret.png" width="9" height="9"/>"#);
+    reject(r#"<image href="\\attacker\share\a.png" width="9" height="9"/>"#);
+    reject(r#"<image href="http://attacker.example/a.png" width="9" height="9"/>"#);
+    reject(r#"<use href="http://attacker.example/a.svg#x"/>"#);
+    reject(r"<style>@import url(http://attacker.example/a.css);</style>");
+    reject(r"<script>alert(1)</script>");
+    reject(r"<foreignObject><div>x</div></foreignObject>");
     reject(&"<g>".repeat(60));
-    reject(&r##"<rect width="1" height="1"/>"##.repeat(20_001));
+    reject(&r#"<rect width="1" height="1"/>"#.repeat(20_001));
     reject(&r##"<use href="#a"/>"##.repeat(201));
     // an embedded bitmap that declares 65535 x 65535 pixels
     let png = {
@@ -117,7 +146,7 @@ fn svg_bombs_are_refused_to_guests_before_any_rendering() {
 fn the_exponential_use_chain_that_fits_the_use_limit_is_stopped_by_the_renderer() {
     // 95 levels, two <use> each: 190 <use>, within the guests' limit, 2^95 instances if expanded
     let mut svg = String::from(SVG_OPEN);
-    svg.push_str(r##"<defs><g id="l0"><rect width="1" height="1"/></g>"##);
+    svg.push_str(r#"<defs><g id="l0"><rect width="1" height="1"/></g>"#);
     for i in 1..=95 {
         svg.push_str(&format!(r##"<g id="l{i}"><use href="#l{}"/><use href="#l{}" x="1"/></g>"##, i - 1, i - 1));
     }
@@ -242,7 +271,7 @@ fn hostile_native_boards_are_errors_or_boards_that_are_consistent() {
     ] {
         if let Ok(doc) = inkboard_core::serial::from_json(text) {
             let mut ids = std::collections::HashSet::new();
-            assert!(!doc.pages.is_empty());
+            assert_ne!(doc.pages, [] as [inkboard_core::Page; 0]);
             for p in &doc.pages {
                 assert!(p.objects.iter().all(|o| ids.insert((&p.id, &o.id))), "duplicate ids survive loading");
             }

@@ -11,27 +11,28 @@ use eframe::egui::{self, Align2, Color32, Painter, Rect as ERect, Response, Stro
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::highlight::Lang;
 use inkboard_core::layout::{Direction, auto_layout};
+use inkboard_core::num;
 use inkboard_core::style::{FILLS, PALETTE};
 use inkboard_core::text::Format;
-use inkboard_core::*;
+use inkboard_core::{Align, Arrowhead, BoxGeom, Color, Dash, FontFamily, Id, Kind, Label, Layer, Object, Pt, Route, Style};
 
 /// Panel width (the web prototype used 226 px; a little wider here for comfort).
 const WIDTH: f32 = 264.0;
 
 /// Draws a line of thickness `w` (preview for the thickness and style buttons).
-fn line_preview(p: &Painter, r: ERect, w: f32, dash: Dash, color: Color32) {
-    let (a, b) = (r.center() - vec2(8.0, 0.0), r.center() + vec2(8.0, 0.0));
+fn line_preview(painter: &Painter, rect: ERect, w: f32, dash: Dash, color: Color32) {
+    let (a, b) = (rect.center() - vec2(8.0, 0.0), rect.center() + vec2(8.0, 0.0));
     let stroke = Stroke::new(w.clamp(0.8, 9.0), color);
     match dash {
         Dash::Solid => {
-            p.line_segment([a, b], stroke);
+            painter.line_segment([a, b], stroke);
         }
         Dash::Dashed => {
-            p.extend(egui::Shape::dashed_line(&[a, b], stroke, 4.0, 3.0));
+            painter.extend(egui::Shape::dashed_line(&[a, b], stroke, 4.0, 3.0));
         }
         Dash::Dotted => {
             for i in 0..5 {
-                p.circle_filled(a.lerp(b, i as f32 / 4.0), (w * 0.45).clamp(1.0, 3.0), color);
+                painter.circle_filled(a.lerp(b, num::f32(f64::from(i)) / 4.0), (w * 0.45).clamp(1.0, 3.0), color);
             }
         }
     }
@@ -47,7 +48,7 @@ fn text_in(p: &Painter, text: &str, r: ERect, c: Color32, font: egui::FontId) {
 
 /// The prototype's color swatch: 6 px corners, border, special cases "none" (red bar) and "ink" (dark / light diagonal).
 fn swatch(ui: &mut Ui, c: Option<Color>, selected: bool, dark: bool) -> Response {
-    let p = theme::current(ui.ctx());
+    let palette = theme::current(ui.ctx());
     let (resp, r) = theme::swatch_frame(ui, selected);
     let pa = ui.painter();
     match c {
@@ -60,11 +61,11 @@ fn swatch(ui: &mut Ui, c: Option<Color>, selected: bool, dark: bool) -> Response
             pa.rect_filled(r, 6.0, Color32::from_rgb(rr, g, b));
         }
         None => {
-            pa.rect_filled(r, 6.0, p.ui);
+            pa.rect_filled(r, 6.0, palette.ui);
             pa.line_segment([r.left_bottom() - vec2(0.0, 3.0), r.right_top() + vec2(0.0, 3.0)], Stroke::new(1.6_f32, Color32::from_rgb(0xe0, 0x31, 0x31)));
         }
     }
-    pa.rect_stroke(r, 6.0, Stroke::new(1.0_f32, p.bd), egui::StrokeKind::Inside);
+    pa.rect_stroke(r, 6.0, Stroke::new(1.0_f32, palette.bd), egui::StrokeKind::Inside);
     resp
 }
 
@@ -75,15 +76,15 @@ fn custom_swatch(ui: &mut Ui, current: [u8; 3]) -> Option<[u8; 3]> {
     // rainbow disc: 6 sectors
     let c = r.center();
     let radius = 12.0;
-    let cols = [(255, 0, 0), (255, 255, 0), (0, 255, 0), (0, 255, 255), (0, 0, 255), (255, 0, 255)];
+    let cols: [(u8, u8, u8); 6] = [(255, 0, 0), (255, 255, 0), (0, 255, 0), (0, 255, 255), (0, 0, 255), (255, 0, 255)];
     for i in 0..6 {
-        let (a0, a1) = (i as f32 / 6.0 * std::f32::consts::TAU, (i + 1) as f32 / 6.0 * std::f32::consts::TAU);
+        let (a0, a1) = (num::f32_of(i) / 6.0 * std::f32::consts::TAU, num::f32_of(i + 1) / 6.0 * std::f32::consts::TAU);
         let (c0, c1) = (cols[i], cols[(i + 1) % 6]);
-        let mid = Color32::from_rgb(((c0.0 + c1.0) / 2) as u8, ((c0.1 + c1.1) / 2) as u8, ((c0.2 + c1.2) / 2) as u8);
+        let mid = Color32::from_rgb(u8::midpoint(c0.0, c1.0), u8::midpoint(c0.1, c1.1), u8::midpoint(c0.2, c1.2));
         let pts = vec![
             c,
             c + vec2(a0.cos(), a0.sin()) * radius,
-            c + vec2(((a0 + a1) / 2.0).cos(), ((a0 + a1) / 2.0).sin()) * radius,
+            c + vec2(f32::midpoint(a0, a1).cos(), f32::midpoint(a0, a1).sin()) * radius,
             c + vec2(a1.cos(), a1.sin()) * radius,
         ];
         ui.painter().add(egui::Shape::convex_polygon(pts, mid, Stroke::NONE));
@@ -117,6 +118,7 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
 }
 
 /// Settings of a row of color swatches.
+#[derive(Clone, Copy)]
 struct Swatches<'a> {
     label: &'a str,
     none: bool,
@@ -184,234 +186,290 @@ pub fn show(app: &mut App, ctx: &egui::Context, narrow: bool) {
     }
 }
 
-fn props(app: &mut App, ui: &mut Ui) {
-    let pal = theme::current(ui.ctx());
-    let dark = app.ed.doc.background.preset.is_dark();
-    let objs = app.editable_selection();
-    let has_sel = !objs.is_empty();
-    let sample: Option<Object> = objs.first().cloned();
-    let (style, label) = match &sample {
-        Some(o) => {
-            let l = match &o.kind {
-                Kind::Box(b) => b.label.clone(),
-                _ => app.label.clone(),
-            };
-            (o.style.clone(), l)
-        }
-        None => (app.style.clone(), app.label.clone()),
-    };
-    let sel_ids: Vec<Id> = objs.iter().map(|o| o.id.clone()).collect();
-    let shapes_selected = objs.iter().any(|o| matches!(o.kind, Kind::Box(_)));
-    let connectors = objs.iter().any(|o| matches!(o.kind, Kind::Connector(_)));
-    let only_text = has_sel && objs.iter().all(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Text));
-    let only_pen = has_sel && objs.iter().all(|o| matches!(o.kind, Kind::Pen(_)));
-    let highlighter = if has_sel { objs.iter().all(|o| matches!(&o.kind, Kind::Pen(p) if p.highlighter)) } else { app.tool == Tool::Highlighter };
-    let drawing = drawing_tool(app.tool);
+/// What the style panel edits: the editable selection, or the defaults of the current tool when nothing is selected.
+struct Target {
+    objs: Vec<Object>,
+    ids: Vec<Id>,
+    style: Style,
+    label: Label,
+}
 
-    if has_sel || drawing {
-        // ---- code blocks: language
-        let code_ids: Vec<Id> = objs.iter().filter(|o| matches!(&o.kind, Kind::Box(b) if b.lang.is_some())).map(|o| o.id.clone()).collect();
-        if !code_ids.is_empty() {
-            let cur = objs.iter().find_map(|o| if let Kind::Box(b) = &o.kind { b.lang } else { None }).unwrap_or_default();
-            let name = |l: Lang| if l == Lang::Auto { t("Auto") } else { l.label().to_owned() };
-            theme::field_label(ui, "Code language");
-            let mut chosen = None;
-            egui::ComboBox::from_id_salt("code-lang").selected_text(name(cur)).width(WIDTH - 24.0 - 8.0).show_ui(ui, |ui| {
-                for l in Lang::ALL {
-                    if ui.selectable_label(l == cur, name(l)).clicked() {
-                        chosen = Some(l);
-                    }
-                }
-            });
-            if let Some(l) = chosen {
-                app.set_code_lang(&code_ids, l);
+impl Target {
+    fn of(app: &App) -> Self {
+        let objs = app.editable_selection();
+        let (style, label) = match objs.first() {
+            Some(o) => {
+                let l = match &o.kind {
+                    Kind::Box(b) => b.label.clone(),
+                    _ => app.label.clone(),
+                };
+                (o.style.clone(), l)
             }
-            ui.add_space(8.0);
-        }
-        // ---- colors
-        let stroke_label = if only_text || (!has_sel && app.tool == Tool::Text) {
-            "Text color"
-        } else if only_pen || matches!(app.tool, Tool::Pen | Tool::Highlighter) {
-            "Color"
-        } else {
-            "Outline"
+            None => (app.style.clone(), app.label.clone()),
         };
-        let mut set_stroke: Option<Color> = None;
-        swatches(
-            ui,
-            Swatches { label: stroke_label, none: false, list: &PALETTE, current: Some(style.stroke), dark },
-            |c| set_stroke = c,
-            |v| {
-                let c = Color::Rgb(v[0], v[1], v[2]);
-                app.style.stroke = c;
-                app.live_apply(&move |o| o.style.stroke = c);
-            },
-        );
-        if let Some(c) = set_stroke {
-            app.style.stroke = c;
-            app.ed.update_many(&sel_ids, |o| o.style.stroke = c);
+        let ids = objs.iter().map(|o| o.id.clone()).collect();
+        Target { objs, ids, style, label }
+    }
+
+    fn has_sel(&self) -> bool {
+        !self.objs.is_empty()
+    }
+
+    fn shapes(&self) -> bool {
+        self.objs.iter().any(|o| matches!(o.kind, Kind::Box(_)))
+    }
+
+    fn connectors(&self) -> bool {
+        self.objs.iter().any(|o| matches!(o.kind, Kind::Connector(_)))
+    }
+
+    fn only_text(&self) -> bool {
+        self.has_sel() && self.objs.iter().all(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Text))
+    }
+
+    fn only_pen(&self) -> bool {
+        self.has_sel() && self.objs.iter().all(|o| matches!(o.kind, Kind::Pen(_)))
+    }
+
+    /// Highlighter strokes selected (or the highlighter tool active, without selection).
+    fn highlighter(&self, tool: Tool) -> bool {
+        if self.has_sel() { self.objs.iter().all(|o| matches!(&o.kind, Kind::Pen(p) if p.highlighter)) } else { tool == Tool::Highlighter }
+    }
+}
+
+/// Language of the selected code blocks.
+fn code_lang_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    let code_ids: Vec<Id> = target.objs.iter().filter(|o| matches!(&o.kind, Kind::Box(b) if b.lang.is_some())).map(|o| o.id.clone()).collect();
+    if !code_ids.is_empty() {
+        let cur = target.objs.iter().find_map(|o| if let Kind::Box(b) = &o.kind { b.lang } else { None }).unwrap_or_default();
+        let name = |l: Lang| if l == Lang::Auto { t("Auto") } else { l.label().to_owned() };
+        theme::field_label(ui, "Code language");
+        let mut chosen = None;
+        egui::ComboBox::from_id_salt("code-lang").selected_text(name(cur)).width(WIDTH - 24.0 - 8.0).show_ui(ui, |ui| {
+            for l in Lang::ALL {
+                if ui.selectable_label(l == cur, name(l)).clicked() {
+                    chosen = Some(l);
+                }
+            }
+        });
+        if let Some(l) = chosen {
+            app.set_code_lang(&code_ids, l);
         }
-        let fill_label = if matches!(app.tool, Tool::Sticky) || (has_sel && objs.iter().all(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky))) {
+        ui.add_space(8.0);
+    }
+}
+
+/// Outline (or text) color and fill.
+fn color_section(app: &mut App, ui: &mut Ui, target: &Target, dark: bool) {
+    let highlighter = target.highlighter(app.tool);
+    let stroke_label = if target.only_text() || (!target.has_sel() && app.tool == Tool::Text) {
+        "Text color"
+    } else if target.only_pen() || matches!(app.tool, Tool::Pen | Tool::Highlighter) {
+        "Color"
+    } else {
+        "Outline"
+    };
+    let mut set_stroke: Option<Color> = None;
+    swatches(
+        ui,
+        Swatches { label: stroke_label, none: false, list: &PALETTE, current: Some(target.style.stroke), dark },
+        |c| set_stroke = c,
+        |v| {
+            let c = Color::Rgb(v[0], v[1], v[2]);
+            app.style.stroke = c;
+            app.live_apply(&move |o| o.style.stroke = c);
+        },
+    );
+    if let Some(c) = set_stroke {
+        app.style.stroke = c;
+        app.ed.update_many(&target.ids, |o| o.style.stroke = c);
+    }
+    let fill_label =
+        if matches!(app.tool, Tool::Sticky) || (target.has_sel() && target.objs.iter().all(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky))) {
             "Note color"
         } else {
             "Fill"
         };
-        if !only_pen && !highlighter && !matches!(app.tool, Tool::Pen | Tool::Highlighter | Tool::Line | Tool::Arrow) && !connectors_only(&objs) {
-            let mut set_fill: Option<Option<Color>> = None;
-            swatches(
-                ui,
-                Swatches { label: fill_label, none: true, list: &FILLS, current: style.fill, dark },
-                |c| set_fill = Some(c),
-                |v| {
-                    let c = Color::Rgb(v[0], v[1], v[2]);
-                    app.style.fill = Some(c);
-                    app.live_apply(&move |o| o.style.fill = Some(c));
-                },
-            );
-            if let Some(c) = set_fill {
-                app.style.fill = c;
-                app.ed.update_many(&sel_ids, |o| o.style.fill = c);
-            }
-        }
-
-        // ---- thickness and stroke style
-        if !only_text {
-            let widths: &[f32] = if highlighter {
-                &[10.0, 18.0, 28.0, 40.0]
-            } else if only_pen || matches!(app.tool, Tool::Pen) {
-                &[1.5, 3.0, 6.0, 10.0]
-            } else {
-                &[0.0, 1.5, 3.0, 6.0, 10.0]
-            };
-            theme::field_label(ui, "Thickness");
-            ui.add_space(-2.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
-                for &w in widths {
-                    let on = (style.width as f32 - w).abs() < 0.26;
-                    let tip = if w == 0.0 { t("No outline") } else { tr!("Thickness {}", w) };
-                    let resp = theme::seg_button_raw(ui, on, &tip, |p, r, c| {
-                        if w == 0.0 {
-                            p.circle_stroke(r.center(), 6.0, Stroke::new(1.3_f32, c));
-                            p.line_segment([r.center() + vec2(-5.0, 5.0), r.center() + vec2(5.0, -5.0)], Stroke::new(1.3_f32, c));
-                        } else {
-                            line_preview(p, r, if highlighter { w / 3.0 } else { w * 0.9 }, Dash::Solid, c);
-                        }
-                    });
-                    if resp.clicked() {
-                        app.style.width = f64::from(w);
-                        app.ed.update_many(&sel_ids, |o| o.style.width = f64::from(w));
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            if !highlighter && !matches!(app.tool, Tool::Pen) && !only_pen {
-                row(ui, "Stroke style", |ui| {
-                    for (d, tip) in [(Dash::Solid, "Solid"), (Dash::Dashed, "Dashed"), (Dash::Dotted, "Dotted")] {
-                        if theme::seg_button(ui, style.dash == d, tip, |p, r, c| line_preview(p, r, 2.2, d, c)).clicked() {
-                            app.style.dash = d;
-                            app.ed.update_many(&sel_ids, |o| o.style.dash = d);
-                        }
-                    }
-                });
-            }
-        }
-        // ---- corners
-        if shapes_selected || matches!(app.tool, Tool::Shape(BoxGeom::Rect) | Tool::Sticky) {
-            row(ui, "Corners", |ui| {
-                for (rd, tip, rx) in [(0.0f32, "Sharp corners", 0.0f32), (0.25, "Rounded corners", 4.0)] {
-                    let on = if rd == 0.0 { style.roundness < 0.05 } else { style.roundness >= 0.05 };
-                    if theme::seg_button(ui, on, tip, |p, r, c| {
-                        p.rect_stroke(ERect::from_center_size(r.center(), vec2(16.0, 12.0)), rx, Stroke::new(1.8_f32, c), egui::StrokeKind::Middle);
-                    })
-                    .clicked()
-                    {
-                        app.style.roundness = rd;
-                        app.ed.update_many(&sel_ids, |o| o.style.roundness = rd);
-                    }
-                }
-            });
+    if !target.only_pen() && !highlighter && !matches!(app.tool, Tool::Pen | Tool::Highlighter | Tool::Line | Tool::Arrow) && !connectors_only(&target.objs) {
+        let mut set_fill: Option<Option<Color>> = None;
+        swatches(
+            ui,
+            Swatches { label: fill_label, none: true, list: &FILLS, current: target.style.fill, dark },
+            |c| set_fill = Some(c),
+            |v| {
+                let c = Color::Rgb(v[0], v[1], v[2]);
+                app.style.fill = Some(c);
+                app.live_apply(&move |o| o.style.fill = Some(c));
+            },
+        );
+        if let Some(c) = set_fill {
+            app.style.fill = c;
+            app.ed.update_many(&target.ids, |o| o.style.fill = c);
         }
     }
+}
 
-    // ---- connecteurs
-    if connectors || matches!(app.tool, Tool::Line | Tool::Arrow) {
-        let cur = objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
-        row(ui, "Path", |ui| {
-            for (r, name) in [(Route::Straight, "Straight"), (Route::Elbow, "Elbow"), (Route::Curve, "Curve")] {
-                let on = cur.as_ref().map_or(app.route == r, |c| c.route == r);
-                if ui.selectable_label(on, name).clicked() {
-                    app.route = r;
-                    app.ed.update_many(&sel_ids, |o| {
-                        if let Kind::Connector(c) = &mut o.kind {
-                            c.route = r
-                        }
-                    });
+/// Thickness and stroke style.
+fn stroke_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    let highlighter = target.highlighter(app.tool);
+    let widths: &[f32] = if highlighter {
+        &[10.0, 18.0, 28.0, 40.0]
+    } else if target.only_pen() || matches!(app.tool, Tool::Pen) {
+        &[1.5, 3.0, 6.0, 10.0]
+    } else {
+        &[0.0, 1.5, 3.0, 6.0, 10.0]
+    };
+    theme::field_label(ui, "Thickness");
+    ui.add_space(-2.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+        for &w in widths {
+            let on = (num::f32(target.style.width) - w).abs() < 0.26;
+            let tip = if w == 0.0 { t("No outline") } else { tr!("Thickness {}", w) };
+            let resp = theme::seg_button_raw(ui, on, &tip, |p, r, c| {
+                if w == 0.0 {
+                    p.circle_stroke(r.center(), 6.0, Stroke::new(1.3_f32, c));
+                    p.line_segment([r.center() + vec2(-5.0, 5.0), r.center() + vec2(5.0, -5.0)], Stroke::new(1.3_f32, c));
+                } else {
+                    line_preview(p, r, if highlighter { w / 3.0 } else { w * 0.9 }, Dash::Solid, c);
+                }
+            });
+            if resp.clicked() {
+                app.style.width = f64::from(w);
+                app.ed.update_many(&target.ids, |o| o.style.width = f64::from(w));
+            }
+        }
+    });
+    ui.add_space(6.0);
+    if !highlighter && !matches!(app.tool, Tool::Pen) && !target.only_pen() {
+        row(ui, "Stroke style", |ui| {
+            for (d, tip) in [(Dash::Solid, "Solid"), (Dash::Dashed, "Dashed"), (Dash::Dotted, "Dotted")] {
+                if theme::seg_button(ui, target.style.dash == d, tip, |p, r, c| line_preview(p, r, 2.2, d, c)).clicked() {
+                    app.style.dash = d;
+                    app.ed.update_many(&target.ids, |o| o.style.dash = d);
                 }
             }
         });
-        if let Some(c) = cur {
-            for (title, is_start) in [("Arrowhead at the start", true), ("Arrowhead at the end", false)] {
-                let now = if is_start { c.head_start } else { c.head_end };
-                row(ui, title, |ui| {
-                    for (h, name) in [(Arrowhead::None, "—"), (Arrowhead::Arrow, "→"), (Arrowhead::Triangle, "▶"), (Arrowhead::Dot, "●"), (Arrowhead::Bar, "|")]
-                    {
-                        if theme::seg_button(ui, now == h, "", |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0))).clicked() {
-                            app.ed.update_many(&sel_ids, |o| {
-                                if let Kind::Connector(c) = &mut o.kind {
-                                    if is_start { c.head_start = h } else { c.head_end = h }
-                                }
-                            });
-                        }
-                    }
-                });
-            }
-        }
     }
+}
 
-    // ---- text
-    if shapes_selected || matches!(app.tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
-        row(ui, "Font", |ui| {
-            for (f, tip) in [(FontFamily::Sans, "Sans serif"), (FontFamily::Hand, "Handwriting"), (FontFamily::Serif, "Serif"), (FontFamily::Mono, "Monospace")]
+/// Sharp or rounded corners.
+fn corners_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    row(ui, "Corners", |ui| {
+        for (rd, tip, rx) in [(0.0f32, "Sharp corners", 0.0f32), (0.25, "Rounded corners", 4.0)] {
+            let on = if rd == 0.0 { target.style.roundness < 0.05 } else { target.style.roundness >= 0.05 };
+            if theme::seg_button(ui, on, tip, |p, r, c| {
+                p.rect_stroke(ERect::from_center_size(r.center(), vec2(16.0, 12.0)), rx, Stroke::new(1.8_f32, c), egui::StrokeKind::Middle);
+            })
+            .clicked()
             {
-                if theme::seg_button(ui, label.family == f, tip, |p, r, c| text_in(p, "Aa", r, c, fonts::font_id(f, 15.0, false))).clicked() {
-                    app.label.family = f;
-                    let m = app.measurer.clone();
-                    app.ed.update_many(&sel_ids, |o| {
-                        if let Kind::Box(b) = &mut o.kind {
-                            b.label.family = f;
-                            b.fit(&m);
-                        }
-                    });
-                }
+                app.style.roundness = rd;
+                app.ed.update_many(&target.ids, |o| o.style.roundness = rd);
             }
-        });
-        row(ui, "Text size", |ui| {
-            for (s, name) in [(16.0, "S"), (22.0, "M"), (32.0, "L"), (48.0, "XL")] {
-                if theme::seg_button(ui, (label.size - s).abs() < 0.5, "", |p, r, c| text_in(p, name, r, c, egui::FontId::proportional(13.0))).clicked() {
-                    app.label.size = s;
-                    let m = app.measurer.clone();
-                    app.ed.update_many(&sel_ids, |o| {
-                        if let Kind::Box(b) = &mut o.kind {
-                            b.label.size = s;
-                            b.fit(&m);
-                        }
-                    });
-                }
+        }
+    });
+}
+
+/// Path and arrowheads of the connectors.
+fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    let cur = target.objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
+    row(ui, "Path", |ui| {
+        for (r, name) in [(Route::Straight, "Straight"), (Route::Elbow, "Elbow"), (Route::Curve, "Curve")] {
+            let on = cur.as_ref().map_or(app.route == r, |c| c.route == r);
+            if ui.selectable_label(on, name).clicked() {
+                app.route = r;
+                app.ed.update_many(&target.ids, |o| {
+                    if let Kind::Connector(c) = &mut o.kind {
+                        c.route = r;
+                    }
+                });
             }
-        });
-        row(ui, "Alignment", |ui| {
-            for (a, icon) in [(Align::Left, "alignL"), (Align::Center, "alignC"), (Align::Right, "alignR")] {
-                if theme::seg_button(ui, label.align == a, "", |p, r, c| icon_in(p, icon, r, c)).clicked() {
-                    app.label.align = a;
-                    app.ed.update_many(&sel_ids, |o| {
-                        if let Kind::Box(b) = &mut o.kind {
-                            b.label.align = a
-                        }
-                    });
+        }
+    });
+    if let Some(c) = cur {
+        for (title, is_start) in [("Arrowhead at the start", true), ("Arrowhead at the end", false)] {
+            let now = if is_start { c.head_start } else { c.head_end };
+            row(ui, title, |ui| {
+                for (h, name) in [(Arrowhead::None, "—"), (Arrowhead::Arrow, "→"), (Arrowhead::Triangle, "▶"), (Arrowhead::Dot, "●"), (Arrowhead::Bar, "|")]
+                {
+                    if theme::seg_button(ui, now == h, "", |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0))).clicked() {
+                        app.ed.update_many(&target.ids, |o| {
+                            if let Kind::Connector(c) = &mut o.kind {
+                                if is_start { c.head_start = h } else { c.head_end = h }
+                            }
+                        });
+                    }
                 }
+            });
+        }
+    }
+}
+
+/// Font, size and alignment of the text.
+fn text_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    row(ui, "Font", |ui| {
+        for (f, tip) in [(FontFamily::Sans, "Sans serif"), (FontFamily::Hand, "Handwriting"), (FontFamily::Serif, "Serif"), (FontFamily::Mono, "Monospace")] {
+            if theme::seg_button(ui, target.label.family == f, tip, |p, r, c| text_in(p, "Aa", r, c, fonts::font_id(f, 15.0, false))).clicked() {
+                app.label.family = f;
+                let m = app.measurer.clone();
+                app.ed.update_many(&target.ids, |o| {
+                    if let Kind::Box(b) = &mut o.kind {
+                        b.label.family = f;
+                        b.fit(&m);
+                    }
+                });
             }
-        });
+        }
+    });
+    row(ui, "Text size", |ui| {
+        for (s, name) in [(16.0, "S"), (22.0, "M"), (32.0, "L"), (48.0, "XL")] {
+            if theme::seg_button(ui, (target.label.size - s).abs() < 0.5, "", |p, r, c| text_in(p, name, r, c, egui::FontId::proportional(13.0))).clicked() {
+                app.label.size = s;
+                let m = app.measurer.clone();
+                app.ed.update_many(&target.ids, |o| {
+                    if let Kind::Box(b) = &mut o.kind {
+                        b.label.size = s;
+                        b.fit(&m);
+                    }
+                });
+            }
+        }
+    });
+    row(ui, "Alignment", |ui| {
+        for (a, icon) in [(Align::Left, "alignL"), (Align::Center, "alignC"), (Align::Right, "alignR")] {
+            if theme::seg_button(ui, target.label.align == a, "", |p, r, c| icon_in(p, icon, r, c)).clicked() {
+                app.label.align = a;
+                app.ed.update_many(&target.ids, |o| {
+                    if let Kind::Box(b) = &mut o.kind {
+                        b.label.align = a;
+                    }
+                });
+            }
+        }
+    });
+}
+
+fn props(app: &mut App, ui: &mut Ui) {
+    let pal = theme::current(ui.ctx());
+    let dark = app.ed.doc.background.preset.is_dark();
+    let target = Target::of(app);
+    let has_sel = target.has_sel();
+    let drawing = drawing_tool(app.tool);
+    if has_sel || drawing {
+        code_lang_section(app, ui, &target);
+        color_section(app, ui, &target, dark);
+        if !target.only_text() {
+            stroke_section(app, ui, &target);
+        }
+        if target.shapes() || matches!(app.tool, Tool::Shape(BoxGeom::Rect) | Tool::Sticky) {
+            corners_section(app, ui, &target);
+        }
+    }
+    if target.connectors() || matches!(app.tool, Tool::Line | Tool::Arrow) {
+        connector_section(app, ui, &target);
+    }
+    if target.shapes() || matches!(app.tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
+        text_section(app, ui, &target);
     }
     if has_sel || app.editing.is_some() {
         rich_section(app, ui, dark);
@@ -419,7 +477,7 @@ fn props(app: &mut App, ui: &mut Ui) {
 
     // ---- opacity
     if has_sel || drawing {
-        let mut op = style.opacity;
+        let mut op = target.style.opacity;
         theme::field_label_raw(ui, &tr!("Opacity {} %", (op * 100.0).round()));
         if ui.add(egui::Slider::new(&mut op, 0.05..=1.0).show_value(false)).changed() {
             app.style.opacity = op;
@@ -429,14 +487,14 @@ fn props(app: &mut App, ui: &mut Ui) {
     }
 
     if has_sel {
-        organisation(app, ui, &objs, &sel_ids, &pal);
+        organisation(app, ui, &target.objs, &target.ids, &pal);
     }
     let locked: Vec<Id> = app.selected_locked();
     if !locked.is_empty() && ui.button(t("Unlock the selection")).clicked() {
         app.ed.set_locked(&locked, false);
     }
     if app.layers_open {
-        layers(app, ui, has_sel, &sel_ids);
+        layers(app, ui, has_sel, &target.ids);
     }
 }
 

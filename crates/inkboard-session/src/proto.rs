@@ -114,6 +114,7 @@ pub enum RefuseReason {
 
 impl RefuseReason {
     /// Text to show to the user.
+    #[must_use]
     pub fn message(&self) -> String {
         match self {
             RefuseReason::Version { host_proto } => {
@@ -149,12 +150,14 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Snapshot of `doc` at `seq`; `assets` is the manifest to give (see `assets::manifest`).
+    #[must_use]
     pub fn new(doc: &Document, seq: Seq, assets: Vec<AssetInfo>) -> Self {
         Self { seq, name: doc.name.clone(), background: doc.background, pages: doc.pages.clone(), assets }
     }
     /// Document with no asset bytes (they are requested by hash).
+    #[must_use]
     pub fn into_document(self) -> Document {
-        let mut doc = Document { name: self.name, background: self.background, pages: self.pages, assets: Default::default() };
+        let mut doc = Document { name: self.name, background: self.background, pages: self.pages, assets: std::collections::BTreeMap::default() };
         if doc.pages.is_empty() {
             doc.pages.push(Page::new("Page 1"));
         }
@@ -242,6 +245,7 @@ pub enum RejectReason {
 }
 
 impl RejectReason {
+    #[must_use]
     pub fn message(&self) -> String {
         match self {
             RejectReason::ReadOnly => "you have read-only access".into(),

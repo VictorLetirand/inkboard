@@ -11,6 +11,7 @@ pub const FORMAT: &str = "inkboard";
 const LEGACY_FORMAT: &str = "tableau-blanc";
 
 /// Is `format` an identifier of the native format (current or pre-rename)?
+#[must_use]
 pub fn is_native_format(format: &str) -> bool {
     format == FORMAT || format == LEGACY_FORMAT
 }
@@ -21,6 +22,7 @@ pub const NATIVE_EXT: &str = "inkboard";
 
 /// Is `file_name` (a name or a path) the name of a native file? `.inkboard` (current), `.inkboard.json` and `.tableau.json` (older
 /// names, still read and kept as is when reopened and saved). Case-insensitive.
+#[must_use]
 pub fn is_native_name(file_name: &str) -> bool {
     let lower = file_name.to_ascii_lowercase();
     [".inkboard", ".inkboard.json", ".tableau.json"].iter().any(|ext| lower.ends_with(ext))
@@ -52,6 +54,12 @@ struct EnvelopeIn {
     document: Document,
 }
 
+/// Serializes a document in the native format (`pretty`: indented).
+///
+/// # Panics
+///
+/// Never in practice: every type of the document serializes (string map keys, no fallible `Serialize`).
+#[must_use]
 pub fn to_json(doc: &Document, pretty: bool) -> String {
     let env = EnvelopeOut { format: FORMAT, version: VERSION, document: doc };
     let r = if pretty { serde_json::to_string_pretty(&env) } else { serde_json::to_string(&env) };
@@ -59,10 +67,16 @@ pub fn to_json(doc: &Document, pretty: bool) -> String {
 }
 
 /// Removes a UTF-8 byte order mark (written by Notepad and PowerShell 5): neither JSON nor the text formats accept it.
+#[must_use]
 pub fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{feff}').unwrap_or(s)
 }
 
+/// Reads a document in the native format (or an older one).
+///
+/// # Errors
+///
+/// [`LoadError`] when the text is not JSON, not an Inkboard board, or written by a newer version.
 pub fn from_json(s: &str) -> Result<Document, LoadError> {
     let env: EnvelopeIn = serde_json::from_str(strip_bom(s))?;
     if !is_native_format(&env.format) {
@@ -114,23 +128,36 @@ pub fn sanitize(doc: &mut Document) {
 }
 
 /// Writes through a temporary file, flushed to disk, then a rename: a crash never leaves a truncated file.
+///
+/// # Errors
+///
+/// The I/O error of the creation, write, flush or rename; the target file is then left untouched.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp-save");
     let mut f = std::fs::File::create(&tmp)?;
     f.write_all(bytes)?;
     f.sync_all()?;
-    #[allow(clippy::drop_non_drop)] // on wasm32 a `File` has no destructor (the call is then only a marker of where the file is closed)
+    #[allow(clippy::drop_non_drop, reason = "on wasm32 a `File` has no destructor (the call is then only a marker of where the file is closed)")]
     drop(f);
     std::fs::rename(&tmp, path)
 }
 
 /// Saves atomically (see [`write_atomic`]).
+///
+/// # Errors
+///
+/// [`LoadError::Io`] when the file cannot be written.
 pub fn save(doc: &Document, path: &Path) -> Result<(), LoadError> {
     write_atomic(path, to_json(doc, false).as_bytes())?;
     Ok(())
 }
 
+/// Reads a board file.
+///
+/// # Errors
+///
+/// [`LoadError`] when the file cannot be read or its content is not a valid board (see [`from_json`]).
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     from_json(&std::fs::read_to_string(path)?)
 }

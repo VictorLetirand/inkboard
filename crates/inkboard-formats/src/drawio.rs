@@ -10,8 +10,11 @@ use crate::xml::{self, Node, esc};
 use flate2::read::DeflateDecoder;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
 use inkboard_core::text::Measurer;
-use inkboard_core::*;
-use std::collections::HashMap;
+use inkboard_core::{
+    Align, Anchor, Arrowhead, Asset, AssetId, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, Id, ImageObj, Kind, Label,
+    Object, Page, Pattern, Pt, Rect, RichText, Route, Span, SpanStyle, Style,
+};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
 use std::io::Read;
 use std::sync::Arc;
@@ -35,12 +38,12 @@ fn rich_to_html(rt: &RichText) -> String {
             let _ = write!(css, "background-color:#{r:02x}{g:02x}{b:02x};");
         }
         if !css.is_empty() {
-            open.push_str(&format!("<span style=\"{css}\">"));
+            let _ = write!(open, "<span style=\"{css}\">");
             close.insert_str(0, "</span>");
         }
         for (on, t) in [(sp.style.bold, "b"), (sp.style.italic, "i"), (sp.style.underline, "u"), (sp.style.strike, "s")] {
             if on {
-                open.push_str(&format!("<{t}>"));
+                let _ = write!(open, "<{t}>");
                 close.insert_str(0, &format!("</{t}>"));
             }
         }
@@ -90,65 +93,128 @@ fn align_name(a: Align) -> &'static str {
     }
 }
 
+/// Cell id of an object.
+fn cell_id(id: &Id) -> String {
+    format!("tb-{}", id.as_str())
+}
+
+fn opacity_style(s: &Style) -> String {
+    if s.opacity < 1.0 { format!("opacity={};", (s.opacity * 100.0).round()) } else { String::new() }
+}
+
+/// draw.io style of a shape.
+fn box_style(bx: &BoxObj, st: &Style) -> String {
+    let f = &bx.frame;
+    let rot = if f.angle == 0.0 { String::new() } else { format!("rotation={};", round2(f.angle.to_degrees())) };
+    let base = match bx.geom {
+        BoxGeom::Rect => format!("rounded={};arcSize={};", u8::from(st.roundness > 0.0), (st.roundness * 50.0).round()),
+        BoxGeom::Ellipse => "ellipse;".to_owned(),
+        BoxGeom::Diamond => "rhombus;".to_owned(),
+        BoxGeom::Triangle => "triangle;direction=north;".to_owned(),
+        BoxGeom::Sticky => "rounded=0;shadow=1;tbType=sticky;".to_owned(),
+        BoxGeom::Text => "text;spacing=0;verticalAlign=top;".to_owned(),
+    };
+    let (fill, stroke) = match bx.geom {
+        BoxGeom::Text => ("fillColor=none;".to_owned(), "strokeColor=none;".to_owned()),
+        BoxGeom::Sticky => (format!("fillColor={};", hex(st.fill.unwrap_or(inkboard_core::style::NOTE_YELLOW))), "strokeColor=none;".to_owned()),
+        _ => (
+            st.fill.map_or("fillColor=none;".to_owned(), |c| format!("fillColor={};", hex(c))),
+            if st.width > 0.0 { format!("strokeColor={};strokeWidth={};", hex(st.stroke), st.width) } else { "strokeColor=none;".to_owned() },
+        ),
+    };
+    let fc = if bx.geom == BoxGeom::Sticky { "#1E1E1E".to_owned() } else { hex(st.stroke) };
+    let l = &bx.label;
+    format!(
+        "{base}whiteSpace=wrap;html=1;{fill}{stroke}{}{}fontFamily={};fontSize={};align={};{}fontColor={fc};{rot}",
+        dash_style(st.dash),
+        opacity_style(st),
+        font_name(l.family),
+        l.size,
+        align_name(l.align),
+        if bx.geom == BoxGeom::Text { "" } else { "verticalAlign=middle;" },
+    )
+}
+
+/// Edge cell of a connector (`None` when it has no path); `(ox, oy)`: offset of the page.
+fn connector_cell(page: &Page, c: &Connector, st: &Style, id: &str, (ox, oy): (f64, f64)) -> Option<String> {
+    let path = page.connector_path(c)?;
+    let mut style = String::from("html=1;rounded=0;");
+    match c.route {
+        Route::Elbow => style.push_str("edgeStyle=orthogonalEdgeStyle;"),
+        Route::Curve => style.push_str("curved=1;"),
+        Route::Straight => {}
+    }
+    let _ = write!(
+        style,
+        "endArrow={};startArrow={};endFill=1;startFill=1;strokeColor={};strokeWidth={};{}{}",
+        arrow_name(c.head_end),
+        arrow_name(c.head_start),
+        hex(st.stroke),
+        st.width,
+        dash_style(st.dash),
+        opacity_style(st)
+    );
+    let mut attrs = String::new();
+    let mut geom = String::from("<mxGeometry relative=\"1\" as=\"geometry\">");
+    for (e, tag, name) in [(&c.start, "source", "sourcePoint"), (&c.end, "target", "targetPoint")] {
+        match e {
+            End::Bound { target, anchor } => {
+                let _ = write!(attrs, " {tag}=\"{}\"", cell_id(target));
+                if let Anchor::Frac { fx, fy } = anchor {
+                    let p = if tag == "source" { "exit" } else { "entry" };
+                    let _ = write!(style, "{p}X={};{p}Y={};", round2(*fx), round2(*fy));
+                }
+            }
+            End::Free { .. } => {
+                let p = if tag == "source" { path[0] } else { path[path.len() - 1] };
+                let _ = write!(geom, "<mxPoint x=\"{}\" y=\"{}\" as=\"{name}\"/>", round2(p.x + ox), round2(p.y + oy));
+            }
+        }
+    }
+    if !c.via.is_empty() {
+        geom.push_str("<Array as=\"points\">");
+        for v in &c.via {
+            let _ = write!(geom, "<mxPoint x=\"{}\" y=\"{}\"/>", round2(v.x + ox), round2(v.y + oy));
+        }
+        geom.push_str("</Array>");
+    }
+    geom.push_str("</mxGeometry>");
+    let value = c.label.as_ref().map(|l| rich_to_html(&l.text)).unwrap_or_default();
+    if let Some(l) = &c.label {
+        let _ = write!(style, "fontFamily={};fontSize={};fontColor={};", font_name(l.family), l.size, hex(st.stroke));
+    }
+    Some(format!("<mxCell id=\"{id}\" value=\"{}\" style=\"{}\" edge=\"1\" parent=\"1\"{attrs}>{geom}</mxCell>", esc(&value), esc(&style)))
+}
+
 fn page_xml(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
     let b = page.content_bounds().unwrap_or(Rect::new(0.0, 0.0, 100.0, 100.0));
     let (ox, oy) = (40.0 - b.x, 40.0 - b.y);
-    let cid = |id: &Id| format!("tb-{}", id.as_str());
     let mut cells = String::new();
     let geo = |x: f64, y: f64, w: f64, h: f64| {
         format!("<mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>", round2(x + ox), round2(y + oy), round2(w), round2(h))
     };
-    let op = |s: &Style| if s.opacity < 1.0 { format!("opacity={};", (s.opacity * 100.0).round()) } else { String::new() };
-    let font = |l: &Label| format!("fontFamily={};fontSize={};align={};", font_name(l.family), l.size, align_name(l.align));
     let vertex = |cells: &mut String, id: &str, value: &str, style: &str, g: String| {
         let _ = write!(cells, "<mxCell id=\"{id}\" value=\"{}\" style=\"{}\" vertex=\"1\" parent=\"1\">{g}</mxCell>", esc(value), esc(style));
     };
     for o in page.objects.iter().filter(|o| page.is_visible(o)) {
-        let id = cid(&o.id);
+        let id = cell_id(&o.id);
         let st = &o.style;
-        let stroke = if st.width > 0.0 { format!("strokeColor={};strokeWidth={};", hex(st.stroke), st.width) } else { "strokeColor=none;".to_owned() };
-        let fill = st.fill.map_or("fillColor=none;".to_owned(), |c| format!("fillColor={};", hex(c)));
         match &o.kind {
             Kind::Box(bx) => {
                 let f = &bx.frame;
-                let rot = if f.angle != 0.0 { format!("rotation={};", round2(f.angle.to_degrees())) } else { String::new() };
-                let label = bx.label.clone();
-                let value = rich_to_html(&label.text);
-                let base = match bx.geom {
-                    BoxGeom::Rect => format!("rounded={};arcSize={};", u8::from(st.roundness > 0.0), (st.roundness * 50.0).round()),
-                    BoxGeom::Ellipse => "ellipse;".to_owned(),
-                    BoxGeom::Diamond => "rhombus;".to_owned(),
-                    BoxGeom::Triangle => "triangle;direction=north;".to_owned(),
-                    BoxGeom::Sticky => "rounded=0;shadow=1;tbType=sticky;".to_owned(),
-                    BoxGeom::Text => "text;spacing=0;verticalAlign=top;".to_owned(),
-                };
-                let (fill, stroke) = match bx.geom {
-                    BoxGeom::Text => ("fillColor=none;".to_owned(), "strokeColor=none;".to_owned()),
-                    BoxGeom::Sticky => (format!("fillColor={};", hex(st.fill.unwrap_or(inkboard_core::style::NOTE_YELLOW))), "strokeColor=none;".to_owned()),
-                    _ => (fill, stroke),
-                };
-                let fc = if bx.geom == BoxGeom::Sticky { "#1E1E1E".to_owned() } else { hex(st.stroke) };
-                let style = format!(
-                    "{base}whiteSpace=wrap;html=1;{fill}{stroke}{}{}{}{}fontColor={fc};{}{rot}",
-                    dash_style(st.dash),
-                    op(st),
-                    font(&label),
-                    if bx.geom == BoxGeom::Text { "" } else { "verticalAlign=middle;" },
-                    ""
-                );
-                vertex(&mut cells, &id, &value, &style, geo(f.x, f.y, f.w, f.h));
+                vertex(&mut cells, &id, &rich_to_html(&bx.label.text), &box_style(bx, st), geo(f.x, f.y, f.w, f.h));
             }
             Kind::Image(img) => {
                 let Some(a) = doc.assets.get(&img.asset) else { continue };
                 let f = &img.frame;
                 let bytes = img.export_bytes(&a.mime, &a.data, st.stroke.resolve(doc.background.preset.is_dark()));
                 let url = data_url(&a.mime, &bytes).replace(";base64,", ",");
-                let rot = if f.angle != 0.0 { format!("rotation={};", round2(f.angle.to_degrees())) } else { String::new() };
+                let rot = if f.angle == 0.0 { String::new() } else { format!("rotation={};", round2(f.angle.to_degrees())) };
                 vertex(
                     &mut cells,
                     &id,
                     "",
-                    &format!("shape=image;html=1;imageAspect=0;verticalLabelPosition=bottom;verticalAlign=top;image={url};{rot}{}", op(st)),
+                    &format!("shape=image;html=1;imageAspect=0;verticalLabelPosition=bottom;verticalAlign=top;image={url};{rot}{}", opacity_style(st)),
                     geo(f.x, f.y, f.w, f.h),
                 );
             }
@@ -190,53 +256,9 @@ fn page_xml(doc: &Document, page: &Page, m: &dyn Measurer) -> String {
                 }
             }
             Kind::Connector(c) => {
-                let Some(path) = page.connector_path(c) else { continue };
-                let mut style = String::from("html=1;rounded=0;");
-                match c.route {
-                    Route::Elbow => style.push_str("edgeStyle=orthogonalEdgeStyle;"),
-                    Route::Curve => style.push_str("curved=1;"),
-                    Route::Straight => {}
+                if let Some(cell) = connector_cell(page, c, st, &id, (ox, oy)) {
+                    cells.push_str(&cell);
                 }
-                let _ = write!(
-                    style,
-                    "endArrow={};startArrow={};endFill=1;startFill=1;strokeColor={};strokeWidth={};{}{}",
-                    arrow_name(c.head_end),
-                    arrow_name(c.head_start),
-                    hex(st.stroke),
-                    st.width,
-                    dash_style(st.dash),
-                    op(st)
-                );
-                let mut attrs = String::new();
-                let mut geom = String::from("<mxGeometry relative=\"1\" as=\"geometry\">");
-                for (e, tag, name) in [(&c.start, "source", "sourcePoint"), (&c.end, "target", "targetPoint")] {
-                    match e {
-                        End::Bound { target, anchor } => {
-                            let _ = write!(attrs, " {tag}=\"{}\"", cid(target));
-                            if let Anchor::Frac { fx, fy } = anchor {
-                                let p = if tag == "source" { "exit" } else { "entry" };
-                                let _ = write!(style, "{p}X={};{p}Y={};", round2(*fx), round2(*fy));
-                            }
-                        }
-                        End::Free { .. } => {
-                            let p = if tag == "source" { path[0] } else { path[path.len() - 1] };
-                            let _ = write!(geom, "<mxPoint x=\"{}\" y=\"{}\" as=\"{name}\"/>", round2(p.x + ox), round2(p.y + oy));
-                        }
-                    }
-                }
-                if !c.via.is_empty() {
-                    geom.push_str("<Array as=\"points\">");
-                    for v in &c.via {
-                        let _ = write!(geom, "<mxPoint x=\"{}\" y=\"{}\"/>", round2(v.x + ox), round2(v.y + oy));
-                    }
-                    geom.push_str("</Array>");
-                }
-                geom.push_str("</mxGeometry>");
-                let value = c.label.as_ref().map(|l| rich_to_html(&l.text)).unwrap_or_default();
-                if let Some(l) = &c.label {
-                    let _ = write!(style, "fontFamily={};fontSize={};fontColor={};", font_name(l.family), l.size, hex(st.stroke));
-                }
-                let _ = write!(cells, "<mxCell id=\"{id}\" value=\"{}\" style=\"{}\" edge=\"1\" parent=\"1\"{attrs}>{geom}</mxCell>", esc(&value), esc(&style));
             }
         }
     }
@@ -360,7 +382,48 @@ fn entity(name: &str) -> Option<char> {
     }
 }
 
+/// Formatting started by an opening inline tag (`attr`: value of one of its attributes).
+fn apply_tag(name: &str, attr: impl Fn(&str) -> Option<String>, cur: &mut SpanStyle) {
+    match name {
+        "b" | "strong" => cur.bold = true,
+        "i" | "em" => cur.italic = true,
+        "u" => cur.underline = true,
+        "s" | "strike" | "del" => cur.strike = true,
+        "font" => {
+            if let Some(c) = attr("color").and_then(|c| parse_color(&c)) {
+                cur.color = Some(c);
+            }
+        }
+        "span" => {
+            if let Some(style) = attr("style") {
+                apply_css(&style, cur);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Formatting of an inline CSS `style` attribute (color, background, weight, style, decoration).
+fn apply_css(style: &str, cur: &mut SpanStyle) {
+    for decl in style.split(';') {
+        let Some((k, v)) = decl.split_once(':') else { continue };
+        let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
+        match k.as_str() {
+            "color" => cur.color = parse_color(v).or(cur.color),
+            "background-color" | "background" => cur.highlight = parse_color(v),
+            "font-weight" if v == "bold" || v.parse::<u32>().is_ok_and(|n| n >= 600) => cur.bold = true,
+            "font-style" if v == "italic" => cur.italic = true,
+            "text-decoration" | "text-decoration-line" => {
+                cur.underline |= v.contains("underline");
+                cur.strike |= v.contains("line-through");
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Converts draw.io label HTML (common subset) to rich text.
+#[must_use]
 pub fn html_to_rich(h: &str) -> RichText {
     let mut spans: Vec<Span> = Vec::new();
     let mut stack: Vec<(String, SpanStyle)> = Vec::new();
@@ -411,37 +474,7 @@ pub fn html_to_rich(h: &str) -> RichText {
                     }
                     "b" | "strong" | "i" | "em" | "u" | "s" | "strike" | "del" | "font" | "span" | "sub" | "sup" => {
                         stack.push((name.clone(), cur));
-                        match name.as_str() {
-                            "b" | "strong" => cur.bold = true,
-                            "i" | "em" => cur.italic = true,
-                            "u" => cur.underline = true,
-                            "s" | "strike" | "del" => cur.strike = true,
-                            "font" => {
-                                if let Some(c) = attr("color").and_then(|c| parse_color(&c)) {
-                                    cur.color = Some(c);
-                                }
-                            }
-                            "span" => {
-                                if let Some(style) = attr("style") {
-                                    for decl in style.split(';') {
-                                        let Some((k, v)) = decl.split_once(':') else { continue };
-                                        let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
-                                        match k.as_str() {
-                                            "color" => cur.color = parse_color(v).or(cur.color),
-                                            "background-color" | "background" => cur.highlight = parse_color(v),
-                                            "font-weight" if v == "bold" || v.parse::<u32>().is_ok_and(|n| n >= 600) => cur.bold = true,
-                                            "font-style" if v == "italic" => cur.italic = true,
-                                            "text-decoration" | "text-decoration-line" => {
-                                                cur.underline |= v.contains("underline");
-                                                cur.strike |= v.contains("line-through");
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
+                        apply_tag(&name, attr, &mut cur);
                     }
                     _ => {}
                 }
@@ -464,8 +497,9 @@ pub fn html_to_rich(h: &str) -> RichText {
             }
         }
     }
-    while spans.last().is_some_and(|s| s.text.ends_with('\n')) {
-        let l = spans.last_mut().unwrap();
+    while let Some(l) = spans.last_mut()
+        && l.text.ends_with('\n')
+    {
         l.text.pop();
         if l.text.is_empty() {
             spans.pop();
@@ -618,10 +652,53 @@ impl Builder<'_> {
         id
     }
 
+    /// A free text cell (`None` when it holds no text).
+    fn free_text(&self, c: &Cell, r: Rect, angle: f64) -> Option<Object> {
+        let s = &c.style;
+        let mut label = label_for(c, Align::Left);
+        if label.text.is_empty() {
+            return None;
+        }
+        label.align = match s.get("align").map(String::as_str) {
+            Some("center") => Align::Center,
+            Some("right") => Align::Right,
+            _ => Align::Left,
+        };
+        let mut obj = Object::new_box(BoxGeom::Text, rect_of(&r), style_for(c, true), label);
+        if let Kind::Box(b) = &mut obj.kind {
+            b.fit(self.m);
+            b.frame.x = match b.label.align {
+                Align::Center => r.x + r.w / 2.0 - b.frame.w / 2.0,
+                Align::Right => r.right() - b.frame.w,
+                Align::Left => r.x,
+            };
+            b.frame.y = if s.get("verticalAlign").is_some_and(|v| v == "middle") { r.y + r.h / 2.0 - b.frame.h / 2.0 } else { r.y };
+            b.frame.angle = angle;
+        }
+        Some(obj)
+    }
+
+    /// Moves the text of `label` to a separate text box along the top (or bottom) edge of `r`.
+    fn edge_label(&self, label: &mut Label, r: Rect, top: bool, stroke: Color) -> Object {
+        let mut t = Label { align: if label.align == Align::Center { Align::Center } else { label.align }, ..label.clone() };
+        t.text = std::mem::take(&mut label.text);
+        let mut tb = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), Style { stroke, width: 0.0, ..Style::default() }, t);
+        if let Kind::Box(b) = &mut tb.kind {
+            b.fit(self.m);
+            b.frame.x = match b.label.align {
+                Align::Left => r.x + 8.0,
+                Align::Right => r.right() - b.frame.w - 8.0,
+                Align::Center => r.x + r.w / 2.0 - b.frame.w / 2.0,
+            };
+            b.frame.y = if top { r.y + 6.0 } else { r.bottom() - b.frame.h - 6.0 };
+        }
+        tb
+    }
+
     /// Creates the object of a vertex; returns its id when it can receive connectors.
     fn vertex(&mut self, c: &Cell, r: Rect, out: &mut Vec<Object>) -> Option<Id> {
         let s = &c.style;
-        let shape = s.get("shape").map(|v| v.to_ascii_lowercase()).unwrap_or_else(|| c.names.first().map(|n| n.to_ascii_lowercase()).unwrap_or_default());
+        let shape = s.get("shape").map_or_else(|| c.names.first().map(|n| n.to_ascii_lowercase()).unwrap_or_default(), |v| v.to_ascii_lowercase());
         let angle = s.get("rotation").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).to_radians();
         // images
         if s.get("shape").is_some_and(|v| v == "image") || (s.contains_key("image") && !c.names.iter().any(|n| n == "text")) {
@@ -654,26 +731,7 @@ impl Builder<'_> {
         }
         // free text
         if c.names.iter().any(|n| n == "text") || s.get("shape").is_some_and(|v| v == "text") {
-            let mut label = label_for(c, Align::Left);
-            if label.text.is_empty() {
-                return None;
-            }
-            label.align = match s.get("align").map(String::as_str) {
-                Some("center") => Align::Center,
-                Some("right") => Align::Right,
-                _ => Align::Left,
-            };
-            let mut obj = Object::new_box(BoxGeom::Text, rect_of(&r), style_for(c, true), label);
-            if let Kind::Box(b) = &mut obj.kind {
-                b.fit(self.m);
-                b.frame.x = match b.label.align {
-                    Align::Center => r.x + r.w / 2.0 - b.frame.w / 2.0,
-                    Align::Right => r.right() - b.frame.w,
-                    Align::Left => r.x,
-                };
-                b.frame.y = if s.get("verticalAlign").is_some_and(|v| v == "middle") { r.y + r.h / 2.0 - b.frame.h / 2.0 } else { r.y };
-                b.frame.angle = angle;
-            }
+            let obj = self.free_text(c, r, angle)?;
             let id = obj.id.clone();
             out.push(obj);
             return Some(id);
@@ -695,8 +753,8 @@ impl Builder<'_> {
                 "south" => (std::f64::consts::PI, false),
                 _ => (-std::f64::consts::FRAC_PI_2, true),
             };
-            let (w, h) = if swap { (r.h, r.w) } else { (r.w, r.h) };
-            frame = Frame { x: center.x - w / 2.0, y: center.y - h / 2.0, w, h, angle: a };
+            let (box_w, box_h) = if swap { (r.h, r.w) } else { (r.w, r.h) };
+            frame = Frame { x: center.x - box_w / 2.0, y: center.y - box_h / 2.0, w: box_w, h: box_h, angle: a };
         } else if shape == "note" || s.get("tbType").is_some_and(|v| v == "sticky") {
             geom = BoxGeom::Sticky;
         } else if shape.contains("terminator") || shape.contains("stadium") {
@@ -721,22 +779,8 @@ impl Builder<'_> {
         }
         let mut label = label_for(c, Align::Center);
         let valign = s.get("verticalAlign").map_or("middle", String::as_str);
-        let mut separate: Option<Object> = None;
-        if !label.text.is_empty() && (valign == "top" || valign == "bottom") && r.h >= 50.0 {
-            let mut t = Label { align: if label.align == Align::Center { Align::Center } else { label.align }, ..label.clone() };
-            t.text = std::mem::take(&mut label.text);
-            let mut tb = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), Style { stroke: style.stroke, width: 0.0, ..Style::default() }, t);
-            if let Kind::Box(b) = &mut tb.kind {
-                b.fit(self.m);
-                b.frame.x = match b.label.align {
-                    Align::Left => r.x + 8.0,
-                    Align::Right => r.right() - b.frame.w - 8.0,
-                    Align::Center => r.x + r.w / 2.0 - b.frame.w / 2.0,
-                };
-                b.frame.y = if valign == "top" { r.y + 6.0 } else { r.bottom() - b.frame.h - 6.0 };
-            }
-            separate = Some(tb);
-        }
+        let separate = (!label.text.is_empty() && (valign == "top" || valign == "bottom") && r.h >= 50.0)
+            .then(|| self.edge_label(&mut label, r, valign == "top", style.stroke));
         let obj = Object::new_box(geom, frame, style, label);
         let id = obj.id.clone();
         out.push(obj);
@@ -794,11 +838,19 @@ impl Builder<'_> {
 }
 
 /// Imports a draw.io file (compressed or not, one or several pages).
+///
+/// # Errors
+///
+/// [`FormatError`] when the content is not a draw.io diagram or cannot be decompressed.
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
     import_with_icons(content, name, m, &NoIcons)
 }
 
 /// Like [`import`], resolving the built-in icons (`image=img/lib/...`) in `icons`.
+///
+/// # Errors
+///
+/// Same as [`import`].
 pub fn import_with_icons(content: &str, name: &str, m: &dyn Measurer, icons: &dyn IconResolver) -> Result<Imported, FormatError> {
     let root = xml::parse(content).map_err(FormatError::Invalid)?;
     let mut diagrams: Vec<&Node> = Vec::new();
@@ -810,7 +862,7 @@ pub fn import_with_icons(content: &str, name: &str, m: &dyn Measurer, icons: &dy
             return Err(FormatError::Invalid("no draw.io diagram".into()));
         }
     }
-    let mut b = Builder { m, icons, assets: Default::default(), report: Report::default() };
+    let mut b = Builder { m, icons, assets: BTreeMap::default(), report: Report::default() };
     let mut doc = Document::new(name);
     doc.pages.clear();
     for (i, d) in diagrams.iter().enumerate() {
@@ -824,7 +876,7 @@ pub fn import_with_icons(content: &str, name: &str, m: &dyn Measurer, icons: &dy
             (Some(parsed), &Node::default())
         };
         let model = model_owned.as_ref().unwrap_or(model);
-        let pname = d.attr("name").map(str::to_owned).unwrap_or_else(|| format!("Page {}", i + 1));
+        let pname = d.attr("name").map_or_else(|| format!("Page {}", i + 1), str::to_owned);
         if i == 0
             && let Some(bg) = model.attr("background").and_then(parse_color)
         {
@@ -1010,11 +1062,11 @@ mod tests {
         }
     }
 
-    const BUILT_IN: &str = r##"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+    const BUILT_IN: &str = r#"<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
  <mxCell id="vm" value="SEA_VM_1" style="aspect=fixed;html=1;align=center;image;fontSize=12;image=img/lib/azure2/compute/Virtual_Machine.svg;fontColor=#336699;" vertex="1" parent="1"><mxGeometry x="100" y="100" width="68" height="68" as="geometry"/></mxCell>
  <mxCell id="no" value="Unknown" style="aspect=fixed;html=1;image;image=img/lib/azure2/compute/Nope.svg;" vertex="1" parent="1"><mxGeometry x="300" y="100" width="60" height="40" as="geometry"/></mxCell>
  <mxCell id="e" style="html=1;" edge="1" parent="1" source="vm" target="no"><mxGeometry relative="1" as="geometry"/></mxCell>
- </root></mxGraphModel>"##;
+ </root></mxGraphModel>"#;
 
     fn texts(p: &Page) -> Vec<String> {
         p.objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some(b.label.text.to_plain()) } else { None }).collect()

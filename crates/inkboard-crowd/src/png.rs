@@ -37,6 +37,7 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], body: &[u8]) {
 }
 
 /// PNG of `w` x `h` pixels filled with seeded noise (about `3 * w * h` bytes).
+#[must_use]
 pub fn noise_png(w: u32, h: u32, seed: u64) -> Vec<u8> {
     let (w, h) = (w.max(1), h.max(1));
     let mut rng = Rng::new(seed);
@@ -67,6 +68,7 @@ pub fn noise_png(w: u32, h: u32, seed: u64) -> Vec<u8> {
 }
 
 /// PNG of about `bytes` bytes (4:3 picture).
+#[must_use]
 pub fn noise_png_of_size(bytes: usize, seed: u64) -> Vec<u8> {
     let pixels = (bytes / 3).max(16) as f64;
     let w = (pixels * 4.0 / 3.0).sqrt().max(4.0) as u32;

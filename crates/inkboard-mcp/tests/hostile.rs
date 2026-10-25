@@ -4,6 +4,35 @@
 //! and spoiled: wrong types, extreme numbers, giant and malicious strings, ids that do not exist, huge lists. After each call the answer is
 //! well formed, the process is alive, and the board file on disk still loads and contains only finite numbers and unique identifiers.
 //! Seeds are fixed. Nothing measures a duration; the sizes are chosen so that a run stays quick.
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    clippy::assert_is_empty,
+    clippy::default_trait_access,
+    clippy::format_collect,
+    clippy::format_push_string,
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_raw_string_hashes,
+    clippy::needless_pass_by_value,
+    clippy::explicit_iter_loop,
+    clippy::needless_for_each,
+    clippy::collapsible_else_if,
+    clippy::single_match_else,
+    clippy::manual_assert,
+    clippy::redundant_closure_for_method_calls,
+    clippy::unnested_or_patterns,
+    clippy::range_plus_one,
+    clippy::clone_on_copy,
+    clippy::match_same_arms,
+    clippy::struct_excessive_bools
+)]
 
 use inkboard_core::Document;
 use inkboard_mcp::{Server, tools};

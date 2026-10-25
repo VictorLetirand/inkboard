@@ -5,8 +5,12 @@
 
 use crate::common::{FormatError, Imported, Report, parse_color};
 use inkboard_core::layout::{Direction, NodeSpec, layered};
+use inkboard_core::num;
 use inkboard_core::text::Measurer;
-use inkboard_core::*;
+use inkboard_core::{
+    Align, Anchor, Arrowhead, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, Id, Kind, Label, Object, Pt, Rect, RichText, Route,
+    Style,
+};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -47,9 +51,16 @@ struct Link {
     label: String,
     start: bool,
     end: bool,
-    dashed: bool,
-    thick: bool,
-    invisible: bool,
+    line: Line,
+}
+
+/// Stroke of a link: `---`, `-.-`, `===` or `~~~` (not drawn).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Line {
+    Solid,
+    Dashed,
+    Thick,
+    Invisible,
 }
 
 #[derive(Debug)]
@@ -77,18 +88,17 @@ impl Flow {
     }
 
     fn node(&mut self, id: &str, label: Option<String>, shape: Option<Shape>, class: Option<&str>) -> usize {
-        let i = match self.index.get(id) {
-            Some(&i) => i,
-            None => {
-                let sub = self.stack.last().copied();
-                self.nodes.push(Node { id: id.to_owned(), label: id.to_owned(), shape: Shape::Rect, props: HashMap::new(), classes: Vec::new() });
-                let i = self.nodes.len() - 1;
-                self.index.insert(id.to_owned(), i);
-                if let Some(s) = sub {
-                    self.subs[s].members.push(id.to_owned());
-                }
-                i
+        let i = if let Some(&i) = self.index.get(id) {
+            i
+        } else {
+            let sub = self.stack.last().copied();
+            self.nodes.push(Node { id: id.to_owned(), label: id.to_owned(), shape: Shape::Rect, props: HashMap::new(), classes: Vec::new() });
+            let i = self.nodes.len() - 1;
+            self.index.insert(id.to_owned(), i);
+            if let Some(s) = sub {
+                self.subs[s].members.push(id.to_owned());
             }
+            i
         };
         if let Some(l) = label {
             self.nodes[i].label = clean(&l);
@@ -151,13 +161,13 @@ fn parse_node(s: &str, i: usize) -> Option<Tok> {
         }
         let k = j + open.len();
         let (text, end) = if s[k..].starts_with('"') {
-            let Some(q) = s[k + 1..].find('"') else { break };
-            let q = k + 1 + q;
-            let Some(e) = s[q + 1..].find(close) else { break };
-            (s[k + 1..q].to_owned(), q + 1 + e + close.len())
+            let Some(quote_at) = s[k + 1..].find('"') else { break };
+            let quote = k + 1 + quote_at;
+            let Some(close_at) = s[quote + 1..].find(close) else { break };
+            (s[k + 1..quote].to_owned(), quote + 1 + close_at + close.len())
         } else {
-            let Some(e) = s[k..].find(close) else { break };
-            (s[k..k + e].to_owned(), k + e + close.len())
+            let Some(close_rel) = s[k..].find(close) else { break };
+            (s[k..k + close_rel].to_owned(), k + close_rel + close.len())
         };
         label = Some(text);
         shape = Some(sh);
@@ -178,21 +188,24 @@ fn read_link(s: &str) -> Option<(usize, Link)> {
     static DOT_LABELED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(<?)-\.\s+([^<>]*?)\s+\.-+([>xo]?)").unwrap());
     static DOTTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(<?)-\.+-([>xo]?)(?:\|([^|]*)\|)?").unwrap());
     static PLAIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(<?)(-{2,}|={2,})([>xo]?)(?:\|([^|]*)\|)?").unwrap());
-    let base = Link { from: String::new(), to: String::new(), label: String::new(), start: false, end: false, dashed: false, thick: false, invisible: false };
+    let base = Link { from: String::new(), to: String::new(), label: String::new(), start: false, end: false, line: Line::Solid };
     if let Some(m) = LABELED.captures(s) {
-        return Some((m[0].len(), Link { label: clean(&m[3]), start: !m[1].is_empty(), end: !m[5].is_empty(), thick: &m[2] == "==", ..base }));
+        return Some((
+            m[0].len(),
+            Link { label: clean(&m[3]), start: !m[1].is_empty(), end: !m[5].is_empty(), line: if &m[2] == "==" { Line::Thick } else { Line::Solid }, ..base },
+        ));
     }
     if let Some(m) = DOT_LABELED.captures(s) {
-        return Some((m[0].len(), Link { label: clean(&m[2]), start: !m[1].is_empty(), end: !m[3].is_empty(), dashed: true, ..base }));
+        return Some((m[0].len(), Link { label: clean(&m[2]), start: !m[1].is_empty(), end: !m[3].is_empty(), line: Line::Dashed, ..base }));
     }
     if let Some(m) = DOTTED.captures(s) {
         return Some((
             m[0].len(),
-            Link { label: m.get(3).map_or(String::new(), |l| clean(l.as_str())), start: !m[1].is_empty(), end: !m[2].is_empty(), dashed: true, ..base },
+            Link { label: m.get(3).map_or(String::new(), |l| clean(l.as_str())), start: !m[1].is_empty(), end: !m[2].is_empty(), line: Line::Dashed, ..base },
         ));
     }
     if s.starts_with("~~~") {
-        return Some((3, Link { invisible: true, ..base }));
+        return Some((3, Link { line: Line::Invisible, ..base }));
     }
     if let Some(m) = PLAIN.captures(s) {
         return Some((
@@ -201,7 +214,7 @@ fn read_link(s: &str) -> Option<(usize, Link)> {
                 label: m.get(4).map_or(String::new(), |l| clean(l.as_str())),
                 start: !m[1].is_empty(),
                 end: !m[3].is_empty(),
-                thick: m[2].starts_with('='),
+                line: if m[2].starts_with('=') { Line::Thick } else { Line::Solid },
                 ..base
             },
         ));
@@ -221,18 +234,18 @@ fn parse_flow_line(s: &str, f: &mut Flow) {
         }
     };
     let read_group = |i: &mut usize, f: &mut Flow| -> Option<Vec<usize>> {
-        let mut g = Vec::new();
+        let mut group = Vec::new();
         loop {
             skip(i);
-            let Some(t) = parse_node(s, *i) else { return if g.is_empty() { None } else { Some(g) } };
+            let Some(t) = parse_node(s, *i) else { return if group.is_empty() { None } else { Some(group) } };
             *i = t.end;
-            g.push(f.node(&t.id, t.label, t.shape, t.class.as_deref()));
+            group.push(f.node(&t.id, t.label, t.shape, t.class.as_deref()));
             skip(i);
             if s[*i..].starts_with('&') {
                 *i += 1;
                 continue;
             }
-            return Some(g);
+            return Some(group);
         }
     };
     let Some(mut prev) = read_group(&mut i, f) else { return };
@@ -274,7 +287,7 @@ fn parse_flowchart(lines: &[String], f: &mut Flow) {
             } else if s.eq_ignore_ascii_case("end") {
                 f.stack.pop();
             } else if s.starts_with("direction ") || ["linkStyle", "click", "accTitle", "accDescr", "title"].iter().any(|k| s.starts_with(k)) {
-                continue;
+                // directives without effect on the board
             } else if let Some(m) = CLASSDEF.captures(s) {
                 for c in m[1].split(',') {
                     f.classes.insert(c.to_owned(), style_props(&m[2]));
@@ -329,16 +342,7 @@ fn parse_state(lines: &[String], f: &mut Flow) {
                 }
             };
             let (a, b) = (end(&m[1], true, f), end(&m[2], false, f));
-            f.links.push(Link {
-                from: a,
-                to: b,
-                label: clean(m.get(3).map_or("", |x| x.as_str())),
-                start: false,
-                end: true,
-                dashed: false,
-                thick: false,
-                invisible: false,
-            });
+            f.links.push(Link { from: a, to: b, label: clean(m.get(3).map_or("", |x| x.as_str())), start: false, end: true, line: Line::Solid });
         } else if let Some(m) = DESC.captures(s) {
             f.node(&m[1], Some(m[2].to_owned()), Some(Shape::Round), None);
         }
@@ -370,17 +374,40 @@ fn node_size(n: &Node, m: &dyn Measurer) -> (BoxGeom, f64, f64) {
         BoxGeom::Diamond => (tw / 0.5 + 24.0).clamp(w, 340.0),
         _ => (tw + 40.0).clamp(w, 300.0),
     };
-    let mut b = BoxObj { geom, frame: Frame::new(0.0, 0.0, w, h), label: Label::new(&n.label, FONT, Align::Center), lang: None };
+    let mut obj = BoxObj { geom, frame: Frame::new(0.0, 0.0, w, h), label: Label::new(&n.label, FONT, Align::Center), lang: None };
     for _ in 0..6 {
-        let before = b.frame.h;
-        b.fit(m);
-        if (b.frame.h - before).abs() < 0.5 {
+        let before = obj.frame.h;
+        obj.fit(m);
+        if (obj.frame.h - before).abs() < 0.5 {
             break;
         }
-        b.frame.h += 4.0;
+        obj.frame.h += 4.0;
     }
-    h = b.frame.h;
+    h = obj.frame.h;
     (geom, w, h)
+}
+
+fn bounds_of(i: usize, f: &Flow, rects: &[Rect], cache: &mut HashMap<usize, Option<Rect>>) -> Option<Rect> {
+    if let Some(b) = cache.get(&i) {
+        return *b;
+    }
+    let mut acc: Option<Rect> = None;
+    let mut add = |r: Rect| acc = Some(acc.map_or(r, |a| a.union(&r)));
+    for id in &f.subs[i].members {
+        if let Some(&k) = f.index.get(id) {
+            add(rects[k]);
+        }
+    }
+    for (k, s) in f.subs.iter().enumerate() {
+        if s.parent == Some(i)
+            && let Some(b) = bounds_of(k, f, rects, cache)
+        {
+            add(b);
+        }
+    }
+    let r = acc.map(|a| Rect::new(a.x - 28.0, a.y - 46.0, a.w + 56.0, a.h + 74.0));
+    cache.insert(i, r);
+    r
 }
 
 fn node_object(n: &Node, geom: BoxGeom, frame: Frame, classes: &HashMap<String, HashMap<String, String>>) -> Object {
@@ -434,58 +461,37 @@ fn node_object(n: &Node, geom: BoxGeom, frame: Frame, classes: &HashMap<String, 
     Object::new_box(geom, frame, style, label)
 }
 
-fn build_flow(f: &Flow, m: &dyn Measurer) -> Vec<Object> {
-    let sizes: Vec<(BoxGeom, f64, f64)> = f.nodes.iter().map(|n| node_size(n, m)).collect();
+fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
+    let sizes: Vec<(BoxGeom, f64, f64)> = flow.nodes.iter().map(|n| node_size(n, measurer)).collect();
     let specs: Vec<NodeSpec> = sizes.iter().map(|s| NodeSpec { w: s.1, h: s.2 }).collect();
-    let edges: Vec<(usize, usize)> = f.links.iter().filter_map(|l| Some((*f.index.get(&l.from)?, *f.index.get(&l.to)?))).collect();
-    let link_idx: Vec<usize> = (0..f.links.len()).filter(|&i| f.index.contains_key(&f.links[i].from) && f.index.contains_key(&f.links[i].to)).collect();
-    let lay = layered(&specs, &edges, f.dir);
+    let edges: Vec<(usize, usize)> = flow.links.iter().filter_map(|l| Some((*flow.index.get(&l.from)?, *flow.index.get(&l.to)?))).collect();
+    let link_idx: Vec<usize> =
+        (0..flow.links.len()).filter(|&i| flow.index.contains_key(&flow.links[i].from) && flow.index.contains_key(&flow.links[i].to)).collect();
+    let lay = layered(&specs, &edges, flow.dir);
     let mut nodes: Vec<Object> = Vec::new();
     let mut rects: Vec<Rect> = Vec::new();
-    for (i, n) in f.nodes.iter().enumerate() {
+    for (i, n) in flow.nodes.iter().enumerate() {
         let (g, w, h) = sizes[i];
-        let c = lay.centers[i];
-        let r = Rect::new(c.x - w / 2.0, c.y - h / 2.0, w, h);
-        rects.push(r);
-        nodes.push(node_object(n, g, Frame::from_rect(r), &f.classes));
+        let center = lay.centers[i];
+        let rect = Rect::new(center.x - w / 2.0, center.y - h / 2.0, w, h);
+        rects.push(rect);
+        nodes.push(node_object(n, g, Frame::from_rect(rect), &flow.classes));
     }
     // subgraphs
     let mut bounds: HashMap<usize, Option<Rect>> = HashMap::new();
-    fn bounds_of(i: usize, f: &Flow, rects: &[Rect], cache: &mut HashMap<usize, Option<Rect>>) -> Option<Rect> {
-        if let Some(b) = cache.get(&i) {
-            return *b;
-        }
-        let mut acc: Option<Rect> = None;
-        let mut add = |r: Rect| acc = Some(acc.map_or(r, |a| a.union(&r)));
-        for id in &f.subs[i].members {
-            if let Some(&k) = f.index.get(id) {
-                add(rects[k]);
-            }
-        }
-        for (k, s) in f.subs.iter().enumerate() {
-            if s.parent == Some(i)
-                && let Some(b) = bounds_of(k, f, rects, cache)
-            {
-                add(b);
-            }
-        }
-        let r = acc.map(|a| Rect::new(a.x - 28.0, a.y - 46.0, a.w + 56.0, a.h + 74.0));
-        cache.insert(i, r);
-        r
-    }
     let depth = |mut i: usize| {
         let mut d = 0;
-        while let Some(p) = f.subs[i].parent {
+        while let Some(p) = flow.subs[i].parent {
             d += 1;
             i = p;
         }
         d
     };
-    let mut order: Vec<usize> = (0..f.subs.len()).collect();
+    let mut order: Vec<usize> = (0..flow.subs.len()).collect();
     order.sort_by_key(|&i| depth(i));
     let mut out: Vec<Object> = Vec::new();
     for i in order {
-        let Some(b) = bounds_of(i, f, &rects, &mut bounds) else { continue };
+        let Some(b) = bounds_of(i, flow, &rects, &mut bounds) else { continue };
         out.push(Object::new_box(
             BoxGeom::Rect,
             Frame::from_rect(b),
@@ -496,10 +502,10 @@ fn build_flow(f: &Flow, m: &dyn Measurer) -> Vec<Object> {
             BoxGeom::Text,
             Frame::new(b.x + 12.0, b.y + 8.0, 10.0, 10.0),
             Style { width: 0.0, ..Style::default() },
-            Label::new(&f.subs[i].title, 16.0, Align::Left),
+            Label::new(&flow.subs[i].title, 16.0, Align::Left),
         );
         if let Kind::Box(bx) = &mut t.kind {
-            bx.fit(m);
+            bx.fit(measurer);
         }
         out.push(t);
     }
@@ -512,45 +518,49 @@ fn build_flow(f: &Flow, m: &dyn Measurer) -> Vec<Object> {
     }
     let mut pair_seen: HashMap<(usize, usize), usize> = HashMap::new();
     for (k, &li) in link_idx.iter().enumerate() {
-        let l = &f.links[li];
+        let link = &flow.links[li];
         let (a, b) = edges[k];
-        if l.invisible {
+        if link.line == Line::Invisible {
             continue;
         }
         let head = |on: bool| if on { Arrowhead::Triangle } else { Arrowhead::None };
-        let style = Style { width: if l.thick { 5.0 } else { 2.5 }, dash: if l.dashed { Dash::Dashed } else { Dash::Solid }, ..Style::default() };
-        let mut c = Connector::new(End::bound(ids[a].clone()), End::bound(ids[b].clone()));
-        c.head_end = head(l.end);
-        c.head_start = head(l.start);
-        if !l.label.is_empty() {
-            c.label = Some(Label::new(&l.label, 15.0, Align::Center));
+        let style = Style {
+            width: if link.line == Line::Thick { 5.0 } else { 2.5 },
+            dash: if link.line == Line::Dashed { Dash::Dashed } else { Dash::Solid },
+            ..Style::default()
+        };
+        let mut conn = Connector::new(End::bound(ids[a].clone()), End::bound(ids[b].clone()));
+        conn.head_end = head(link.end);
+        conn.head_start = head(link.start);
+        if !link.label.is_empty() {
+            conn.label = Some(Label::new(&link.label, 15.0, Align::Center));
         }
         if a == b {
-            let r = rects[a];
-            c.start = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.25 } };
-            c.end = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.75 } };
-            c.via = vec![Pt::new(r.right() + 34.0, r.y + r.h * 0.25), Pt::new(r.right() + 34.0, r.y + r.h * 0.75)];
+            let src_rect = rects[a];
+            conn.start = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.25 } };
+            conn.end = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.75 } };
+            conn.via = vec![Pt::new(src_rect.right() + 34.0, src_rect.y + src_rect.h * 0.25), Pt::new(src_rect.right() + 34.0, src_rect.y + src_rect.h * 0.75)];
         } else {
             let route = &lay.routes[k];
             if route.len() > 2 {
-                c.via = route[1..route.len() - 1].to_vec();
+                conn.via = route[1..route.len() - 1].to_vec();
             } else {
                 let key = (a.min(b), a.max(b));
-                let n = pair_count[&key];
+                let pair_n = pair_count[&key];
                 let idx = pair_seen.entry(key).or_default();
-                if n > 1 {
+                if pair_n > 1 {
                     let (p, q) = (rects[key.0].center(), rects[key.1].center());
-                    let d = q - p;
-                    let len = d.len().max(1.0);
-                    let perp = Pt::new(-d.y / len, d.x / len);
-                    let off = (*idx as f64 - (n as f64 - 1.0) / 2.0) * 44.0;
-                    c.via = vec![p.lerp(q, 0.5) + perp * off];
-                    c.route = Route::Curve;
+                    let delta = q - p;
+                    let len = delta.len().max(1.0);
+                    let perp = Pt::new(-delta.y / len, delta.x / len);
+                    let off = (num::f64_of(*idx) - (num::f64_of(pair_n) - 1.0) / 2.0) * 44.0;
+                    conn.via = vec![p.lerp(q, 0.5) + perp * off];
+                    conn.route = Route::Curve;
                 }
                 *idx += 1;
             }
         }
-        out.push(Object::new(Kind::Connector(c), style));
+        out.push(Object::new(Kind::Connector(conn), style));
     }
     out
 }
@@ -563,16 +573,28 @@ fn text_object(text: &str, x: f64, y: f64, size: f64, align: Align, m: &dyn Meas
     t
 }
 
-fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, FormatError> {
+/// A row of a sequence diagram (`r`: its position, in rows).
+enum SeqRow {
+    Msg { from: String, to: String, arrow: String, text: String, r: f64 },
+    Note { kind: String, ids: Vec<String>, text: String, r: f64 },
+}
+
+/// Parsed sequence diagram: participants `(id, label)`, rows, frames `(label, first row, last row)`,
+/// separators inside the frames `(label, row)`, and the row after the last one.
+struct Sequence {
+    parts: Vec<(String, String)>,
+    rows: Vec<SeqRow>,
+    frames: Vec<(String, f64, f64)>,
+    marks: Vec<(String, f64)>,
+    end: f64,
+}
+
+fn parse_sequence(lines: &[String]) -> Sequence {
     static PARTICIPANT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:participant|actor)\s+(\S+)(?:\s+as\s+(.+))?$").unwrap());
     static BLOCK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(loop|alt|opt|par|critical|break|rect)\b\s*(.*)$").unwrap());
     static MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(else|and|option)\b\s*(.*)$").unwrap());
     static NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^Note\s+(over|left of|right of)\s+([^:]+):\s*(.*)$").unwrap());
     static MSG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([^\s>:\-]+)\s*(-->>|->>|-->|->|--x|-x|--\)|-\))\s*[+-]?([^\s:]+)\s*:\s*(.*)$").unwrap());
-    enum Row {
-        Msg { from: String, to: String, arrow: String, text: String, r: f64 },
-        Note { kind: String, ids: Vec<String>, text: String, r: f64 },
-    }
     let mut parts: Vec<(String, String)> = Vec::new();
     let part = |parts: &mut Vec<(String, String)>, id: &str, label: Option<String>| match parts.iter_mut().find(|p| p.0 == id) {
         Some(p) => {
@@ -583,7 +605,7 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
         None => parts.push((id.to_owned(), label.unwrap_or_else(|| id.to_owned()))),
     };
     let (mut auto, mut count, mut row) = (false, 0, 0.0f64);
-    let mut rows: Vec<Row> = Vec::new();
+    let mut rows: Vec<SeqRow> = Vec::new();
     let mut stack: Vec<(String, f64)> = Vec::new();
     let mut frames: Vec<(String, f64, f64)> = Vec::new();
     let mut marks: Vec<(String, f64)> = Vec::new();
@@ -608,13 +630,13 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
             for id in &ids {
                 part(&mut parts, id, None);
             }
-            rows.push(Row::Note { kind: c[1].to_ascii_lowercase(), ids, text: clean(&c[3]), r: row });
+            rows.push(SeqRow::Note { kind: c[1].to_ascii_lowercase(), ids, text: clean(&c[3]), r: row });
             row += 1.0;
         } else if let Some(c) = MSG.captures(s) {
             part(&mut parts, &c[1], None);
             part(&mut parts, &c[3], None);
             count += 1;
-            rows.push(Row::Msg {
+            rows.push(SeqRow::Msg {
                 from: c[1].to_owned(),
                 to: c[3].to_owned(),
                 arrow: c[2].to_owned(),
@@ -624,15 +646,20 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
             row += 1.0;
         }
     }
+    Sequence { parts, rows, frames, marks, end: row }
+}
+
+fn build_sequence(lines: &[String], measurer: &dyn Measurer) -> Result<Vec<Object>, FormatError> {
+    let Sequence { parts, rows, frames, marks, end: row } = parse_sequence(lines);
     if parts.is_empty() {
         return Err(FormatError::Invalid("no message found".into()));
     }
-    let widths: Vec<f64> = parts.iter().map(|p| (m.width(&p.1, FontFamily::Sans, FONT, false) + 36.0).max(120.0)).collect();
+    let widths: Vec<f64> = parts.iter().map(|p| (measurer.width(&p.1, FontFamily::Sans, FONT, false) + 36.0).max(120.0)).collect();
     let mut xs: HashMap<&str, f64> = HashMap::new();
     let mut x = 0.0;
     for (i, p) in parts.iter().enumerate() {
         if i > 0 {
-            x += ((widths[i - 1] + widths[i]) / 2.0 + 60.0).max(220.0);
+            x += (f64::midpoint(widths[i - 1], widths[i]) + 60.0).max(220.0);
         }
         xs.insert(p.0.as_str(), x);
     }
@@ -655,11 +682,11 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
             Style { dash: Dash::Dashed, width: 1.5, opacity: 0.7, ..Style::default() },
             Label::default(),
         ));
-        out.push(text_object(label, left + 8.0, y_of(*r0) - 20.0, 14.0, Align::Left, m));
+        out.push(text_object(label, left + 8.0, y_of(*r0) - 20.0, 14.0, Align::Left, measurer));
     }
     for (label, r) in &marks {
         out.push(line(Pt::new(left, y_of(*r) - 12.0), Pt::new(right, y_of(*r) - 12.0), false, true, 1.5));
-        out.push(text_object(label, left + 8.0, y_of(*r) - 12.0, 14.0, Align::Left, m));
+        out.push(text_object(label, left + 8.0, y_of(*r) - 12.0, 14.0, Align::Left, measurer));
     }
     for (i, p) in parts.iter().enumerate() {
         let w = widths[i];
@@ -672,14 +699,14 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
     }
     for r in &rows {
         match r {
-            Row::Note { kind, ids, text, r } => {
+            SeqRow::Note { kind, ids, text, r } => {
                 let cx: Vec<f64> = ids.iter().filter_map(|i| xs.get(i.as_str()).copied()).collect();
                 let (mn, mx) = (cx.iter().copied().fold(f64::INFINITY, f64::min), cx.iter().copied().fold(f64::NEG_INFINITY, f64::max));
                 let w = 160.0f64.max(mx - mn + 100.0);
                 let sx = match kind.as_str() {
                     "left of" => mn - w / 2.0 - 20.0,
                     "right of" => mx + w / 2.0 + 20.0,
-                    _ => (mn + mx) / 2.0,
+                    _ => f64::midpoint(mn, mx),
                 };
                 let mut n = Object::new_box(
                     BoxGeom::Sticky,
@@ -688,31 +715,34 @@ fn build_sequence(lines: &[String], m: &dyn Measurer) -> Result<Vec<Object>, For
                     Label::new(text, 15.0, Align::Center),
                 );
                 if let Kind::Box(b) = &mut n.kind {
-                    b.fit(m);
+                    b.fit(measurer);
                 }
                 out.push(n);
             }
-            Row::Msg { from, to, arrow, text, r } => {
+            SeqRow::Msg { from, to, arrow, text, r } => {
                 let (a, b, y) = (xs[from.as_str()], xs[to.as_str()], y_of(*r));
                 let dashed = arrow.starts_with("--");
                 let head = arrow.ends_with(">>") || arrow.ends_with('x') || arrow.ends_with(')');
                 if from == to {
-                    let mut c = Connector::new(End::free(Pt::new(a, y - 10.0)), End::free(Pt::new(a, y + 14.0)));
-                    c.via = vec![Pt::new(a + 46.0, y - 10.0), Pt::new(a + 46.0, y + 14.0)];
-                    c.head_end = Arrowhead::Triangle;
-                    out.push(Object::new(Kind::Connector(c), Style { width: 2.5, dash: if dashed { Dash::Dashed } else { Dash::Solid }, ..Style::default() }));
+                    let mut conn = Connector::new(End::free(Pt::new(a, y - 10.0)), End::free(Pt::new(a, y + 14.0)));
+                    conn.via = vec![Pt::new(a + 46.0, y - 10.0), Pt::new(a + 46.0, y + 14.0)];
+                    conn.head_end = Arrowhead::Triangle;
+                    out.push(Object::new(
+                        Kind::Connector(conn),
+                        Style { width: 2.5, dash: if dashed { Dash::Dashed } else { Dash::Solid }, ..Style::default() },
+                    ));
                     if !text.is_empty() {
-                        out.push(text_object(text, a + 56.0, y - 8.0, 15.0, Align::Left, m));
+                        out.push(text_object(text, a + 56.0, y - 8.0, 15.0, Align::Left, measurer));
                     }
                 } else {
                     out.push(line(Pt::new(a, y), Pt::new(b, y), head, dashed, 2.5));
                     if !text.is_empty() {
-                        let mut t = text_object(text, 0.0, 0.0, 15.0, Align::Center, m);
-                        if let Kind::Box(bx) = &mut t.kind {
-                            bx.frame.x = (a + b) / 2.0 - bx.frame.w / 2.0;
+                        let mut caption = text_object(text, 0.0, 0.0, 15.0, Align::Center, measurer);
+                        if let Kind::Box(bx) = &mut caption.kind {
+                            bx.frame.x = f64::midpoint(a, b) - bx.frame.w / 2.0;
                             bx.frame.y = y - bx.frame.h - 4.0;
                         }
-                        out.push(t);
+                        out.push(caption);
                     }
                 }
             }
@@ -738,7 +768,12 @@ fn check_flow_size(f: &Flow) -> Result<(), FormatError> {
 }
 
 /// Converts Mermaid text to objects ready to be placed on a page.
+///
+/// # Errors
+///
+/// [`FormatError`] when the text is empty, holds no node, state or message, or its diagram type is not supported.
 pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatError> {
+    static FLOW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:flowchart|graph)(?:-elk)?\b\s*(TD|TB|LR|RL|BT)?").unwrap());
     let mut lines: Vec<&str> = src.lines().collect();
     if lines.first().is_some_and(|l| l.trim() == "---")
         && let Some(end) = lines.iter().skip(1).position(|l| l.trim() == "---")
@@ -747,7 +782,6 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
     }
     let lines: Vec<String> = lines.iter().map(|l| l.split("%%").next().unwrap_or("").trim().to_owned()).filter(|l| !l.is_empty()).collect();
     let Some(head) = lines.first() else { return Err(FormatError::Invalid("empty text".into())) };
-    static FLOW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:flowchart|graph)(?:-elk)?\b\s*(TD|TB|LR|RL|BT)?").unwrap());
     if let Some(c) = FLOW.captures(head) {
         let mut f = Flow::new(dir_of(c.get(1).map_or("TD", |d| d.as_str())));
         parse_flowchart(&lines[1..], &mut f);
@@ -773,6 +807,11 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
     Err(FormatError::Unsupported(format!("unsupported diagram type (\"{kind}\"). Supported: flowchart/graph, stateDiagram, sequenceDiagram")))
 }
 
+/// Imports a Mermaid diagram as a one-page document.
+///
+/// # Errors
+///
+/// Same as [`to_objects`].
 pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, FormatError> {
     let objs = to_objects(content, m)?;
     let mut doc = Document::new(name);
@@ -784,6 +823,7 @@ pub fn import(content: &str, name: &str, m: &dyn Measurer) -> Result<Imported, F
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inkboard_core::Page;
     use inkboard_core::text::ApproxMeasurer;
 
     fn objs(src: &str) -> Vec<Object> {

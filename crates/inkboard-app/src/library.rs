@@ -6,6 +6,7 @@ use crate::i18n::{t, tr};
 use crate::platform::Pack;
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, TextureHandle, TextureOptions, vec2};
+use inkboard_core::num;
 use inkboard_icons::{IconRef, Library};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,7 +47,7 @@ pub struct Palette {
 
 impl std::fmt::Debug for Palette {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Palette").field("open", &self.open).finish()
+        f.debug_struct("Palette").field("open", &self.open).finish_non_exhaustive()
     }
 }
 
@@ -102,13 +103,82 @@ impl Palette {
         let svg = lib.svg(r)?;
         let (w, h) = inkboard_icons::svg_dimensions(&svg).unwrap_or((24.0, 24.0));
         let px = (CELL - 12.0) * ctx.pixels_per_point();
-        let scale = (f64::from(px) / w.max(h)) as f32;
+        let scale = num::f32(f64::from(px) / w.max(h));
         let raster = inkboard_formats::raster::svg_to_raster(&svg, scale.clamp(0.01, 8.0), false).ok()?;
         let img = egui::ColorImage::from_rgba_premultiplied([raster.width as usize, raster.height as usize], &raster.rgba_premultiplied);
         let tex = ctx.load_texture(format!("icon-{}-{}", r.set, r.icon), img, TextureOptions::LINEAR);
         self.textures.insert(r, tex.clone());
         Some(tex)
     }
+}
+
+/// Group and set pickers.
+fn filters(ui: &mut egui::Ui, pal_state: &mut Palette, lib: &Library) {
+    ui.horizontal(|ui| {
+        let w = (ui.available_width() - 6.0) / 2.0;
+        let all_groups = t("All groups");
+        let before = pal_state.group.clone();
+        egui::ComboBox::from_id_salt("icon-group").width(w).selected_text(pal_state.group.clone().unwrap_or_else(|| all_groups.clone())).show_ui(ui, |ui| {
+            if ui.selectable_label(pal_state.group.is_none(), &all_groups).clicked() {
+                pal_state.group = None;
+            }
+            for g in lib.groups() {
+                if ui.selectable_label(pal_state.group.as_deref() == Some(g), g).clicked() {
+                    pal_state.group = Some(g.to_owned());
+                }
+            }
+        });
+        if pal_state.group != before {
+            pal_state.set = None;
+        }
+        let all_sets = t("All sets");
+        let sets: Vec<usize> = (0..lib.sets.len()).filter(|si| pal_state.group.as_ref().is_none_or(|g| &lib.sets[*si].group == g)).collect();
+        let label = pal_state.set.map_or_else(|| all_sets.clone(), |s| lib.sets[s].title.clone());
+        egui::ComboBox::from_id_salt("icon-set").width(w).selected_text(label).show_ui(ui, |ui| {
+            if ui.selectable_label(pal_state.set.is_none(), &all_sets).clicked() {
+                pal_state.set = None;
+            }
+            for si in sets {
+                if ui.selectable_label(pal_state.set == Some(si), &lib.sets[si].title).clicked() {
+                    pal_state.set = Some(si);
+                }
+            }
+        });
+    });
+}
+
+/// Grid of the icons found; returns the one clicked.
+fn icon_grid(ui: &mut egui::Ui, palette: &mut Palette, lib: &Library, max_height: f32, pal: &theme::Palette) -> Option<IconRef> {
+    let mut picked = None;
+    let cols = num::to_usize(f64::from((ui.available_width() / CELL).floor())).max(1);
+    let total = palette.list.len();
+    let rows = total.div_ceil(cols);
+    let mut budget = BUDGET;
+    egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(max_height).show_rows(ui, CELL, rows, |ui, range| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        for row in range {
+            ui.horizontal(|ui| {
+                for c in 0..cols {
+                    let Some(r) = palette.list.get(row * cols + c).copied() else { break };
+                    let (rect, resp) = ui.allocate_exact_size(vec2(CELL, CELL), egui::Sense::click());
+                    if resp.hovered() {
+                        ui.painter().rect_filled(rect.shrink(2.0), 8.0, pal.ui2);
+                    }
+                    if let Some(tex) = palette.thumb(ui.ctx(), lib, r, &mut budget) {
+                        let size = tex.size_vec2() / ui.ctx().pixels_per_point();
+                        let tint = if lib.sets[r.set].mono { pal.tx } else { Color32::WHITE };
+                        let target = egui::Rect::from_center_size(rect.center(), size.min(vec2(CELL - 12.0, CELL - 12.0)));
+                        ui.painter().image(tex.id(), target, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+                    }
+                    let resp = resp.on_hover_text(format!("{}\n{} · {}", lib.name(r).unwrap_or(""), lib.sets[r.set].group, lib.sets[r.set].title));
+                    if resp.clicked() {
+                        picked = Some(r);
+                    }
+                }
+            });
+        }
+    });
+    picked
 }
 
 /// Draws the palette card when it is open.
@@ -164,41 +234,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             app.palette.focus = false;
         }
         ui.add_space(4.0);
-        let pal_state = &mut app.palette;
-        ui.horizontal(|ui| {
-            let w = (ui.available_width() - 6.0) / 2.0;
-            let all_groups = t("All groups");
-            let before = pal_state.group.clone();
-            egui::ComboBox::from_id_salt("icon-group").width(w).selected_text(pal_state.group.clone().unwrap_or_else(|| all_groups.clone())).show_ui(
-                ui,
-                |ui| {
-                    if ui.selectable_label(pal_state.group.is_none(), &all_groups).clicked() {
-                        pal_state.group = None;
-                    }
-                    for g in lib.groups() {
-                        if ui.selectable_label(pal_state.group.as_deref() == Some(g), g).clicked() {
-                            pal_state.group = Some(g.to_owned());
-                        }
-                    }
-                },
-            );
-            if pal_state.group != before {
-                pal_state.set = None;
-            }
-            let all_sets = t("All sets");
-            let sets: Vec<usize> = (0..lib.sets.len()).filter(|si| pal_state.group.as_ref().is_none_or(|g| &lib.sets[*si].group == g)).collect();
-            let label = pal_state.set.map_or_else(|| all_sets.clone(), |s| lib.sets[s].title.clone());
-            egui::ComboBox::from_id_salt("icon-set").width(w).selected_text(label).show_ui(ui, |ui| {
-                if ui.selectable_label(pal_state.set.is_none(), &all_sets).clicked() {
-                    pal_state.set = None;
-                }
-                for si in sets {
-                    if ui.selectable_label(pal_state.set == Some(si), &lib.sets[si].title).clicked() {
-                        pal_state.set = Some(si);
-                    }
-                }
-            });
-        });
+        filters(ui, &mut app.palette, &lib);
         ui.add_space(6.0);
         let has_list = app.palette.refresh_list(&lib);
         if !has_list {
@@ -216,34 +252,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         } else if app.palette.list.is_empty() {
             ui.label(egui::RichText::new(t("No icon matches.")).color(pal.mute));
         } else {
-            let cols = ((ui.available_width() / CELL).floor() as usize).max(1);
-            let total = app.palette.list.len();
-            let rows = total.div_ceil(cols);
-            let mut budget = BUDGET;
-            egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(height - 150.0).show_rows(ui, CELL, rows, |ui, range| {
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                for row in range {
-                    ui.horizontal(|ui| {
-                        for c in 0..cols {
-                            let Some(r) = app.palette.list.get(row * cols + c).copied() else { break };
-                            let (rect, resp) = ui.allocate_exact_size(vec2(CELL, CELL), egui::Sense::click());
-                            if resp.hovered() {
-                                ui.painter().rect_filled(rect.shrink(2.0), 8.0, pal.ui2);
-                            }
-                            if let Some(tex) = app.palette.thumb(ui.ctx(), &lib, r, &mut budget) {
-                                let size = tex.size_vec2() / ui.ctx().pixels_per_point();
-                                let tint = if lib.sets[r.set].mono { pal.tx } else { Color32::WHITE };
-                                let target = egui::Rect::from_center_size(rect.center(), size.min(vec2(CELL - 12.0, CELL - 12.0)));
-                                ui.painter().image(tex.id(), target, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
-                            }
-                            let resp = resp.on_hover_text(format!("{}\n{} · {}", lib.name(r).unwrap_or(""), lib.sets[r.set].group, lib.sets[r.set].title));
-                            if resp.clicked() {
-                                insert = Some(r);
-                            }
-                        }
-                    });
-                }
-            });
+            insert = icon_grid(ui, &mut app.palette, &lib, height - 150.0, &pal);
         }
         ui.add_space(4.0);
         ui.label(

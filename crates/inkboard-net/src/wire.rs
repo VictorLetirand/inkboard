@@ -89,7 +89,7 @@ pub(crate) async fn read_frame(recv: &mut RecvStream, max_frame: usize) -> std::
 }
 
 pub(crate) async fn write_frame(send: &mut SendStream, frame: &[u8]) -> std::result::Result<(), WriteError> {
-    send.write_all(&(frame.len() as u32).to_le_bytes()).await?;
+    send.write_all(&u32::try_from(frame.len()).unwrap_or(u32::MAX).to_le_bytes()).await?;
     send.write_all(frame).await
 }
 
@@ -168,7 +168,7 @@ pub(crate) fn dial_plan(cfg: &NetConfig, mut addr: EndpointAddr) -> Result<(Endp
 /// soon as one is selected, connected or not (a relay behind a silent firewall is "selected" and never connects).
 pub(crate) fn relay_link_of(endpoint: &Endpoint) -> RelayLink {
     let Some(status) = endpoint.home_relay_status().get().into_iter().next() else { return RelayLink::default() };
-    RelayLink { url: Some(status.url().to_string()), connected: status.is_connected(), last_error: status.last_error().map(|e| e.to_string()) }
+    RelayLink { url: Some(status.url().to_string()), connected: status.is_connected(), last_error: status.last_error().map(std::string::ToString::to_string) }
 }
 
 /// A failed dial: when relays were expected but the endpoint is not connected to one, the relay is the culprit.

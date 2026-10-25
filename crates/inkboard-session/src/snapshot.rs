@@ -43,7 +43,7 @@ pub fn into_messages(s: Snapshot, budget: usize) -> Vec<Message> {
         used += shell;
         for (o, n) in all.into_iter().zip(sz) {
             if used + n > budget && objects > 0 {
-                cur.part = parts.len() as u32;
+                cur.part = u32::try_from(parts.len()).unwrap_or(u32::MAX);
                 let next = SnapshotPart { seq, part: 0, last: false, head: None, pages: vec![page.clone()] };
                 parts.push(std::mem::replace(&mut cur, next));
                 (used, objects) = (shell, 0);
@@ -55,7 +55,7 @@ pub fn into_messages(s: Snapshot, budget: usize) -> Vec<Message> {
             objects += 1;
         }
     }
-    cur.part = parts.len() as u32;
+    cur.part = u32::try_from(parts.len()).unwrap_or(u32::MAX);
     cur.last = true;
     parts.push(cur);
     parts.into_iter().map(Message::SnapshotPart).collect()
@@ -77,15 +77,18 @@ fn bad(why: &'static str) -> Error {
 }
 
 impl SnapshotAssembler {
+    #[must_use]
     pub fn new(seq: Seq) -> Self {
         Self::with_byte_budget(seq, MAX_ASSEMBLY_BYTES)
     }
 
     /// Like [`SnapshotAssembler::new`], with another ceiling for the bytes held (tests).
+    #[must_use]
     pub fn with_byte_budget(seq: Seq, byte_budget: usize) -> Self {
         Self { seq, parts: BTreeMap::new(), last: None, objects: 0, bytes: 0, byte_budget }
     }
 
+    #[must_use]
     pub fn seq(&self) -> Seq {
         self.seq
     }

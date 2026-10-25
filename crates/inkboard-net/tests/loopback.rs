@@ -1,6 +1,35 @@
 //! Host and guests over the real iroh transport, on the loopback interface with relays disabled: offline and deterministic.
 //! Waits are polling loops with a generous bound that only prevents a hang; no test asserts a duration.
 #![cfg(not(target_arch = "wasm32"))]
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    clippy::assert_is_empty,
+    clippy::default_trait_access,
+    clippy::format_collect,
+    clippy::format_push_string,
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_raw_string_hashes,
+    clippy::needless_pass_by_value,
+    clippy::explicit_iter_loop,
+    clippy::needless_for_each,
+    clippy::collapsible_else_if,
+    clippy::single_match_else,
+    clippy::manual_assert,
+    clippy::redundant_closure_for_method_calls,
+    clippy::unnested_or_patterns,
+    clippy::range_plus_one,
+    clippy::clone_on_copy,
+    clippy::match_same_arms,
+    clippy::struct_excessive_bools
+)]
 
 use inkboard_net::{CancelToken, IrohConn, IrohTransport, NetConfig, RelaySetting, addr_to_hints, ticket_to_addr};
 use inkboard_session::crypto::{FrameCipher, HostKeys, SecureChannel, SeededEntropy, SessionKey, Side, Ticket};
@@ -175,7 +204,7 @@ fn a_secure_channel_runs_over_the_transport() {
         assert_eq!(granted, role);
         let mut host_channel = secure_channel(cipher, 20);
         assert_eq!(host_channel.open(&first).unwrap(), Message::Ping { nonce: 7 });
-        assert!(!plain.is_empty());
+        assert_ne!(plain, [] as [u8; 0]);
         h.send(&host_channel.seal(&Message::Pong { nonce: 7 }).unwrap()).unwrap();
 
         assert_eq!(guest_channel.open(&recv(&mut g)).unwrap(), Message::Pong { nonce: 7 });
@@ -319,9 +348,9 @@ fn current_hints_are_available_without_waiting_and_match_the_ticket() {
     let (host, keys) = host();
     let ticket = host.ticket(&keys, Role::Edit).unwrap();
     assert_eq!(host.current_hints(), ticket.relays);
-    assert!(!ticket.relays.is_empty());
+    assert_ne!(ticket.relays, [] as [std::string::String; 0]);
     let guest = IrohTransport::guest(cfg()).unwrap();
-    assert!(guest.current_hints().is_empty());
+    assert_eq!(guest.current_hints(), [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -344,7 +373,7 @@ fn public_relay_joins_through_the_relay_only() {
     assert!(host.relay_online(), "the host did not reach a public relay");
     // Keep only the relay hints so that the path cannot be direct.
     ticket.relays.retain(|h| h.starts_with("http"));
-    assert!(!ticket.relays.is_empty());
+    assert_ne!(ticket.relays, [] as [std::string::String; 0]);
     let mut guest = IrohTransport::guest(NetConfig::default()).unwrap();
     let mut g = guest.connect_ticket(&ticket).unwrap();
     g.send(b"through the relay").unwrap();

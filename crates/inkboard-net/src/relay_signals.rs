@@ -81,6 +81,7 @@ pub enum Cause {
 
 impl Cause {
     /// English, for the diagnostic that is copied.
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::NoNetwork => "no network",
@@ -92,6 +93,7 @@ impl Cause {
 }
 
 /// Crosses the three signals (see the module documentation). `dial` is the cause the transport gave to the failed attempt.
+#[must_use]
 pub fn conclude(probe: &Probe, link: &RelayLink, dial: NetCause) -> Cause {
     if dial == NetCause::Local {
         return Cause::NoNetwork;
@@ -124,12 +126,14 @@ pub struct Signals {
 }
 
 impl Signals {
+    #[must_use]
     pub fn cause(&self) -> Cause {
         conclude(&self.probe, &self.link, self.dial)
     }
 
     /// The observed facts, one line each, for the diagnostic that is copied. No ticket, no key: only addresses of relays and what the
     /// browser reported.
+    #[must_use]
     pub fn facts(&self) -> Vec<String> {
         let mut lines = vec![
             format!("Browser: {}", clean(&self.user_agent)),
@@ -141,12 +145,13 @@ impl Signals {
             lines.push(format!("HTTPS probe, other spelling of the name ({}): {}", clean(url), probe.describe()));
         }
         lines.push(format!("Relay connection (iroh): {}", self.link.describe()));
-        lines.push(format!("Gave up after: {:.1} s", self.gave_up_after_ms as f64 / 1000.0));
+        lines.push(format!("Gave up after: {:.1} s", std::time::Duration::from_millis(self.gave_up_after_ms).as_secs_f64()));
         lines.push(format!("Cause retained: {}", self.cause().label()));
         lines
     }
 
     /// One line for the "Diagnosis" entry of the diagnostic.
+    #[must_use]
     pub fn summary(&self) -> &'static str {
         match self.cause() {
             Cause::NoNetwork => "this computer has no network",
@@ -166,6 +171,7 @@ fn clean(s: &str) -> String {
 /// `https://euc1-1.relay.n0.iroh.link/`); unchanged when it has none or cannot be rewritten. iroh's own relay list spells the n0 relays
 /// with the final dot (a fully qualified name that skips the search domains of a computer); the dot is legal but unusual in a URL, and
 /// the browser guest does not need it: the name is resolved by the browser, which has no search list to skip.
+#[must_use]
 pub fn without_final_dot(url: &RelayUrl) -> RelayUrl {
     let Some(host) = url.host_str() else { return url.clone() };
     let Some(plain) = host.strip_suffix('.').filter(|p| !p.is_empty()) else { return url.clone() };
@@ -174,6 +180,7 @@ pub fn without_final_dot(url: &RelayUrl) -> RelayUrl {
 }
 
 /// The same relay address spelled the other way (a final dot added or removed), as text, to probe both spellings.
+#[must_use]
 pub fn other_spelling(url: &RelayUrl) -> Option<String> {
     let host = url.host_str()?;
     if host.parse::<std::net::IpAddr>().is_ok() || host.starts_with('[') {

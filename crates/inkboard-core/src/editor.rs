@@ -4,6 +4,7 @@ use crate::connector::{Connector, End};
 use crate::geom::{Pt, Rect};
 use crate::history::{History, Op};
 use crate::model::{Background, Document, Id, Kind, Layer, Object, Page};
+use crate::num;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,21 +46,26 @@ pub struct Editor {
 }
 
 impl Editor {
+    #[must_use]
     pub fn new(doc: Document) -> Self {
         let current = doc.pages[0].id.clone();
         Self { doc, current, history: History::default(), open: None, depth: 0, rev: 0, op_log: None, read_only: false }
     }
 
     /// Counter incremented on every modification (to detect "needs saving").
+    #[must_use]
     pub fn revision(&self) -> u64 {
         self.rev
     }
+    #[must_use]
     pub fn page(&self) -> &Page {
         self.doc.page(&self.current).unwrap_or(&self.doc.pages[0])
     }
+    #[must_use]
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
     }
+    #[must_use]
     pub fn can_redo(&self) -> bool {
         self.history.can_redo()
     }
@@ -82,6 +88,10 @@ impl Editor {
     /// Like `transact`, but if `f` returns `Err`, the operations made by `f` are undone: the document, the current page and the
     /// revision return to their state at entry, and nothing is pushed to the undo or redo stacks. Inside an already open
     /// transaction, only the operations of this call are undone.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of `f`, after undoing its operations.
     pub fn try_transact<R, E>(&mut self, f: impl FnOnce(&mut Self) -> Result<R, E>) -> Result<R, E> {
         let (start, rev, current) = (self.open.as_ref().map_or(0, Vec::len), self.rev, self.current.clone());
         let logged = self.op_log.as_ref().map_or(0, Vec::len);
@@ -217,6 +227,7 @@ impl Editor {
 
     /// Copies of objects with new ids, offset by `d`. Links to objects that
     /// are not copied are broken (ends become free at their current position).
+    #[must_use]
     pub fn clone_objects(page: &Page, ids: &[Id], d: Pt) -> Vec<Object> {
         let set: Vec<&Object> = page.objects.iter().filter(|o| ids.contains(&o.id)).collect();
         let idmap: HashMap<Id, Id> = set.iter().map(|o| (o.id.clone(), Id::new())).collect();
@@ -356,7 +367,7 @@ impl Editor {
         let (first, last) = (items[0].1, items[items.len() - 1].1);
         let span = if hz { last.right() - first.x } else { last.bottom() - first.y };
         let sizes: f64 = items.iter().map(|i| if hz { i.1.w } else { i.1.h }).sum();
-        let gap = (span - sizes) / (items.len() - 1) as f64;
+        let gap = (span - sizes) / num::f64_of(items.len() - 1);
         let mut pos = if hz { first.x } else { first.y };
         self.transact(|e| {
             for (id, b) in items {
@@ -435,6 +446,7 @@ impl Editor {
     pub fn set_read_only(&mut self, on: bool) {
         self.read_only = on;
     }
+    #[must_use]
     pub fn is_read_only(&self) -> bool {
         self.read_only
     }
@@ -502,7 +514,7 @@ mod tests {
         assert!(e.undo());
         assert_eq!(e.page().get(&a).unwrap().frame().unwrap().x, 0.0);
         assert!(e.undo());
-        assert!(e.page().objects.is_empty());
+        assert_eq!(e.page().objects, [] as [crate::model::Object; 0]);
         assert!(e.redo() && e.redo());
         assert_eq!(e.page().get(&a).unwrap().frame().unwrap().x, 10.0);
         assert!(!e.redo());
@@ -517,7 +529,7 @@ mod tests {
         });
         assert_eq!(e.page().objects.len(), 2);
         e.undo();
-        assert!(e.page().objects.is_empty());
+        assert_eq!(e.page().objects, [] as [crate::model::Object; 0]);
     }
 
     #[test]
@@ -531,7 +543,7 @@ mod tests {
         assert_eq!(r, Ok(2));
         assert!(e.revision() > 0);
         e.undo();
-        assert!(e.page().objects.is_empty());
+        assert_eq!(e.page().objects, [] as [crate::model::Object; 0]);
         assert!(!e.can_undo());
     }
 
@@ -579,7 +591,7 @@ mod tests {
         assert_eq!(e.page().objects.len(), 3);
         // the whole outer transaction is still a single undo step
         e.undo();
-        assert!(e.page().objects.is_empty());
+        assert_eq!(e.page().objects, [] as [crate::model::Object; 0]);
         assert!(!e.can_undo());
     }
 

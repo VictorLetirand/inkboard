@@ -1,11 +1,11 @@
 //! Presentation, dialogs and notifications (the application frame is in `chrome.rs`, the style settings in `panel.rs`).
 
-use crate::app::{App, Dialog};
+use crate::app::{App, Dialog, FormulaPreview};
 use crate::i18n::{t, tr};
 use crate::keymap::{Action, Shortcut};
 use crate::platform::Instant;
 use eframe::egui::{self, Color32, RichText as ERich, vec2};
-use inkboard_core::*;
+use inkboard_core::{Asset, Id};
 use std::time::Duration;
 
 /* ------------------------------------------------------- Presentation */
@@ -73,79 +73,8 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
     }
     let mut keep: Option<Dialog> = None;
     match dialog {
-        Dialog::Mermaid { mut text, mut new_board, mut error } => {
-            let mut open = true;
-            let mut generate = false;
-            modal(t("Import Mermaid")).open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
-                ui.label(t("flowchart / graph, stateDiagram or sequenceDiagram. The layout is automatic."));
-                ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_rows(14).desired_width(f32::INFINITY));
-                ui.radio_value(&mut new_board, false, t("Add to this board"));
-                ui.radio_value(&mut new_board, true, t("New board"));
-                if let Some(e) = &error {
-                    ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), e);
-                }
-                if ui.button(t("Generate")).clicked() {
-                    generate = true;
-                }
-            });
-            if generate {
-                match app.import_mermaid(&text, new_board) {
-                    Ok(()) => open = false,
-                    Err(e) => error = Some(e),
-                }
-            }
-            if open {
-                keep = Some(Dialog::Mermaid { text, new_board, error });
-            }
-        }
-        Dialog::Formula { mut src, editing, mut preview } => {
-            if preview.src.as_deref() != Some(src.as_str()) {
-                // typeset again only when the source changes
-                match inkboard_formats::math::render(&src, 36.0) {
-                    Ok(f) => {
-                        let asset = Asset { mime: "image/svg+xml".into(), data: f.svg.into_bytes().into() };
-                        preview.tex = crate::render::decode_asset(&asset).map(|img| ctx.load_texture("formula_preview", img, egui::TextureOptions::LINEAR));
-                        preview.error = None;
-                    }
-                    Err(e) => {
-                        preview.tex = None;
-                        preview.error = Some(e.to_string());
-                    }
-                }
-                preview.src = Some(src.clone());
-            }
-            let mut open = true;
-            let mut accepted = false;
-            let title = if editing.is_some() { t("Edit formula") } else { t("Insert a formula") };
-            modal(title).open(&mut open).collapsible(false).default_width(460.0).show(ctx, |ui| {
-                ui.label(t("LaTeX source (math mode): \\frac{a}{b}, x^2, \\sqrt{x}, \\sum, \\int, \\begin{pmatrix}…"));
-                ui.add(egui::TextEdit::multiline(&mut src).code_editor().desired_rows(3).desired_width(f32::INFINITY));
-                ui.separator();
-                match (&preview.tex, &preview.error) {
-                    (Some(tex), _) => {
-                        let s = tex.size_vec2() / 4.0;
-                        let k = (ui.available_width() / s.x).min(1.0);
-                        ui.add(egui::Image::new((tex.id(), s * k)).tint(ui.visuals().text_color()));
-                    }
-                    (None, Some(e)) => {
-                        ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), e);
-                    }
-                    _ => {}
-                }
-                if ui.add_enabled(preview.tex.is_some(), egui::Button::new(if editing.is_some() { t("Apply") } else { t("Insert") })).clicked() {
-                    accepted = true;
-                }
-            });
-            if accepted {
-                match app.insert_formula(&src, editing.as_ref()) {
-                    Ok(()) => open = false,
-                    Err(e) => preview.error = Some(e),
-                }
-            }
-            if open {
-                keep = Some(Dialog::Formula { src, editing, preview });
-            }
-        }
+        Dialog::Mermaid { text, new_board, error } => keep = mermaid_dialog(app, ctx, text, new_board, error),
+        Dialog::Formula { src, editing, preview } => keep = formula_dialog(app, ctx, src, editing, preview),
         Dialog::Shortcuts { filter, recording } => {
             keep = shortcuts_dialog(app, ctx, filter, recording);
         }
@@ -187,6 +116,85 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
     if app.dialog.is_none() {
         app.dialog = keep;
     }
+}
+
+/// Mermaid import dialog; returns it when it stays open.
+fn mermaid_dialog(app: &mut App, ctx: &egui::Context, mut text: String, mut new_board: bool, mut error: Option<String>) -> Option<Dialog> {
+    let mut open = true;
+    let mut generate = false;
+    modal(t("Import Mermaid")).open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
+        ui.label(t("flowchart / graph, stateDiagram or sequenceDiagram. The layout is automatic."));
+        ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_rows(14).desired_width(f32::INFINITY));
+        ui.radio_value(&mut new_board, false, t("Add to this board"));
+        ui.radio_value(&mut new_board, true, t("New board"));
+        if let Some(e) = &error {
+            ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), e);
+        }
+        if ui.button(t("Generate")).clicked() {
+            generate = true;
+        }
+    });
+    if generate {
+        match app.import_mermaid(&text, new_board) {
+            Ok(()) => open = false,
+            Err(e) => error = Some(e),
+        }
+    }
+    if open {
+        return Some(Dialog::Mermaid { text, new_board, error });
+    }
+    None
+}
+
+/// Formula dialog (insertion or editing); returns it when it stays open.
+fn formula_dialog(app: &mut App, ctx: &egui::Context, mut src: String, editing: Option<Id>, mut preview: FormulaPreview) -> Option<Dialog> {
+    if preview.src.as_deref() != Some(src.as_str()) {
+        // typeset again only when the source changes
+        match inkboard_formats::math::render(&src, 36.0) {
+            Ok(f) => {
+                let asset = Asset { mime: "image/svg+xml".into(), data: f.svg.into_bytes().into() };
+                preview.tex = crate::render::decode_asset(&asset).map(|img| ctx.load_texture("formula_preview", img, egui::TextureOptions::LINEAR));
+                preview.error = None;
+            }
+            Err(e) => {
+                preview.tex = None;
+                preview.error = Some(e.to_string());
+            }
+        }
+        preview.src = Some(src.clone());
+    }
+    let mut open = true;
+    let mut accepted = false;
+    let title = if editing.is_some() { t("Edit formula") } else { t("Insert a formula") };
+    modal(title).open(&mut open).collapsible(false).default_width(460.0).show(ctx, |ui| {
+        ui.label(t("LaTeX source (math mode): \\frac{a}{b}, x^2, \\sqrt{x}, \\sum, \\int, \\begin{pmatrix}…"));
+        ui.add(egui::TextEdit::multiline(&mut src).code_editor().desired_rows(3).desired_width(f32::INFINITY));
+        ui.separator();
+        match (&preview.tex, &preview.error) {
+            (Some(tex), _) => {
+                let s = tex.size_vec2() / 4.0;
+                let k = (ui.available_width() / s.x).min(1.0);
+                ui.add(egui::Image::new((tex.id(), s * k)).tint(ui.visuals().text_color()));
+            }
+            (None, Some(e)) => {
+                ui.colored_label(Color32::from_rgb(0xe0, 0x31, 0x31), e);
+            }
+            _ => {}
+        }
+        if ui.add_enabled(preview.tex.is_some(), egui::Button::new(if editing.is_some() { t("Apply") } else { t("Insert") })).clicked() {
+            accepted = true;
+        }
+    });
+    if accepted {
+        match app.insert_formula(&src, editing.as_ref()) {
+            Ok(()) => open = false,
+            Err(e) => preview.error = Some(e),
+        }
+    }
+    if open {
+        return Some(Dialog::Formula { src, editing, preview });
+    }
+    None
 }
 
 /// Shortcut settings window: list by group, adding (records the next key press), removal, reset.
@@ -258,7 +266,7 @@ fn shortcuts_dialog(app: &mut App, ctx: &egui::Context, mut filter: String, mut 
                     );
                     for sc in app.keymap.bindings(a).to_vec() {
                         if ui.button(sc.label()).on_hover_text(t("Remove this shortcut")).clicked() {
-                            app.keymap.remove(a, &sc);
+                            app.keymap.remove(a, sc);
                             app.save_keymap();
                         }
                     }

@@ -4,7 +4,7 @@
 //! Sources and licenses (all free, see `fonts/*-OFL.txt` and `THIRD_PARTY_LICENSES.md`):
 //! - sans: Noto Sans Regular / Bold (OFL 1.1), serif: Gelasio Regular / Bold (OFL 1.1, metric-compatible with Georgia),
 //!   handwriting: Patrick Hand (OFL 1.1), monospace: Hack Regular / Bold (MIT + Bitstream Vera);
-//! - fallbacks (Greek, Cyrillic, symbols, emoji): egui's own Ubuntu-Light, NotoEmoji and emoji-icon-font.
+//! - fallbacks (Greek, Cyrillic, symbols, emoji): egui's own Ubuntu-Light, `NotoEmoji` and emoji-icon-font.
 //!
 //! The files of this crate are subsets (Latin, Latin Extended, punctuation, common symbols; no CJK) instanced from the upstream
 //! variable fonts where needed. Italic is synthesized by egui (a skew), bold is real except for the handwriting font (no bold upstream).
@@ -32,6 +32,7 @@ const HACK_BOLD: &[u8] = include_bytes!("../fonts/Hack-Bold.ttf");
 pub const OWN_BYTES: usize = NOTO_SANS.len() + NOTO_SANS_BOLD.len() + GELASIO.len() + GELASIO_BOLD.len() + PATRICK_HAND.len() + HACK_BOLD.len();
 
 /// The complete font set: egui's default fonts (same keys) plus the board families. `Proportional` (the interface) starts with Noto Sans.
+#[must_use]
 pub fn definitions() -> FontDefinitions {
     let mut defs = FontDefinitions::empty();
     let mut add = |key: &str, data: FontData| {

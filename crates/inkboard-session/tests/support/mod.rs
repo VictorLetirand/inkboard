@@ -1,4 +1,33 @@
 //! Test harness: a minimal host (a `Sequencer` behind encrypted connections), guests, and a simulated network with a virtual clock.
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    clippy::assert_is_empty,
+    clippy::default_trait_access,
+    clippy::format_collect,
+    clippy::format_push_string,
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_raw_string_hashes,
+    clippy::needless_pass_by_value,
+    clippy::explicit_iter_loop,
+    clippy::needless_for_each,
+    clippy::collapsible_else_if,
+    clippy::single_match_else,
+    clippy::manual_assert,
+    clippy::redundant_closure_for_method_calls,
+    clippy::unnested_or_patterns,
+    clippy::range_plus_one,
+    clippy::clone_on_copy,
+    clippy::match_same_arms,
+    clippy::struct_excessive_bools
+)]
 
 use inkboard_core::geom::{Frame, Pt};
 use inkboard_core::model::{Document, Id, Object, Page};
@@ -119,12 +148,11 @@ impl Host {
                 }
             }
         } else {
-            match self.peers[i].chan.as_ref().map(|c| c.open(frame)) {
-                Some(Ok(m)) => m,
-                _ => {
-                    self.dropped_frames += 1;
-                    return;
-                }
+            if let Some(Ok(m)) = self.peers[i].chan.as_ref().map(|c| c.open(frame)) {
+                m
+            } else {
+                self.dropped_frames += 1;
+                return;
             }
         };
         self.on_message(i, msg);

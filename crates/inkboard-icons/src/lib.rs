@@ -70,17 +70,21 @@ pub struct Library {
 
 impl std::fmt::Debug for Library {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Library").field("sets", &self.sets.len()).field("icons", &self.icon_count()).finish()
+        f.debug_struct("Library").field("sets", &self.sets.len()).field("icons", &self.icon_count()).finish_non_exhaustive()
     }
 }
 
 impl Library {
     /// Opens a pack (normally embedded with `include_bytes!`).
+    ///
+    /// # Errors
+    ///
+    /// A message when the data is not an icon pack, is truncated, or its index is invalid.
     pub fn open(data: &'static [u8]) -> Result<Self, String> {
         if data.len() < 12 || &data[..8] != MAGIC {
             return Err("not an icon pack".into());
         }
-        let n = u32::from_le_bytes(data[8..12].try_into().expect("4 bytes")) as usize;
+        let n = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
         let end = 12usize.checked_add(n).filter(|e| *e <= data.len()).ok_or("truncated icon pack")?;
         let json = miniz_oxide::inflate::decompress_to_vec(&data[12..end]).map_err(|e| format!("icon index: {e:?}"))?;
         let index: Index = serde_json::from_slice(&json).map_err(|e| format!("icon index: {e}"))?;
@@ -212,6 +216,7 @@ pub fn shared() -> Option<&'static Library> {
 }
 
 /// Natural size `(width, height)` of an SVG document, from its `viewBox` or its `width` / `height` attributes.
+#[must_use]
 pub fn svg_dimensions(svg: &str) -> Option<(f64, f64)> {
     let head = &svg[..svg.find('>').map_or(svg.len().min(600), |i| i + 1)];
     let attr = |name: &str| -> Option<&str> {
@@ -241,7 +246,7 @@ mod tests {
         fn chunk(svgs: &[&str]) -> Vec<u8> {
             let mut raw = Vec::new();
             for s in svgs {
-                raw.extend((s.len() as u32).to_le_bytes());
+                raw.extend(u32::try_from(s.len()).unwrap().to_le_bytes());
                 raw.extend(s.as_bytes());
             }
             deflate(&raw)
@@ -254,7 +259,7 @@ mod tests {
         ]});
         let idx = deflate(index.to_string().as_bytes());
         let mut out = MAGIC.to_vec();
-        out.extend((idx.len() as u32).to_le_bytes());
+        out.extend(u32::try_from(idx.len()).unwrap().to_le_bytes());
         out.extend(idx);
         out.extend(c1);
         out.extend(c2);
@@ -303,7 +308,7 @@ mod tests {
         let svgs = ["<svg id='1'/>", "<svg id='2'/>", "<svg id='3'/>"];
         let mut raw = Vec::new();
         for s in svgs {
-            raw.extend((s.len() as u32).to_le_bytes());
+            raw.extend(u32::try_from(s.len()).unwrap().to_le_bytes());
             raw.extend(s.as_bytes());
         }
         let c = miniz_oxide::deflate::compress_to_vec(&raw, 6);
@@ -313,7 +318,7 @@ mod tests {
         ]});
         let idx = miniz_oxide::deflate::compress_to_vec(index.to_string().as_bytes(), 6);
         let mut out = MAGIC.to_vec();
-        out.extend((idx.len() as u32).to_le_bytes());
+        out.extend(u32::try_from(idx.len()).unwrap().to_le_bytes());
         out.extend(idx);
         out.extend(c);
         let lib = Library::open(Box::leak(out.into_boxed_slice())).unwrap();
@@ -362,7 +367,7 @@ mod tests {
 
     /// The embedded pack of the application (when it has been built) parses and every icon renders; run with `--ignored`.
     #[test]
-    #[ignore]
+    #[ignore = "needs the real pack (crates/inkboard-app/assets/icons.bin) and takes a while"]
     fn the_real_pack_is_consistent() {
         let data: &'static [u8] =
             Box::leak(std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../inkboard-app/assets/icons.bin")).unwrap().into_boxed_slice());

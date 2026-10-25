@@ -56,7 +56,7 @@ fn the_same_seed_gives_exactly_the_same_deliveries() {
     let (b, stats_b) = run(42, faulty(), 400);
     assert_eq!(a, b, "same order and same virtual instants");
     assert_eq!(stats_a, stats_b);
-    assert!(!a.is_empty());
+    assert_ne!(a, [] as [(u64, u32); 0]);
     let (c, _) = run(43, faulty(), 400);
     assert_ne!(a, c, "another seed gives another run");
 }

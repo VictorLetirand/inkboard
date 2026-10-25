@@ -7,7 +7,8 @@ use crate::app::App;
 use crate::platform::Instant;
 use crate::render::TextureStats;
 use eframe::egui;
-use inkboard_core::*;
+use inkboard_core::num;
+use inkboard_core::{AssetId, Document, Frame, Id, ImageObj, Kind, Object, Pt, Style, View};
 use inkboard_icons::{IconRef, Library};
 
 /// Phases of the scripted session: name and number of frames.
@@ -27,7 +28,7 @@ pub fn document(lib: &Library, count: usize, distinct: usize) -> Document {
     // `distinct` icons spread over the whole library (every set contributes, big and small ones)
     let mut picks: Vec<IconRef> = Vec::new();
     while picks.len() < distinct.max(1) {
-        let mut k = (rnd() % total as u64) as usize;
+        let mut k = usize::try_from(rnd() % total as u64).expect("below the icon count");
         for (si, s) in lib.sets.iter().enumerate() {
             if k < s.names.len() {
                 picks.push(IconRef { set: si, icon: k });
@@ -46,12 +47,12 @@ pub fn document(lib: &Library, count: usize, distinct: usize) -> Document {
             Some((aid, lib.sets[r.set].mono, w, h))
         })
         .collect();
-    let cols = (count as f64).sqrt().ceil() as usize;
+    let cols = num::to_usize(num::f64_of(count).sqrt().ceil());
     let mut objs = Vec::with_capacity(count);
     for i in 0..count {
-        let (aid, mono, w, h) = &assets[(rnd() % assets.len() as u64) as usize];
-        let k = (64.0 + (rnd() % 64) as f64) / w.max(*h);
-        let frame = Frame::new((i % cols) as f64 * 150.0, (i / cols) as f64 * 150.0, w * k, h * k);
+        let (aid, mono, w, h) = &assets[usize::try_from(rnd() % assets.len() as u64).expect("below the asset count")];
+        let k = (64.0 + f64::from(u8::try_from(rnd() % 64).expect("below 64"))) / w.max(*h);
+        let frame = Frame::new(num::f64_of(i % cols) * 150.0, num::f64_of(i / cols) * 150.0, w * k, h * k);
         objs.push(Object::new(
             Kind::Image(ImageObj { frame, asset: aid.clone(), latex: None, mono: *mono }),
             Style { width: 0.0, fill: None, ..Style::default() },
@@ -94,14 +95,14 @@ impl IconBench {
 }
 
 fn pct(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() { 0.0 } else { sorted[((sorted.len() - 1) as f64 * p).round() as usize] }
+    if sorted.is_empty() { 0.0 } else { sorted[num::to_usize((num::f64_of(sorted.len() - 1) * p).round())] }
 }
 
 fn summary(v: &[f64]) -> String {
     let mut t = v.to_vec();
     t.sort_by(f64::total_cmp);
-    let mean = t.iter().sum::<f64>() / t.len().max(1) as f64;
-    let over = |lim: f64| 100.0 * t.iter().filter(|x| **x > lim).count() as f64 / t.len().max(1) as f64;
+    let mean = t.iter().sum::<f64>() / num::f64_of(t.len().max(1));
+    let over = |lim: f64| 100.0 * num::f64_of(t.iter().filter(|x| **x > lim).count()) / num::f64_of(t.len().max(1));
     format!(
         "mean {mean:6.2} · p50 {:6.2} · p95 {:6.2} · p99 {:6.2} · max {:7.2} · >16.7 ms {:5.1} % · >33 ms {:5.1} %",
         pct(&t, 0.5),
@@ -116,21 +117,21 @@ fn summary(v: &[f64]) -> String {
 impl App {
     /// Called at the end of every frame while the icon bench runs.
     pub fn icon_bench_step(&mut self, ctx: &egui::Context, started: Instant) {
-        let Some(mut b) = self.icon_bench.take() else { return };
+        let Some(mut bench) = self.icon_bench.take() else { return };
         ctx.request_repaint();
-        let f = b.frame;
-        b.frame += 1;
-        let interval = b.last_start.map(|t| started.duration_since(t).as_secs_f64() * 1000.0);
-        b.last_start = Some(started);
+        let f = bench.frame;
+        bench.frame += 1;
+        let interval = bench.last_start.map(|t| started.duration_since(t).as_secs_f64() * 1000.0);
+        bench.last_start = Some(started);
         if f == 0 {
             self.fit_pending = true;
-            self.icon_bench = Some(b);
+            self.icon_bench = Some(bench);
             return;
         }
         if f == 3 {
             self.fit_view(false);
-            b.fit = Some(self.ed.page().view);
-            b.center = self.ed.page().content_bounds().map(|r| r.center());
+            bench.fit = Some(self.ed.page().view);
+            bench.center = self.ed.page().content_bounds().map(|r| r.center());
         }
         // phase of this frame and its index inside the phase
         let mut start = 4;
@@ -145,25 +146,25 @@ impl App {
         }
         if f >= 4 && phase < PHASES.len() {
             if k == 0 {
-                b.stats_at_start[phase] = self.textures.stats;
+                bench.stats_at_start[phase] = self.textures.stats;
             }
-            let (w, h) = (f64::from(self.canvas_size.0), f64::from(self.canvas_size.1));
-            if let (Some(fit), Some(c)) = (b.fit, b.center) {
-                let len = PHASES[phase].1 as f64;
-                let t = k as f64 / len;
-                let at = |z: f64| View { x: w / 2.0 - c.x * z, y: h / 2.0 - c.y * z, zoom: z };
+            let (width, height) = (f64::from(self.canvas_size.0), f64::from(self.canvas_size.1));
+            if let (Some(fit), Some(c)) = (bench.fit, bench.center) {
+                let len = num::f64_of(PHASES[phase].1);
+                let t = num::f64_of(k) / len;
+                let at = |z: f64| View { x: width / 2.0 - c.x * z, y: height / 2.0 - c.y * z, zoom: z };
                 match phase {
                     0 | 1 => self.set_view(fit),
                     2 => self.set_view(at(fit.zoom * (3.0 / fit.zoom).powf(t))),
                     3 => {
                         let v = at(1.0);
-                        self.set_view(View { x: v.x - 12.0 * k as f64, y: v.y - 7.0 * k as f64, ..v });
+                        self.set_view(View { x: v.x - 12.0 * num::f64_of(k), y: v.y - 7.0 * num::f64_of(k), ..v });
                     }
                     4 => self.set_view(at(3.0 * (fit.zoom / 3.0).powf(t))),
                     _ => {
                         self.set_view(at(1.0));
-                        if b.target.is_none() {
-                            b.target = self
+                        if bench.target.is_none() {
+                            bench.target = self
                                 .ed
                                 .page()
                                 .objects
@@ -174,7 +175,7 @@ impl App {
                                 })
                                 .map(|o| o.id.clone());
                         }
-                        if let Some(id) = b.target.clone() {
+                        if let Some(id) = bench.target.clone() {
                             self.ed.update(&id, |o| {
                                 if let Kind::Image(i) = &mut o.kind {
                                     let (cx, cy) = (i.frame.x + i.frame.w / 2.0, i.frame.y + i.frame.h / 2.0);
@@ -189,44 +190,49 @@ impl App {
                 }
             }
             // the first frames of a phase carry the cost of the transition; every frame counts
-            b.cpu[phase].push(started.elapsed().as_secs_f64() * 1000.0);
+            bench.cpu[phase].push(started.elapsed().as_secs_f64() * 1000.0);
             if let Some(i) = interval {
-                b.interval[phase].push(i);
+                bench.interval[phase].push(i);
             }
         }
         if phase == PHASES.len() {
-            b.stats_at_start[PHASES.len()] = self.textures.stats;
-            println!(
-                "icon bench: {} icons on the board ({} different), window {:.0} x {:.0} points",
-                b.count, b.distinct, self.canvas_size.0, self.canvas_size.1
-            );
-            println!("frame time (CPU of our update), in ms; 'interval' = time between frames (includes drawing and the display refresh)");
-            for (i, (name, _)) in PHASES.iter().enumerate() {
-                let (a, z) = (b.stats_at_start[i], b.stats_at_start[i + 1]);
-                println!(
-                    "\
-{name}"
-                );
-                println!("  cpu      {}", summary(&b.cpu[i]));
-                println!("  interval {}", summary(&b.interval[i]));
-                println!(
-                    "  svg rasterizations {} ({:.0} ms total), deferred requests {}, evictions {}",
-                    z.rasterized - a.rasterized,
-                    z.raster_ms - a.raster_ms,
-                    z.deferred - a.deferred,
-                    z.evicted - a.evicted
-                );
-            }
-            println!(
-                "\
-textures held at the end: {} ({:.1} MB)",
-                self.textures.texture_count(),
-                self.textures.bytes() as f64 / (1024.0 * 1024.0)
-            );
-            println!("cache rebuild (once per modification): {:.1} ms", self.caches.build_ms);
+            bench.stats_at_start[PHASES.len()] = self.textures.stats;
+            self.print_icon_bench(&bench);
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
-        self.icon_bench = Some(b);
+        self.icon_bench = Some(bench);
+    }
+
+    /// Report printed at the end of the icon bench.
+    fn print_icon_bench(&self, bench: &IconBench) {
+        println!(
+            "icon bench: {} icons on the board ({} different), window {:.0} x {:.0} points",
+            bench.count, bench.distinct, self.canvas_size.0, self.canvas_size.1
+        );
+        println!("frame time (CPU of our update), in ms; 'interval' = time between frames (includes drawing and the display refresh)");
+        for (i, (name, _)) in PHASES.iter().enumerate() {
+            let (a, z) = (bench.stats_at_start[i], bench.stats_at_start[i + 1]);
+            println!(
+                "\
+{name}"
+            );
+            println!("  cpu      {}", summary(&bench.cpu[i]));
+            println!("  interval {}", summary(&bench.interval[i]));
+            println!(
+                "  svg rasterizations {} ({:.0} ms total), deferred requests {}, evictions {}",
+                z.rasterized - a.rasterized,
+                z.raster_ms - a.raster_ms,
+                z.deferred - a.deferred,
+                z.evicted - a.evicted
+            );
+        }
+        println!(
+            "\
+textures held at the end: {} ({:.1} MB)",
+            self.textures.texture_count(),
+            num::f64_of(self.textures.bytes()) / (1024.0 * 1024.0)
+        );
+        println!("cache rebuild (once per modification): {:.1} ms", self.caches.build_ms);
     }
 }

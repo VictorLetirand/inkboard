@@ -23,6 +23,7 @@ pub struct BoardSpec {
 
 impl BoardSpec {
     /// The board of a given size with the usual proportions (a few pages for a big board).
+    #[must_use]
     pub fn sized(objects: usize, seed: u64) -> Self {
         let pages = match objects {
             0..=1_500 => 2,
@@ -130,6 +131,7 @@ fn photo_bytes(k: usize, rng: &mut Rng) -> usize {
 }
 
 /// Builds the seed document of `spec`.
+#[must_use]
 pub fn seed_document(spec: &BoardSpec) -> Document {
     let mut rng = Rng::new(spec.seed);
     let mut doc = Document::new("Load test board");
@@ -307,11 +309,13 @@ fn fill_page(
 }
 
 /// Total bytes of the images of a document.
+#[must_use]
 pub fn asset_bytes(doc: &Document) -> u64 {
     doc.assets.values().map(|a| a.data.len() as u64).sum()
 }
 
 /// Objects on all pages.
+#[must_use]
 pub fn object_count(doc: &Document) -> usize {
     doc.pages.iter().map(|p| p.objects.len()).sum()
 }

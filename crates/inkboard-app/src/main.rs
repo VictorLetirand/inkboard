@@ -1,5 +1,38 @@
 //! Inkboard desktop application (egui).
-
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::float_cmp,
+        clippy::many_single_char_names,
+        clippy::similar_names,
+        clippy::assert_is_empty,
+        clippy::default_trait_access,
+        clippy::format_collect,
+        clippy::format_push_string,
+        clippy::too_many_lines,
+        clippy::items_after_statements,
+        clippy::needless_raw_string_hashes,
+        clippy::needless_pass_by_value,
+        clippy::explicit_iter_loop,
+        clippy::needless_for_each,
+        clippy::collapsible_else_if,
+        clippy::single_match_else,
+        clippy::manual_assert,
+        clippy::redundant_closure_for_method_calls,
+        clippy::unnested_or_patterns,
+        clippy::range_plus_one,
+        clippy::clone_on_copy,
+        clippy::match_same_arms,
+        clippy::struct_excessive_bools,
+        clippy::unchecked_time_subtraction,
+        clippy::manual_assert_eq
+    )
+)]
 // release builds on Windows are GUI programs: no console window behind the application
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 // the web build does not start the desktop-only code (command line, bench modes, host side of the sessions): it is compiled, not used
@@ -53,6 +86,7 @@ use std::path::PathBuf;
 
 /// Command-line options.
 #[derive(Clone, Default)]
+#[expect(clippy::struct_excessive_bools, reason = "independent command-line switches")]
 struct Launch {
     open: Option<PathBuf>,
     /// `inkboard://join/…` link received from the system: opens the "Join a session" window.
@@ -255,7 +289,7 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
             a.bench = l.bench.then(|| app::Bench { close_up: l.bench_close, ..Default::default() });
             a.edit_demo = l.edit_demo;
             a.formula_demo = l.formula_demo;
-            a.ui_demo = l.ui_demo.clone();
+            a.ui_demo.clone_from(&l.ui_demo);
             a.fonts_pref |= l.embedded_fonts;
             a.pen_test = l.pen_test.then(pen_test::PenReport::default);
             if l.shortcuts_demo {

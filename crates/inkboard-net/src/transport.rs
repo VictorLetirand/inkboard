@@ -115,10 +115,12 @@ impl std::fmt::Debug for QueueProbe {
 
 impl QueueProbe {
     /// Bytes handed to `send` that the network has not taken yet.
+    #[must_use]
     pub fn out_bytes(&self) -> usize {
         self.0.out_bytes.load(Ordering::Relaxed)
     }
     /// Bytes received that `recv` has not returned yet.
+    #[must_use]
     pub fn in_bytes(&self) -> usize {
         self.0.in_bytes.load(Ordering::Relaxed)
     }
@@ -171,6 +173,7 @@ impl IrohConn {
     }
 
     /// A handle on the queue sizes of this connection that outlives it (it can be read while another thread owns the connection).
+    #[must_use]
     pub fn probe(&self) -> QueueProbe {
         QueueProbe(Arc::clone(&self.shared))
     }
@@ -256,9 +259,8 @@ async fn read_loop(mut recv: RecvStream, inbox: mpsc::Sender<Vec<u8>>, shared: A
                     break;
                 }
             }
-            Ok(None) => return shared.peer_gone(None),
+            Ok(None) | Err(FrameError::Truncated) => return shared.peer_gone(None),
             Err(FrameError::Read(e)) => return shared.peer_gone(Some(read_fault(&e, &conn))),
-            Err(FrameError::Truncated) => return shared.peer_gone(None),
             Err(FrameError::TooLarge(size)) => {
                 shared.peer_gone(Some(Violation::MessageTooLarge { size, max: max_frame }.into()));
                 conn.close(VarInt::from_u32(CLOSE_REFUSED), b"frame too large");

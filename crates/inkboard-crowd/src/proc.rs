@@ -27,6 +27,7 @@ mod imp {
     }
 
     impl ProcSampler {
+        #[must_use]
         pub fn new() -> Self {
             let mut s = Self { sys: System::new(), pid: Pid::from_u32(std::process::id()) };
             s.refresh();
