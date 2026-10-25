@@ -937,15 +937,13 @@ fn host_and_guest_clean_names_with_the_same_single_function() {
 }
 
 #[test]
-fn the_installers_register_the_inkboard_scheme() {
+fn the_linux_and_macos_packages_register_the_inkboard_scheme() {
+    // `Packager.toml` drives the .deb / .AppImage (`x-scheme-handler/inkboard`) and the macOS bundle (`CFBundleURLTypes`).
+    // The Windows installer is built by Installway (`installway.toml`), which registers file associations only: on Windows an
+    // `inkboard://` link is pasted into the Join window (see docs/DISTRIBUTION.md).
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let pk = std::fs::read_to_string(root.join("Packager.toml")).unwrap();
     assert!(pk.contains("[[deep-link-protocols]]") && pk.contains("schemes = [\"inkboard\"]"));
-    // the corrected NSIS and WiX templates keep the registration of the schemes (and the uninstaller removes it)
-    let nsi = std::fs::read_to_string(root.join("packaging/nsis/installer.nsi")).unwrap();
-    assert!(nsi.matches("{{#each deep_link_protocols as |protocol|").count() >= 2 && nsi.contains("URL Protocol"));
-    let wxs = std::fs::read_to_string(root.join("packaging/wix/main.wxs")).unwrap();
-    assert!(wxs.contains("{{#each deep_link_protocols as |protocol|") && wxs.contains("URL Protocol"));
 }
 
 /* ------------------------------------------------------------------ captures (run by hand: --ignored) */
