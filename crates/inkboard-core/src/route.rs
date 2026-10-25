@@ -23,6 +23,7 @@ fn segment_hits(p: Pt, q: Pt, r: &Rect) -> bool {
 }
 
 /// True when one of the path's segments crosses the inside of an obstacle (oblique segments are tested by sampling).
+#[must_use]
 pub fn crosses(path: &[Pt], obstacles: &[Rect]) -> bool {
     path.windows(2).any(|w| {
         let axis_aligned = (w[0].x - w[1].x).abs() < 1e-9 || (w[0].y - w[1].y).abs() < 1e-9;
@@ -62,7 +63,9 @@ impl PartialOrd for State {
 /// Looks for an orthogonal path from `a` to `b` avoiding the `obstacles` (grown by `margin`).
 /// `start_horizontal`: imposed initial direction (leaving a side of a shape).
 /// Returns the path corners, or `None` when no path exists (e.g. enclosed start).
+#[must_use]
 pub fn route_around(a: Pt, b: Pt, start_horizontal: Option<bool>, obstacles: &[Rect], margin: f64) -> Option<Vec<Pt>> {
+    type Key = (usize, usize, u8);
     let obs: Vec<Rect> = obstacles.iter().map(|r| r.expand(margin)).collect();
     let mut xs = vec![a.x, b.x];
     let mut ys = vec![a.y, b.y];
@@ -79,7 +82,6 @@ pub fn route_around(a: Pt, b: Pt, start_horizontal: Option<bool>, obstacles: &[R
         return None;
     }
     let free = |p: Pt, q: Pt| !obs.iter().any(|r| segment_hits(p, q, r));
-    type Key = (usize, usize, u8);
     let dir_key = |h: Option<bool>| match h {
         None => 0u8,
         Some(true) => 1,
@@ -107,13 +109,12 @@ pub fn route_around(a: Pt, b: Pt, start_horizontal: Option<bool>, obstacles: &[R
             return None;
         }
         let here = node(s.ix, s.iy);
-        let moves: [(i64, i64); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        let moves: [(isize, isize); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
         for (dx, dy) in moves {
-            let (nx, ny) = (s.ix as i64 + dx, s.iy as i64 + dy);
-            if nx < 0 || ny < 0 || nx as usize >= xs.len() || ny as usize >= ys.len() {
+            let (Some(nx), Some(ny)) = (s.ix.checked_add_signed(dx), s.iy.checked_add_signed(dy)) else { continue };
+            if nx >= xs.len() || ny >= ys.len() {
                 continue;
             }
-            let (nx, ny) = (nx as usize, ny as usize);
             let there = node(nx, ny);
             if !free(here, there) || inside(there) {
                 continue;

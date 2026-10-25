@@ -26,6 +26,7 @@ pub fn data_dir() -> PathBuf {
 }
 
 /// Discovery file: `live.json` in the data folder.
+#[must_use]
 pub fn discovery_path() -> PathBuf {
     data_dir().join("live.json")
 }
@@ -37,6 +38,7 @@ pub struct Info {
     pub token: String,
 }
 
+#[must_use]
 pub fn read_info(file: &Path) -> Option<Info> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
     Some(Info { port: u16::try_from(v.get("port")?.as_u64()?).ok()?, token: v.get("token")?.as_str()?.to_owned() })

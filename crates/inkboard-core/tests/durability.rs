@@ -57,9 +57,14 @@ fn assert_readable(e: &LoadError) {
     assert!(!msg.contains('\n'), "multi-line error message: {msg:?}");
 }
 
+/// Message of a caught panic (`panic!` payloads are `&str` or `String`).
+fn panic_message(p: &(dyn std::any::Any + Send)) -> &str {
+    p.downcast_ref::<&str>().copied().or_else(|| p.downcast_ref::<String>().map(String::as_str)).unwrap_or("non-string payload")
+}
+
 fn assert_rejected(json: &str, what: &str) -> LoadError {
     match std::panic::catch_unwind(|| serial::from_json(json)) {
-        Err(_) => panic!("{what}: from_json panicked"),
+        Err(p) => panic!("{what}: from_json panicked: {}", panic_message(&*p)),
         Ok(Ok(_)) => panic!("{what}: a damaged file was accepted"),
         Ok(Err(e)) => {
             assert_readable(&e);
@@ -86,7 +91,7 @@ fn truncated_files_are_refused_at_every_cut_point() {
             let len = full.len() * k / 40;
             std::fs::write(&path, &full[..len]).unwrap();
             match std::panic::catch_unwind(|| serial::load(&path)) {
-                Err(_) => panic!("load panicked on a file cut at {len}/{} bytes", full.len()),
+                Err(p) => panic!("load panicked on a file cut at {len}/{} bytes: {}", full.len(), panic_message(&*p)),
                 Ok(Ok(_)) => panic!("a file cut at {len}/{} bytes was accepted", full.len()),
                 Ok(Err(e)) => assert_readable(&e),
             }
@@ -184,7 +189,7 @@ fn random_corruption_never_panics() {
         seed ^= seed << 13;
         seed ^= seed >> 7;
         seed ^= seed << 17;
-        (seed % n as u64) as usize
+        usize::try_from(seed % n as u64).expect("below n")
     };
     let full = serial::to_json(&sample("fuzz"), false).into_bytes();
     let structural = br#"{}[]":,0-"#;
@@ -206,7 +211,7 @@ fn random_corruption_never_panics() {
         let text = String::from_utf8_lossy(&bytes).into_owned();
         // either outcome is acceptable (a flipped digit can still be a valid board); a panic is not
         match std::panic::catch_unwind(|| serial::from_json(&text)) {
-            Err(_) => panic!("from_json panicked on corruption #{i}: {text}"),
+            Err(p) => panic!("from_json panicked on corruption #{i}: {}: {text}", panic_message(&*p)),
             Ok(Err(e)) => assert_readable(&e),
             Ok(Ok(_)) => {}
         }

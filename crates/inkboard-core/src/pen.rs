@@ -1,14 +1,17 @@
 //! Freehand strokes: smoothing and variable width according to the pen pressure.
 
 use crate::geom::Pt;
+use crate::num;
 
 /// Width of a point according to the pressure (0..1): from 30 % to 160 % of the base width.
+#[must_use]
 pub fn pressure_width(base: f64, p: f32) -> f64 {
     base * (0.3 + 1.3 * f64::from(p.clamp(0.0, 1.0)))
 }
 
 /// Smoothing with quadratic curves through the segment midpoints. Returns the sampled points
 /// (`steps` per segment) and the interpolated pressure (0.5 when no pressure is provided).
+#[must_use]
 pub fn smooth(pts: &[Pt], pressures: Option<&[f32]>, steps: usize) -> (Vec<Pt>, Vec<f32>) {
     let n = pts.len();
     let pr = |i: usize| pressures.and_then(|p| p.get(i)).copied().unwrap_or(0.5);
@@ -21,12 +24,12 @@ pub fn smooth(pts: &[Pt], pressures: Option<&[f32]>, steps: usize) -> (Vec<Pt>, 
     let (mut prev, mut prev_p) = (pts[0], pr(0));
     for i in 1..n - 1 {
         let mid = pts[i].lerp(pts[i + 1], 0.5);
-        let mid_p = (pr(i) + pr(i + 1)) / 2.0;
+        let mid_p = f32::midpoint(pr(i), pr(i + 1));
         for k in 1..=steps {
-            let t = k as f64 / steps as f64;
+            let t = num::f64_of(k) / num::f64_of(steps);
             let u = 1.0 - t;
             out.push(prev * (u * u) + pts[i] * (2.0 * u * t) + mid * (t * t));
-            out_p.push(prev_p + (mid_p - prev_p) * t as f32);
+            out_p.push(prev_p + (mid_p - prev_p) * num::f32(t));
         }
         prev = mid;
         prev_p = mid_p;
@@ -37,6 +40,7 @@ pub fn smooth(pts: &[Pt], pressures: Option<&[f32]>, steps: usize) -> (Vec<Pt>, 
 }
 
 /// Left and right edges of a variable-width stroke: two points offset by `±w/2` perpendicular to the path.
+#[must_use]
 pub fn stroke_sides(pts: &[Pt], widths: &[f64]) -> (Vec<Pt>, Vec<Pt>) {
     let n = pts.len();
     let mut left = Vec::with_capacity(n);
@@ -45,9 +49,9 @@ pub fn stroke_sides(pts: &[Pt], widths: &[f64]) -> (Vec<Pt>, Vec<Pt>) {
         let (a, b) = (pts[i.saturating_sub(1)], pts[(i + 1).min(n - 1)]);
         let d = (b - a).normalized();
         let normal = if d == Pt::ZERO { Pt::new(0.0, 1.0) } else { Pt::new(-d.y, d.x) };
-        let h = widths.get(i).copied().unwrap_or(0.0) / 2.0;
-        left.push(pts[i] + normal * h);
-        right.push(pts[i] - normal * h);
+        let half_width = widths.get(i).copied().unwrap_or(0.0) / 2.0;
+        left.push(pts[i] + normal * half_width);
+        right.push(pts[i] - normal * half_width);
     }
     (left, right)
 }
@@ -82,7 +86,7 @@ mod tests {
     fn short_strokes_and_missing_pressure_are_handled() {
         let (p, q) = smooth(&[Pt::ZERO, Pt::new(1.0, 1.0)], None, 4);
         assert_eq!((p.len(), q), (2, vec![0.5, 0.5]));
-        assert!(smooth(&[], None, 4).0.is_empty());
+        assert_eq!(smooth(&[], None, 4).0, [] as [crate::geom::Pt; 0]);
     }
 
     #[test]

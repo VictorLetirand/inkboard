@@ -5,6 +5,7 @@ use inkboard_core::connector::{Anchor, Connector, End, Route};
 use inkboard_core::editor::{AlignMode, Axis, Editor, Order};
 use inkboard_core::geom::{Frame, Pt, Rect, seg_dist};
 use inkboard_core::model::{Background, BoxObj, Document, Id, ImageObj, Kind, Label, Layer, Object, Outline, Page, Table};
+use inkboard_core::num;
 use inkboard_core::spatial::{SpatialIndex, id_index};
 use inkboard_core::style::{Align, Color, Style};
 use inkboard_core::transform::{Handle, resize_frame, scale_objects};
@@ -166,7 +167,7 @@ fn object(s: &Spec, id: Id, attach: &[Id], doc: &mut Document) -> Object {
         Shape::Pen { pts, pressures, highlighter } => {
             let pts: Vec<Pt> = pts.iter().map(|(dx, dy)| Pt::new(f.x + dx, f.y + dy)).collect();
             if *pressures {
-                let p = (0..pts.len()).map(|i| i as f32 / 8.0).collect();
+                let p = (0..pts.len()).map(|i| num::f32_of(i) / 8.0).collect();
                 return Object { id, ..Object::new_pen_with_pressure(pts, p, *highlighter, style) };
             }
             return Object { id, ..Object::new_pen(pts, *highlighter, style) };
@@ -316,7 +317,7 @@ fn apply(ed: &mut Editor, op: &EditOp, step: usize) {
         EditOp::SetBackground(preset, pattern) => ed.set_background(Background { preset: *preset, pattern: *pattern }),
         EditOp::SetName(n) => ed.set_name(n),
         EditOp::SetLayers(visible) => {
-            ed.set_layers(vec![Layer::main(), Layer { id: Id::from("l2"), name: "Layer 2".into(), visible: *visible, locked: false }])
+            ed.set_layers(vec![Layer::main(), Layer { id: Id::from("l2"), name: "Layer 2".into(), visible: *visible, locked: false }]);
         }
         EditOp::Transact(i, d) => {
             let ids = pick(ed, i);
@@ -404,17 +405,17 @@ fn contour_distance(o: &Object, p: Pt) -> f64 {
         Kind::Box(b) => b.geom.outline(),
         _ => Outline::Rect,
     };
-    let l = f.to_local(p);
+    let local = f.to_local(p);
     match outline {
         Outline::Ellipse => {
             // first-order distance to the implicit curve (x/a)^2 + (y/b)^2 = 1
-            let (a, b) = (f.w / 2.0, f.h / 2.0);
-            let value = (l.x / a).powi(2) + (l.y / b).powi(2) - 1.0;
-            value.abs() / (2.0 * (l.x / (a * a)).hypot(l.y / (b * b))).max(1e-12)
+            let (rx, ry) = (f.w / 2.0, f.h / 2.0);
+            let value = (local.x / rx).powi(2) + (local.y / ry).powi(2) - 1.0;
+            value.abs() / (2.0 * (local.x / (rx * rx)).hypot(local.y / (ry * ry))).max(1e-12)
         }
         other => {
             let poly = other.polygon(f.w, f.h);
-            (0..poly.len()).map(|i| seg_dist(l, poly[i], poly[(i + 1) % poly.len()])).fold(f64::INFINITY, f64::min)
+            (0..poly.len()).map(|i| seg_dist(local, poly[i], poly[(i + 1) % poly.len()])).fold(f64::INFINITY, f64::min)
         }
     }
 }
@@ -499,13 +500,13 @@ fn scene() -> impl Strategy<Value = (Vec<Cell>, Vec<(Index, Index)>)> {
 fn scene_page(cells: &[Cell], links: &[(Index, Index)], rotated: bool) -> Page {
     let mut page = Page::new("scene");
     for (i, c) in cells.iter().enumerate() {
-        let (cx, cy) = ((i % 6) as f64 * CELL + CELL / 2.0 + c.shift.0, (i / 6) as f64 * CELL + CELL / 2.0 + c.shift.1);
+        let (cx, cy) = (num::f64_of(i % 6) * CELL + CELL / 2.0 + c.shift.0, num::f64_of(i / 6) * CELL + CELL / 2.0 + c.shift.1);
         let kind = match c.geom {
             Some(geom) => {
                 let frame = Frame { x: cx - c.size.0 / 2.0, y: cy - c.size.1 / 2.0, w: c.size.0, h: c.size.1, angle: if rotated { c.angle } else { 0.0 } };
                 Kind::Box(BoxObj { geom, frame, label: Label::default(), lang: None })
             }
-            None => Kind::Table(Table::new(Pt::new(cx - 70.0, cy - 22.0 * c.rows as f64), c.rows, 1)),
+            None => Kind::Table(Table::new(Pt::new(cx - 70.0, cy - 22.0 * num::f64_of(c.rows)), c.rows, 1)),
         };
         page.objects.push(Object { id: Id(format!("c{i}")), ..Object::new(kind, Style::default()) });
     }
@@ -529,8 +530,8 @@ fn enters(p: Pt, q: Pt, r: Rect) -> bool {
     }
     // Liang-Barsky clipping of the segment against the shrunk rectangle
     let (mut t0, mut t1) = (0.0f64, 1.0f64);
-    let d = q - p;
-    for (dir, room) in [(-d.x, p.x - x0), (d.x, x1 - p.x), (-d.y, p.y - y0), (d.y, y1 - p.y)] {
+    let delta = q - p;
+    for (dir, room) in [(-delta.x, p.x - x0), (delta.x, x1 - p.x), (-delta.y, p.y - y0), (delta.y, y1 - p.y)] {
         if dir == 0.0 {
             if room < 0.0 {
                 return false;

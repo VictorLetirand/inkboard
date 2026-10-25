@@ -5,6 +5,7 @@ use crate::model::{BoxGeom, Id, Kind, Object, Outline, Page};
 
 impl Page {
     /// Bounding box (stroke width included) in world coordinates.
+    #[must_use]
     pub fn bounds(&self, o: &Object) -> Rect {
         self.bounds_with(o, &|id| self.get(id))
     }
@@ -26,42 +27,45 @@ impl Page {
     }
 
     /// Bounding box of several objects; `None` when the list is empty.
+    #[must_use]
     pub fn bounds_of(&self, ids: &[Id]) -> Option<Rect> {
         self.objects.iter().filter(|o| ids.contains(&o.id)).map(|o| self.bounds(o)).reduce(|a, b| a.union(&b))
     }
 
     /// Bounding box of all the visible content.
+    #[must_use]
     pub fn content_bounds(&self) -> Option<Rect> {
         self.objects.iter().filter(|o| self.is_visible(o)).map(|o| self.bounds(o)).reduce(|a, b| a.union(&b))
     }
 
     /// Does point `p` touch the object (with a tolerance `tol` in world units)?
+    #[must_use]
     pub fn hit(&self, o: &Object, p: Pt, tol: f64) -> bool {
         self.hit_with(o, p, tol, &|id| self.get(id))
     }
 
     /// Like [`Page::hit`], with a supplied object lookup (see [`crate::spatial::getter`]).
     pub fn hit_with<'a>(&self, o: &Object, p: Pt, tol: f64, get: &dyn Fn(&Id) -> Option<&'a Object>) -> bool {
-        let t = tol + o.style.width / 2.0;
+        let reach = tol + o.style.width / 2.0;
         match &o.kind {
             Kind::Pen(pen) => {
                 let pts = &pen.pts;
                 match pts.len() {
                     0 => false,
-                    1 => pts[0].dist(p) <= t,
-                    _ => pts.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= t),
+                    1 => pts[0].dist(p) <= reach,
+                    _ => pts.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= reach),
                 }
             }
-            Kind::Connector(c) => self.connector_path_with(c, get).is_some_and(|path| path.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= t)),
+            Kind::Connector(c) => self.connector_path_with(c, get).is_some_and(|path| path.windows(2).any(|w| seg_dist(p, w[0], w[1]) <= reach)),
             Kind::Table(tb) => tb.rect().expand(tol).contains(p),
             Kind::Image(i) => {
-                let l = i.frame.to_local(p);
-                l.x.abs() <= i.frame.w / 2.0 + tol && l.y.abs() <= i.frame.h / 2.0 + tol
+                let local = i.frame.to_local(p);
+                local.x.abs() <= i.frame.w / 2.0 + tol && local.y.abs() <= i.frame.h / 2.0 + tol
             }
             Kind::Box(b) => {
-                let (w, h) = (b.frame.w, b.frame.h);
+                let (width, height) = (b.frame.w, b.frame.h);
                 let l = b.frame.to_local(p);
-                let (hw, hh) = (w / 2.0, h / 2.0);
+                let (hw, hh) = (width / 2.0, height / 2.0);
                 match b.geom {
                     BoxGeom::Text | BoxGeom::Sticky => l.x.abs() <= hw + tol && l.y.abs() <= hh + tol,
                     geom => {
@@ -69,11 +73,11 @@ impl Page {
                         match geom.outline() {
                             Outline::Ellipse => {
                                 let inside = |rx: f64, ry: f64| rx > 0.0 && ry > 0.0 && (l.x / rx).powi(2) + (l.y / ry).powi(2) <= 1.0;
-                                inside(hw + t, hh + t) && (solid || !inside(hw - t, hh - t))
+                                inside(hw + reach, hh + reach) && (solid || !inside(hw - reach, hh - reach))
                             }
                             outline => {
-                                let poly = outline.polygon(w, h);
-                                (solid && in_poly(&poly, l)) || (0..poly.len()).any(|i| seg_dist(l, poly[i], poly[(i + 1) % poly.len()]) <= t)
+                                let poly = outline.polygon(width, height);
+                                (solid && in_poly(&poly, l)) || (0..poly.len()).any(|i| seg_dist(l, poly[i], poly[(i + 1) % poly.len()]) <= reach)
                             }
                         }
                     }
@@ -83,6 +87,7 @@ impl Page {
     }
 
     /// Topmost object under the point, ignoring hidden or locked layers.
+    #[must_use]
     pub fn pick(&self, p: Pt, tol: f64) -> Option<usize> {
         self.pick_with(p, tol, &|id| self.get(id), None)
     }
@@ -101,6 +106,7 @@ impl Page {
     }
 
     /// Object a connector can attach to under `p` (inside or edge, fill irrelevant).
+    #[must_use]
     pub fn attach_target(&self, p: Pt, tol: f64, exclude: &[Id]) -> Option<Id> {
         self.objects.iter().rev().find_map(|o| {
             if exclude.contains(&o.id) || !self.is_visible(o) || self.layer(&o.layer).is_some_and(|l| l.locked) {
@@ -124,6 +130,7 @@ impl Page {
     }
 
     /// Like [`Page::objects_in_rect`], relying on an up-to-date spatial index.
+    #[must_use]
     pub fn objects_in_rect_idx(&self, r: Rect, contain: bool, idx: &crate::spatial::SpatialIndex) -> Vec<Id> {
         idx.query(r)
             .into_iter()
@@ -136,6 +143,7 @@ impl Page {
     }
 
     /// Objects selectable by a marquee: entirely contained (`contain`) or merely touched.
+    #[must_use]
     pub fn objects_in_rect(&self, r: Rect, contain: bool) -> Vec<Id> {
         self.objects
             .iter()

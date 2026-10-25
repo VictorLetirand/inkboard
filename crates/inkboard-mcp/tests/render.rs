@@ -16,7 +16,9 @@ fn png_size(png: &[u8]) -> (u32, u32) {
 
 /// Calls `render`; the picture (decoded) and the JSON text block, or the error message.
 fn render(c: &mut Client, args: Value) -> Result<(Vec<u8>, Value), String> {
-    let r = c.request("tools/call", json!({"name": "render", "arguments": args}));
+    let mut params = json!({"name": "render"});
+    params["arguments"] = args;
+    let r = c.request("tools/call", params);
     let content = r["result"]["content"].as_array().unwrap_or_else(|| panic!("no content in {}", &r.to_string()[..r.to_string().len().min(400)]));
     if r["result"]["isError"] == json!(true) {
         return Err(content[0]["text"].as_str().unwrap().to_owned());
@@ -257,7 +259,8 @@ fn a_png_over_4_mib_is_produced_smaller_automatically() {
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;
-        image::Rgb([x as u8, (x >> 8) as u8, (x >> 16) as u8])
+        let [b0, b1, b2, ..] = x.to_le_bytes();
+        image::Rgb([b0, b1, b2])
     });
     let mut data = Vec::new();
     noise.write_to(&mut std::io::Cursor::new(&mut data), image::ImageFormat::Png).unwrap();

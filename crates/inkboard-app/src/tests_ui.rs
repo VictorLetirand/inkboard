@@ -9,6 +9,7 @@ use crate::tools::Tool;
 use eframe::egui::{self, Event, Key, Pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
+use inkboard_core::num;
 use inkboard_core::text::SpanStyle;
 use inkboard_core::*;
 use std::path::{Path, PathBuf};
@@ -59,8 +60,8 @@ pub(super) fn isolated_in(module: &str, test: &str, body: impl FnOnce(&Path)) {
         .output()
         .unwrap();
     std::fs::remove_dir_all(&dir).ok();
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(out.status.success() && text.contains("1 passed"), "isolated test {test} failed:\n{text}");
+    let output = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(out.status.success() && output.contains("1 passed"), "isolated test {test} failed:\n{output}");
 }
 
 /* ------------------------------------------------------------ helpers */
@@ -112,31 +113,23 @@ fn toast_of(t: &mut T) -> Option<String> {
 
 /* ------------------------------------------------- every keymap action */
 
-/// Fires one default shortcut of `a` on the representative board and checks the visible effect.
-/// The match has no wildcard: a new `Action` does not compile until it is handled here.
-fn check_action(a: Action, sc: Shortcut) -> Check {
-    let (mut t, [x, y, z]) = board();
-    let t = &mut t;
-    match a {
-        // Deletes the safety copy in the data folder: see `ctrl_n_with_unsaved_changes_asks_first_and_removes_the_autosave_only_when_confirmed`.
-        Action::New => {}
-        // Native file dialogs would block the test: only check that the shortcut is bound to the action.
-        Action::Open | Action::SaveAs => {
-            ensure!(Keymap::default().action_for(sc.key, sc.modifiers()) == Some(a), "{} is not bound to {a:?}", sc.label());
-        }
-        Action::Save => {
-            let dir = temp_dir("save");
-            let path = dir.join("board.inkboard");
-            t.app().path = Some(path.clone()); // without a path, saving asks for one with a native dialog
-            ensure!(t.app().dirty(), "the new board is not dirty before saving");
-            press(t, sc);
-            let doc = inkboard_core::serial::load(&path).map_err(|e| format!("saved file unreadable: {e}"));
-            let n = doc.as_ref().map(|d| d.pages.iter().map(|p| p.objects.len()).sum::<usize>());
-            let clean = !t.app().dirty();
-            std::fs::remove_dir_all(&dir).ok();
-            ensure!(n == Ok(3), "saved file holds {n:?} objects");
-            ensure!(clean, "the board is still dirty after saving");
-        }
+fn check_save(t: &mut T, sc: Shortcut) -> Check {
+    let dir = temp_dir("save");
+    let path = dir.join("board.inkboard");
+    t.app().path = Some(path.clone()); // without a path, saving asks for one with a native dialog
+    ensure!(t.app().dirty(), "the new board is not dirty before saving");
+    press(t, sc);
+    let doc = inkboard_core::serial::load(&path).map_err(|e| format!("saved file unreadable: {e}"));
+    let count = doc.as_ref().map(|d| d.pages.iter().map(|p| p.objects.len()).sum::<usize>());
+    let clean = !t.app().dirty();
+    std::fs::remove_dir_all(&dir).ok();
+    ensure!(count == Ok(3), "saved file holds {count:?} objects");
+    ensure!(clean, "the board is still dirty after saving");
+    Ok(())
+}
+
+fn check_selection_action(action: Action, sc: Shortcut, t: &mut T, [x, y, z]: [Id; 3]) -> Check {
+    match action {
         Action::Undo => {
             press(t, sc);
             ensure!(order_of(t) == [x, y], "last rectangle not removed");
@@ -157,8 +150,8 @@ fn check_action(a: Action, sc: Shortcut) -> Check {
             ensure!(t.objects().len() == 4, "{} objects", t.objects().len());
             let sel = t.app().sel.clone();
             ensure!(sel.len() == 1 && sel[0] != x, "the copy is not the selection: {sel:?}");
-            let f = t.frame(&sel[0]);
-            ensure!((f.x - 124.0).abs() < 1e-9 && (f.y - 124.0).abs() < 1e-9, "copy offset by (24, 24), got {f:?}");
+            let frame = t.frame(&sel[0]);
+            ensure!((frame.x - 124.0).abs() < 1e-9 && (frame.y - 124.0).abs() < 1e-9, "copy offset by (24, 24), got {frame:?}");
         }
         Action::Delete => {
             t.app().sel = vec![x.clone()];
@@ -169,8 +162,8 @@ fn check_action(a: Action, sc: Shortcut) -> Check {
         Action::Group => {
             t.app().sel = vec![x.clone(), y.clone()];
             press(t, sc);
-            let g = |t: &mut T, id: &Id| t.app().ed.page().get(id).unwrap().group.clone();
-            let (gx, gy, gz) = (g(t, &x), g(t, &y), g(t, &z));
+            let group_of = |t: &mut T, id: &Id| t.app().ed.page().get(id).unwrap().group.clone();
+            let (gx, gy, gz) = (group_of(t, &x), group_of(t, &y), group_of(t, &z));
             ensure!(gx.is_some() && gx == gy && gz.is_none(), "groups: {gx:?} {gy:?} {gz:?}");
         }
         Action::Ungroup => {
@@ -199,9 +192,38 @@ fn check_action(a: Action, sc: Shortcut) -> Check {
             press(t, sc);
             ensure!(order_of(t) == [z, x, y], "z not sent to back");
         }
+        _ => unreachable!("selection action"),
+    }
+    Ok(())
+}
+
+/// Fires one default shortcut of `a` on the representative board and checks the visible effect.
+/// The match has no wildcard: a new `Action` does not compile until it is handled here.
+fn check_action(action: Action, sc: Shortcut) -> Check {
+    let (mut t, [x, y, z]) = board();
+    let t = &mut t;
+    match action {
+        // Deletes the safety copy in the data folder: see `ctrl_n_with_unsaved_changes_asks_first_and_removes_the_autosave_only_when_confirmed`.
+        Action::New => {}
+        // Native file dialogs would block the test: only check that the shortcut is bound to the action.
+        Action::Open | Action::SaveAs => {
+            ensure!(Keymap::default().action_for(sc.key, sc.modifiers()) == Some(action), "{} is not bound to {action:?}", sc.label());
+        }
+        Action::Save => check_save(t, sc)?,
+        Action::Undo
+        | Action::Redo
+        | Action::SelectAll
+        | Action::Duplicate
+        | Action::Delete
+        | Action::Group
+        | Action::Ungroup
+        | Action::Front
+        | Action::Forward
+        | Action::Backward
+        | Action::Back => check_selection_action(action, sc, t, [x, y, z])?,
         Action::Zoom100 => {
-            let v = t.app().ed.page().view;
-            t.app().set_view(View { zoom: 2.0, ..v });
+            let view = t.app().ed.page().view;
+            t.app().set_view(View { zoom: 2.0, ..view });
             t.h.step();
             press(t, sc);
             ensure!((t.app().ed.page().view.zoom - 1.0).abs() < 1e-9, "zoom is {}", t.app().ed.page().view.zoom);
@@ -225,7 +247,7 @@ fn check_action(a: Action, sc: Shortcut) -> Check {
             ensure!(t.app().editing.as_ref().is_some_and(|e| e.id == x), "the text editor did not open on x");
         }
         Action::Bold | Action::Italic | Action::Underline | Action::Strike => {
-            let on: fn(&SpanStyle) -> bool = match a {
+            let on: fn(&SpanStyle) -> bool = match action {
                 Action::Bold => |s| s.bold,
                 Action::Italic => |s| s.italic,
                 Action::Underline => |s| s.underline,
@@ -258,7 +280,7 @@ fn check_action(a: Action, sc: Shortcut) -> Check {
         | Action::ToolSticky
         | Action::ToolTable
         | Action::ToolLaser => {
-            let want = a.tool().expect("tool action");
+            let want = action.tool().expect("tool action");
             t.app().tool = if want == Tool::Pen { Tool::Hand } else { Tool::Pen };
             press(t, sc);
             ensure!(t.app().tool == want, "tool is {:?}, expected {want:?}", t.app().tool);
@@ -352,7 +374,7 @@ fn the_autosave_keeps_its_name_and_an_existing_one_is_restored() {
         // writing: a modified board is saved under the historical name only
         let (mut t, _) = board();
         assert!(t.app().dirty());
-        t.app().last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        t.app().last_autosave = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap();
         t.h.step();
         assert!(autosave_file().exists(), "the safety copy is written as autosave.inkboard.json");
         assert!(!data.join("autosave.inkboard").exists(), "no new-style safety copy");
@@ -382,7 +404,7 @@ fn ctrl_n_without_unsaved_changes_starts_a_new_board_without_asking() {
         let mut t = T::new();
         press(&mut t, new);
         assert!(!confirm_new_is_open(&mut t), "an empty board needs no confirmation");
-        assert!(t.objects().is_empty());
+        assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     });
 }
 
@@ -541,7 +563,7 @@ fn hand_tool_pans_without_creating_anything() {
     let before = t.app().ed.page().view;
     t.drag((200.0, 200.0), (260.0, 230.0));
     let after = t.app().ed.page().view;
-    assert!(t.objects().is_empty());
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     assert!((after.x - before.x - 60.0).abs() < 1.0 && (after.y - before.y - 30.0).abs() < 1.0, "{before:?} -> {after:?}");
     assert_eq!(t.app().tool, Tool::Hand);
 }
@@ -578,7 +600,7 @@ fn text_tool_with_the_lock_ends_the_edit_on_the_next_click_without_an_empty_box(
 /// Center of the toolbar button with this accessible name (English; the lock button has its own name).
 fn button_center(t: &T, name: &str) -> Pos2 {
     let b = t.h.get_by_label(name).accesskit_node().bounding_box().unwrap_or_else(|| panic!("button {name} has no box"));
-    Pos2::new(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)
+    Pos2::new(num::f32(f64::midpoint(b.x0, b.x1)), num::f32(f64::midpoint(b.y0, b.y1)))
 }
 
 /// Accessible state of a button: `Some(true)` pressed / locked, `Some(false)` not pressed.
@@ -592,7 +614,7 @@ fn double_click_button(t: &mut T, name: &str) {
     // each step advances the clock by 0.25 s, more than egui's double-click delay: give the events explicit, close times
     let t0 = t.h.ctx.input(|i| i.time);
     for (k, pressed) in [true, false, true, false].into_iter().enumerate() {
-        t.h.input_mut().time = Some(t0 + 0.05 * (k + 1) as f64);
+        t.h.input_mut().time = Some(t0 + 0.05 * num::f64_of(k + 1));
         t.button(p, pressed, egui::Modifiers::NONE);
     }
     for _ in 0..3 {
@@ -667,7 +689,7 @@ fn the_lock_tool_tip_shows_the_current_shortcut_of_the_action() {
     let mut t = T::new();
     let sc = Shortcut::key(Key::J);
     t.app().keymap.reset_all();
-    t.app().keymap.remove(Action::ToolLock, &Shortcut::key(Key::Q));
+    t.app().keymap.remove(Action::ToolLock, Shortcut::key(Key::Q));
     t.app().keymap.add(Action::ToolLock, sc).unwrap();
     let p = button_center(&t, "Keep the tool active after drawing");
     t.mv(p);
@@ -726,7 +748,7 @@ fn clickable_rects(t: &T) -> Vec<egui::Rect> {
             let b = node.bounding_box()?;
             node.data()
                 .supports_action(egui::accesskit::Action::Click)
-                .then(|| egui::Rect::from_min_max(Pos2::new(b.x0 as f32, b.y0 as f32), Pos2::new(b.x1 as f32, b.y1 as f32)))
+                .then(|| egui::Rect::from_min_max(Pos2::new(num::f32(b.x0), num::f32(b.y0)), Pos2::new(num::f32(b.x1), num::f32(b.y1))))
         })
         .collect()
 }

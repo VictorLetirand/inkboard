@@ -41,9 +41,11 @@ pub struct PenSample {
 
 impl PenSample {
     pub const NONE: PenSample = PenSample { kind: PointerKind::None, pressure: 0.0, flags: 0, tilt: (0, 0), seq: 0 };
+    #[must_use]
     pub fn barrel(&self) -> bool {
         self.flags & PEN_FLAG_BARREL != 0
     }
+    #[must_use]
     pub fn eraser(&self) -> bool {
         eraser_from_flags(self.flags)
     }
@@ -68,6 +70,7 @@ pub const PEN_FLAG_INVERTED: u32 = 0x0000_0002;
 pub const PEN_FLAG_ERASER: u32 = 0x0000_0004;
 
 /// Is the eraser end in use according to these flags? (flipped end, or the "eraser" button pressed)
+#[must_use]
 pub fn eraser_from_flags(flags: u32) -> bool {
     flags & (PEN_FLAG_INVERTED | PEN_FLAG_ERASER) != 0
 }

@@ -4,6 +4,7 @@
 //! the white with that color (see `inkboard_core::svg`).
 
 use crate::common::FormatError;
+use inkboard_core::num;
 use latex_rust::{Color, Dim, MathFont, SvgOptions, latex_to_svg};
 
 /// Fill color of the glyphs in the asset (to be tinted when drawn and exported).
@@ -18,12 +19,16 @@ pub struct Formula {
 }
 
 /// Typesets `latex` (math mode); `size` = text size (board units).
+///
+/// # Errors
+///
+/// [`FormatError`] when the formula is empty, cannot be parsed, or has no dimensions.
 pub fn render(latex: &str, size: f64) -> Result<Formula, FormatError> {
     if latex.trim().is_empty() {
         return Err(FormatError::Invalid("empty formula".into()));
     }
     let font = MathFont::stix_two_math().map_err(|e| FormatError::Unsupported(format!("math font: {e}")))?;
-    let opts = SvgOptions { font_size_pt: Dim::from_i64(size.round().max(6.0) as i64), color: Color::rgb(255, 255, 255), display: true };
+    let opts = SvgOptions { font_size_pt: Dim::from_i64(num::to_i64(size.round().max(6.0))), color: Color::rgb(255, 255, 255), display: true };
     let svg = latex_to_svg(latex, &font, &opts).map_err(|e| FormatError::Invalid(format!("LaTeX : {e}")))?;
     let vb = svg.split("viewBox=\"").nth(1).and_then(|s| s.split('"').next()).ok_or_else(|| FormatError::Invalid("SVG without viewBox".into()))?;
     let v: Vec<f64> = vb.split_whitespace().filter_map(|t| t.parse().ok()).collect();

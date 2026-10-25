@@ -29,6 +29,7 @@ use std::path::PathBuf;
 
 /// Command-line options.
 #[derive(Clone, Default)]
+#[expect(clippy::struct_excessive_bools, reason = "independent command-line switches")]
 struct Launch {
     open: Option<PathBuf>,
     screenshot: Option<PathBuf>,
@@ -177,7 +178,7 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
             a.bench = l.bench.then(|| app::Bench { close_up: l.bench_close, ..Default::default() });
             a.edit_demo = l.edit_demo;
             a.formula_demo = l.formula_demo;
-            a.ui_demo = l.ui_demo.clone();
+            a.ui_demo.clone_from(&l.ui_demo);
             a.pen_test = l.pen_test.then(pen_test::PenReport::default);
             if l.shortcuts_demo {
                 a.dialog = Some(app::Dialog::Shortcuts { filter: String::new(), recording: Some(keymap::Action::ToolPen) });

@@ -64,14 +64,14 @@ fn check_common(name: &str, imp: &Imported, bad: &mut Vec<String>) {
     if objects.clone().count() == 0 {
         bad.push(format!("{name}: no object imported"));
     }
-    for f in objects.filter_map(|o| o.frame()) {
+    for f in objects.filter_map(inkboard_core::Object::frame) {
         if ![f.x, f.y, f.w, f.h, f.angle].iter().all(|v| v.is_finite()) {
             bad.push(format!("{name}: non-finite frame {f:?}"));
         }
     }
 }
 
-fn assert_no_problem(bad: Vec<String>) {
+fn assert_no_problem(bad: &[String]) {
     assert!(bad.is_empty(), "{} problem(s):\n{}", bad.len(), bad.join("\n"));
 }
 
@@ -141,7 +141,7 @@ fn drawio_files_import_without_losing_labels() {
             Err(e) => bad.push(format!("{name}: {e}")),
         }
     }
-    assert_no_problem(bad);
+    assert_no_problem(&bad);
 }
 
 /// Built-in draw.io icons of the corpus (`image=img/lib/...`): how many exist and how many the library resolves.
@@ -192,7 +192,7 @@ fn excalidraw_files_import_without_losing_labels() {
             Err(e) => bad.push(format!("{name}: {e}")),
         }
     }
-    assert_no_problem(bad);
+    assert_no_problem(&bad);
 }
 
 /* ------------------------------------------------------- JSON Canvas */
@@ -245,7 +245,7 @@ fn canvas_files_import_without_losing_labels() {
             Err(e) => bad.push(format!("{name}: {e}")),
         }
     }
-    assert_no_problem(bad);
+    assert_no_problem(&bad);
 }
 
 /* ----------------------------------------------------------- Mermaid */
@@ -274,7 +274,7 @@ fn mermaid_supported_types_import_and_the_others_are_errors() {
         }
     }
     assert_eq!(errors, 4, "the corpus holds 2 gantt and 2 pie files");
-    assert_no_problem(bad);
+    assert_no_problem(&bad);
 }
 
 #[test]

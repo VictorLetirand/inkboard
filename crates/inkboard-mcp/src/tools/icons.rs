@@ -5,7 +5,7 @@
 //! (checked by a test on the real pack), names may (`shadcn/ui`) or contain `#` (`F#`), so the id is split at the first `/` only.
 
 use super::{Res, obj, ocolor, origin, os, path_prop, pos_props, s};
-use inkboard_core::*;
+use inkboard_core::{Align, ApproxMeasurer, BoxGeom, Color, Editor, Frame, ImageObj, Kind, Label, Object, Style};
 use inkboard_icons::{IconRef, Library};
 use serde_json::{Value, json};
 
@@ -207,8 +207,8 @@ fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
         (_, Some(w), None) => (w, w * nh / nw),
         (_, None, Some(h)) => (h * nw / nh, h),
         (size, None, None) => {
-            let k = size.unwrap_or(DEFAULT_SIZE) / nw.max(nh);
-            (nw * k, nh * k)
+            let scale = size.unwrap_or(DEFAULT_SIZE) / nw.max(nh);
+            (nw * scale, nh * scale)
         }
     };
     if !(1.0..=20_000.0).contains(&w) || !(1.0..=20_000.0).contains(&h) {
@@ -241,13 +241,13 @@ fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
             let text_style = Style { stroke: Color::Ink, fill: None, width: 0.0, roundness: 0.0, ..Style::default() };
             let mut label = Label::new(text, LABEL_SIZE, Align::Center);
             label.text = super::richtext::rich(text, markdown, &mut warnings);
-            let mut o = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), text_style, label);
-            if let Kind::Box(b) = &mut o.kind {
+            let mut caption = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), text_style, label);
+            if let Kind::Box(b) = &mut caption.kind {
                 b.fit(&ApproxMeasurer);
                 b.frame.x = frame.x + (frame.w - b.frame.w) / 2.0;
                 b.frame.y = frame.y + frame.h + LABEL_GAP;
             }
-            let label_id = ed.insert(o);
+            let label_id = ed.insert(caption);
             ed.group(&[id.clone(), label_id.clone()]);
             label_id
         });

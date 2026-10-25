@@ -37,8 +37,11 @@ fn start(tag: &str) -> (Client, PathBuf) {
 /// Same contract as the other tool tests: an error, the file untouched, the server still answering.
 fn invalid(c: &mut Client, board: &Path, tool: &str, args: Value) -> String {
     let before = std::fs::read(board).unwrap();
-    let r = c.request("tools/call", json!({"name": tool, "arguments": args}));
-    assert!(r["result"]["isError"] == json!(true), "{tool} with {args}: error expected, got {r}");
+    let shown = args.to_string();
+    let mut params = json!({"name": tool});
+    params["arguments"] = args;
+    let r = c.request("tools/call", params);
+    assert!(r["result"]["isError"] == json!(true), "{tool} with {shown}: error expected, got {r}");
     assert_eq!(std::fs::read(board).unwrap(), before, "{tool}: the file changed despite the error");
     assert_eq!(c.request("ping", json!({}))["result"], json!({}), "{tool}: the server no longer answers");
     r["result"]["content"][0]["text"].as_str().unwrap().to_owned()
@@ -52,8 +55,9 @@ fn search(c: &mut Client, board: &Path, args: Value) -> Value {
 
 /// First icon found for a query (as returned by `search_icons`).
 fn first(c: &mut Client, board: &Path, args: Value) -> Value {
-    let r = search(c, board, args.clone());
-    r["icons"].get(0).cloned().unwrap_or_else(|| panic!("no icon for {args}"))
+    let shown = args.to_string();
+    let r = search(c, board, args);
+    r["icons"].get(0).cloned().unwrap_or_else(|| panic!("no icon for {shown}"))
 }
 
 /// SVG of an icon in the library, from its id (no `#n` suffix).
@@ -172,7 +176,7 @@ fn list_icon_groups_sums_to_the_total() {
     let groups = r["groups"].as_array().unwrap();
     let sum: u64 = groups.iter().flat_map(|g| g["sets"].as_array().unwrap()).map(|s| s["icons"].as_u64().unwrap()).sum();
     assert_eq!(r["total"].as_u64().unwrap(), sum);
-    assert_eq!(r["total"].as_u64().unwrap() as usize, inkboard_icons::shared().unwrap().icon_count());
+    assert_eq!(usize::try_from(r["total"].as_u64().unwrap()).unwrap(), inkboard_icons::shared().unwrap().icon_count());
     let names: Vec<&str> = groups.iter().map(|g| g["group"].as_str().unwrap()).collect();
     for g in ["AWS", "Brands", "General icons"] {
         assert!(names.contains(&g), "{g} in {names:?}");
@@ -186,14 +190,14 @@ fn list_icon_groups_sums_to_the_total() {
 
 #[test]
 fn add_icon_places_the_svg_of_the_icon_with_the_right_mono_flag() {
-    let (mut c, board) = start("icons-add");
+    let (mut client, board) = start("icons-add");
     let p = board.to_str().unwrap();
-    let color = first(&mut c, &board, json!({"query": "lambda", "group": "AWS"}));
-    let mono = first(&mut c, &board, json!({"query": "arrow", "set": "tabler"}));
+    let color = first(&mut client, &board, json!({"query": "lambda", "group": "AWS"}));
+    let mono = first(&mut client, &board, json!({"query": "arrow", "set": "tabler"}));
     assert_eq!((color["mono"].clone(), mono["mono"].clone()), (json!(false), json!(true)));
 
-    let a = c.tool("add_icon", json!({"path": p, "icon": color["id"], "x": 10, "y": 20})).unwrap();
-    let b = c.tool("add_icon", json!({"path": p, "icon": mono["id"], "x": 200, "y": 20})).unwrap();
+    let a = client.tool("add_icon", json!({"path": p, "icon": color["id"], "x": 10, "y": 20})).unwrap();
+    let b = client.tool("add_icon", json!({"path": p, "icon": mono["id"], "x": 200, "y": 20})).unwrap();
     assert_eq!(a["icon"], color["id"]);
     let doc = load(&board);
     let (oa, ob) = (object(&board, &id_of(&a)), object(&board, &id_of(&b)));
@@ -224,7 +228,7 @@ fn add_icon_without_position_goes_below_the_content() {
 
 #[test]
 fn add_icon_sizes_keep_the_ratio() {
-    let (mut c, board) = start("icons-size");
+    let (mut client, board) = start("icons-size");
     let p = board.to_str().unwrap();
     // an icon whose natural ratio is not 1
     let lib = inkboard_icons::shared().unwrap();
@@ -247,17 +251,17 @@ fn add_icon_sizes_keep_the_ratio() {
         let f = object(&board, &id_of(&r)).frame().unwrap();
         (f.w, f.h)
     };
-    let (w, h) = frame(&mut c, json!({}));
+    let (w, h) = frame(&mut client, json!({}));
     assert!((w.max(h) - 64.0).abs() < 1e-6 && (w / h - ratio).abs() < 1e-6, "default size 64: {w} x {h}");
-    let (w, h) = frame(&mut c, json!({"size": 200}));
+    let (w, h) = frame(&mut client, json!({"size": 200}));
     assert!((w.max(h) - 200.0).abs() < 1e-6 && (w / h - ratio).abs() < 1e-6, "{w} x {h}");
-    let (w, h) = frame(&mut c, json!({"w": 120}));
+    let (w, h) = frame(&mut client, json!({"w": 120}));
     assert!((w - 120.0).abs() < 1e-6 && (w / h - ratio).abs() < 1e-6, "{w} x {h}");
-    let (w, h) = frame(&mut c, json!({"h": 90}));
+    let (w, h) = frame(&mut client, json!({"h": 90}));
     assert!((h - 90.0).abs() < 1e-6 && (w / h - ratio).abs() < 1e-6, "{w} x {h}");
-    assert_eq!(frame(&mut c, json!({"w": 50, "h": 70})), (50.0, 70.0), "both given: exactly that");
+    assert_eq!(frame(&mut client, json!({"w": 50, "h": 70})), (50.0, 70.0), "both given: exactly that");
     for size in [8.0, 2000.0] {
-        let (w, h) = frame(&mut c, json!({"size": size}));
+        let (w, h) = frame(&mut client, json!({"size": size}));
         assert!((w.max(h) - size).abs() < 1e-6, "bound {size}: {w} x {h}");
     }
 }
@@ -281,7 +285,7 @@ fn add_icon_rejects_bad_sizes_and_input_without_touching_the_file() {
     assert!(invalid(&mut c, &board, "add_icon", json!({"path": p})).contains("icon"));
     assert!(invalid(&mut c, &board, "add_icon", json!({"path": p, "icon": "x".repeat(10_000)})).contains("too long"));
     assert!(invalid(&mut c, &board, "add_icon", json!({"path": p, "icon": "", "size": 10})).contains("not found"));
-    assert!(objects(&board).is_empty());
+    assert_eq!(objects(&board), [] as [inkboard_core::Object; 0]);
 }
 
 #[test]
@@ -306,33 +310,33 @@ fn an_unknown_icon_gives_suggestions_and_leaves_the_file_alone() {
 
 #[test]
 fn stroke_tints_monochrome_icons_and_is_reported_ignored_for_colored_ones() {
-    let (mut c, board) = start("icons-tint");
-    let p = board.to_str().unwrap();
-    let mono = first(&mut c, &board, json!({"query": "arrow", "set": "tabler"}));
-    let color = first(&mut c, &board, json!({"query": "lambda", "group": "AWS"}));
+    let (mut client, board) = start("icons-tint");
+    let path = board.to_str().unwrap();
+    let mono = first(&mut client, &board, json!({"query": "arrow", "set": "tabler"}));
+    let color = first(&mut client, &board, json!({"query": "lambda", "group": "AWS"}));
 
-    let a = c.tool("add_icon", json!({"path": p, "icon": mono["id"], "stroke": "#ff0000"})).unwrap();
+    let a = client.tool("add_icon", json!({"path": path, "icon": mono["id"], "stroke": "#ff0000"})).unwrap();
     assert!(a.get("warnings").is_none());
-    let o = object(&board, &id_of(&a));
-    assert_eq!(o.style.stroke, inkboard_core::Color::parse("#ff0000").unwrap());
+    let obj = object(&board, &id_of(&a));
+    assert_eq!(obj.style.stroke, inkboard_core::Color::parse("#ff0000").unwrap());
     let svg_path = board.with_file_name("tinted.svg");
-    c.tool("export", json!({"path": p, "output": svg_path.to_str().unwrap()})).unwrap();
+    client.tool("export", json!({"path": path, "output": svg_path.to_str().unwrap()})).unwrap();
     let svg = std::fs::read_to_string(&svg_path).unwrap();
     let payload = embedded_images(&svg).concat();
     assert!(payload.contains("#ff0000") && !payload.contains("#ffffff"), "tint missing in the exported icon");
 
     // the default tint is the text color of the theme, never white
-    let b = c.tool("add_icon", json!({"path": p, "icon": mono["id"]})).unwrap();
+    let b = client.tool("add_icon", json!({"path": path, "icon": mono["id"]})).unwrap();
     assert!(b.get("warnings").is_none());
     let doc = load(&board);
     let o = doc.pages[0].objects.iter().find(|o| o.id.0 == id_of(&b)).unwrap();
     assert_eq!(o.style.stroke, inkboard_core::Color::Ink);
 
     // a colored icon keeps its colors, and the agent is told
-    let r = c.tool("add_icon", json!({"path": p, "icon": color["id"], "stroke": "#ff0000"})).unwrap();
-    let w = r["warnings"].as_array().unwrap_or_else(|| panic!("warnings expected: {r}"));
-    assert!(w.len() == 1 && w[0].as_str().unwrap().contains("stroke ignored"), "{w:?}");
-    let o = object(&board, &id_of(&r));
+    let colored = client.tool("add_icon", json!({"path": path, "icon": color["id"], "stroke": "#ff0000"})).unwrap();
+    let warnings = colored["warnings"].as_array().unwrap_or_else(|| panic!("warnings expected: {colored}"));
+    assert!(warnings.len() == 1 && warnings[0].as_str().unwrap().contains("stroke ignored"), "{warnings:?}");
+    let o = object(&board, &id_of(&colored));
     assert_eq!(o.style.stroke, inkboard_core::Style::default().stroke);
     assert!(matches!(&o.kind, Kind::Image(i) if !i.mono));
 }
@@ -383,17 +387,17 @@ fn the_same_icon_twice_stores_one_asset() {
 
 #[test]
 fn two_icons_can_be_connected_and_the_board_exports() {
-    let (mut c, board) = start("icons-connect");
+    let (mut client, board) = start("icons-connect");
     let p = board.to_str().unwrap();
-    let lambda = first(&mut c, &board, json!({"query": "lambda", "group": "AWS"}));
-    let github = first(&mut c, &board, json!({"query": "github", "group": "Brands"}));
-    let a = c.tool("add_icon", json!({"path": p, "icon": lambda["id"], "x": 0, "y": 0, "label": "Lambda"})).unwrap();
-    let b = c.tool("add_icon", json!({"path": p, "icon": github["id"], "x": 300, "y": 0})).unwrap();
-    c.tool("add_connector", json!({"path": p, "from": a["id"], "to": b["id"]})).unwrap();
+    let lambda = first(&mut client, &board, json!({"query": "lambda", "group": "AWS"}));
+    let github = first(&mut client, &board, json!({"query": "github", "group": "Brands"}));
+    let a = client.tool("add_icon", json!({"path": p, "icon": lambda["id"], "x": 0, "y": 0, "label": "Lambda"})).unwrap();
+    let b = client.tool("add_icon", json!({"path": p, "icon": github["id"], "x": 300, "y": 0})).unwrap();
+    client.tool("add_connector", json!({"path": p, "from": a["id"], "to": b["id"]})).unwrap();
     assert!(objects(&board).iter().any(|o| matches!(o.kind, Kind::Connector(_))));
     for out in ["icons.png", "icons.svg"] {
         let out = board.with_file_name(out);
-        c.tool("export", json!({"path": p, "output": out.to_str().unwrap()})).unwrap();
+        client.tool("export", json!({"path": p, "output": out.to_str().unwrap()})).unwrap();
         let bytes = std::fs::read(&out).unwrap();
         assert!(bytes.len() > 500, "{} is almost empty", out.display());
         if out.extension().is_some_and(|e| e == "png") {
@@ -403,7 +407,7 @@ fn two_icons_can_be_connected_and_the_board_exports() {
         }
     }
     // the description of the board lists the icons as images
-    let d = c.tool("describe_board", json!({"path": p})).unwrap();
+    let d = client.tool("describe_board", json!({"path": p})).unwrap();
     assert!(d.to_string().contains("image"), "{d}");
 }
 

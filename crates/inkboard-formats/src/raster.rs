@@ -1,6 +1,7 @@
 //! PNG rendering of an SVG exported by the engine (pure Rust, no window).
 
 use crate::common::FormatError;
+use inkboard_core::num;
 use resvg::{tiny_skia, usvg};
 
 use resvg::usvg::fontdb as render_fontdb;
@@ -71,6 +72,10 @@ pub struct Raster {
 }
 
 /// Rasterizes an SVG so that its longest side is exactly `longest_px` pixels (the size comes from the parsed document, whatever its attributes).
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or its pixel size is invalid or too large.
 pub fn svg_to_raster_fit(svg: &str, longest_px: u32, with_fonts: bool) -> Result<Raster, FormatError> {
     let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
     let opt = usvg::Options { fontdb, ..usvg::Options::default() };
@@ -80,20 +85,27 @@ pub fn svg_to_raster_fit(svg: &str, longest_px: u32, with_fonts: bool) -> Result
     if longest.is_nan() || longest <= 0.0 {
         return Err(FormatError::Unsupported("invalid image dimensions".into()));
     }
-    let scale = longest_px as f32 / longest;
-    let (w, h) = (((size.width() * scale).round() as u32).clamp(1, longest_px), ((size.height() * scale).round() as u32).clamp(1, longest_px));
+    let scale = num::f32(f64::from(longest_px)) / longest;
+    let (w, h) = (
+        num::to_u32(f64::from((size.width() * scale).round())).clamp(1, longest_px),
+        num::to_u32(f64::from((size.height() * scale).round())).clamp(1, longest_px),
+    );
     let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| FormatError::Unsupported("image too large".into()))?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height()), &mut pixmap.as_mut());
+    resvg::render(&tree, tiny_skia::Transform::from_scale(num::f32(f64::from(w)) / size.width(), num::f32(f64::from(h)) / size.height()), &mut pixmap.as_mut());
     Ok(Raster { width: w, height: h, rgba_premultiplied: pixmap.take() })
 }
 
 /// Rasterizes an SVG. `with_fonts`: loads the system fonts (only needed when the SVG contains text; icons have none).
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or its pixel size is invalid or too large.
 pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, FormatError> {
     let fontdb = if with_fonts { system_fonts() } else { std::sync::Arc::new(usvg::fontdb::Database::new()) };
     let opt = usvg::Options { fontdb, ..usvg::Options::default() };
     let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     let size = tree.size();
-    let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
+    let (w, h) = (num::to_u32(f64::from((size.width() * scale).ceil())), num::to_u32(f64::from((size.height() * scale).ceil())));
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
         return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
@@ -103,6 +115,10 @@ pub fn svg_to_raster(svg: &str, scale: f32, with_fonts: bool) -> Result<Raster, 
 }
 
 /// Converts an SVG to PNG. `scale`: 1.0 = SVG size, 2.0 = double resolution.
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or rasterized, or the PNG encoding fails.
 pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, FormatError> {
     svg_to_png_with(svg, scale, system_fonts())
 }
@@ -111,7 +127,7 @@ fn svg_to_png_with(svg: &str, scale: f32, fontdb: std::sync::Arc<usvg::fontdb::D
     let opt = usvg::Options { fontdb, ..usvg::Options::default() };
     let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     let size = tree.size();
-    let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
+    let (w, h) = (num::to_u32(f64::from((size.width() * scale).ceil())), num::to_u32(f64::from((size.height() * scale).ceil())));
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
         return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
@@ -121,6 +137,10 @@ fn svg_to_png_with(svg: &str, scale: f32, fontdb: std::sync::Arc<usvg::fontdb::D
 }
 
 /// Converts an SVG to vector PDF (text and images preserved).
+///
+/// # Errors
+///
+/// [`FormatError`] when the SVG cannot be parsed or converted.
 pub fn svg_to_pdf(svg: &str) -> Result<Vec<u8>, FormatError> {
     svg_to_pdf_with(svg, pdf_fonts(use_system_fonts()))
 }

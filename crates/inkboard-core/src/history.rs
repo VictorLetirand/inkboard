@@ -18,6 +18,7 @@ pub enum Op {
 }
 
 impl Op {
+    #[must_use]
     pub fn inverse(&self) -> Op {
         match self.clone() {
             Op::Insert { page, index, obj } => Op::Remove { page, index, obj },
@@ -77,7 +78,7 @@ impl Document {
             }
             Op::SetLayers { page, after, .. } => {
                 if let Some(p) = self.page_mut(page) {
-                    p.layers = after.clone();
+                    p.layers.clone_from(after);
                 }
             }
             Op::AddPage { index, page } => {
@@ -91,11 +92,11 @@ impl Document {
             }
             Op::RenamePage { page, after, .. } => {
                 if let Some(p) = self.page_mut(page) {
-                    p.name = after.clone();
+                    p.name.clone_from(after);
                 }
             }
             Op::SetBackground { after, .. } => self.background = *after,
-            Op::SetName { after, .. } => self.name = after.clone(),
+            Op::SetName { after, .. } => self.name.clone_from(after),
         }
     }
 }
@@ -115,6 +116,7 @@ impl Default for History {
 }
 
 impl History {
+    #[must_use]
     pub fn new(limit: usize) -> Self {
         Self { undo: Vec::new(), redo: Vec::new(), limit }
     }
@@ -128,9 +130,11 @@ impl History {
             self.undo.remove(0);
         }
     }
+    #[must_use]
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
+    #[must_use]
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
