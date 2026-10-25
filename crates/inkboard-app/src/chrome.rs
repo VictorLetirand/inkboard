@@ -15,6 +15,9 @@ use std::time::Duration;
 /// Window width below which the toolbar moves under the title bar (`@media (max-width:1180px)`).
 const NARROW: f32 = 1180.0;
 
+/// Window width below which the row of tools does not fit any more (it then scrolls sideways).
+const TOOLS_ROW_WIDTH: f32 = 820.0;
+
 /// Toolbar tools, in separated groups; `(tool, icon, label)`.
 const TOOL_GROUPS: &[&[(Tool, &str, &str)]] = &[
     &[(Tool::Select, "select", "Select"), (Tool::Hand, "hand", "Hand")],
@@ -106,56 +109,77 @@ fn save_state(app: &App) -> String {
 /* -------------------------------------------------------------- outils */
 
 fn tool_card(app: &mut App, ctx: &Context, narrow: bool) {
+    let view_only = app.view_only();
     let (anchor, offset) = if narrow { (Align2::LEFT_TOP, vec2(12.0, 62.0)) } else { (Align2::CENTER_TOP, vec2(0.0, 12.0)) };
     theme::floating(ctx, "tools", anchor, offset, 4, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 1.0;
-            for (gi, group) in TOOL_GROUPS.iter().enumerate() {
-                if gi > 0 {
-                    theme::vsep(ui);
+        if narrow && ctx.content_rect().width() < TOOLS_ROW_WIDTH {
+            // a phone is narrower than the row of tools (about 760 px): it scrolls sideways (a drag) instead of losing the last tools
+            let room = ctx.content_rect().width() - 2.0 * offset.x - 16.0;
+            let out = egui::ScrollArea::horizontal()
+                .max_width(room.max(120.0))
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| tool_row(app, ui, view_only));
+            // a chevron tells that there are more tools to drag into view
+            if out.state.offset.x + out.inner_rect.width() < out.content_size.x - 1.0 {
+                let at = egui::pos2(out.inner_rect.right() - 6.0, out.inner_rect.center().y);
+                let color = ui.visuals().strong_text_color();
+                ui.painter().text(at, Align2::RIGHT_CENTER, "›", egui::FontId::proportional(22.0), color);
+            }
+        } else {
+            tool_row(app, ui, view_only);
+        }
+    });
+}
+
+/// The tools in one row.
+fn tool_row(app: &mut App, ui: &mut Ui, view_only: bool) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 1.0;
+        for (gi, group) in TOOL_GROUPS.iter().enumerate() {
+            if gi > 0 {
+                theme::vsep(ui);
+            }
+            for (tool, icon, label) in *group {
+                let key = Action::for_tool(*tool).map(|a| app.keymap.label(a)).unwrap_or_default();
+                let mut tip = if key.is_empty() { t(label) } else { format!("{} ({key})", t(label)) };
+                let lockable = lockable(*tool);
+                if lockable {
+                    tip = format!("{tip}\n{}", t("Double-click to lock"));
                 }
-                for (tool, icon, label) in *group {
-                    let key = Action::for_tool(*tool).map(|a| app.keymap.label(a)).unwrap_or_default();
-                    let mut tip = if key.is_empty() { t(label) } else { format!("{} ({key})", t(label)) };
-                    let lockable = lockable(*tool);
-                    if lockable {
-                        tip = format!("{tip}\n{}", t("Double-click to lock"));
-                    }
-                    let (active, locked) = (app.tool == *tool, app.tool == *tool && app.tool_lock && lockable);
-                    let resp = theme::icon_button(ui, icon, active, true);
-                    if locked {
-                        theme::lock_badge(ui, resp.rect);
-                    }
-                    let name = if locked { format!("{} ({})", t(label), t("locked")) } else { t(label) };
-                    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, &name));
-                    let resp = resp.on_hover_text(tip);
-                    if resp.double_clicked() && lockable {
-                        app.set_tool(*tool);
-                        app.tool_lock = true;
-                    } else if resp.clicked() {
-                        app.set_tool(*tool);
-                    }
+                let (active, locked) = (app.tool == *tool, app.tool == *tool && app.tool_lock && lockable);
+                let resp = theme::icon_button(ui, icon, active, !view_only || matches!(tool, Tool::Hand));
+                if locked {
+                    theme::lock_badge(ui, resp.rect);
+                }
+                let name = if locked { format!("{} ({})", t(label), t("locked")) } else { t(label) };
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, &name));
+                let resp = resp.on_hover_text(tip);
+                if resp.double_clicked() && lockable {
+                    app.set_tool(*tool);
+                    app.tool_lock = true;
+                } else if resp.clicked() {
+                    app.set_tool(*tool);
                 }
             }
-            if theme::icon_button(ui, "image", false, true).on_hover_text(t("Insert image")).clicked() {
-                app.insert_images_dialog();
-            }
-            if theme::icon_button(ui, "library", app.palette.open, true).on_hover_text(t("Icon library")).clicked() {
-                app.palette.toggle();
-            }
-            let key = Action::for_tool(Tool::Laser).map(|a| app.keymap.label(a)).unwrap_or_default();
-            if theme::icon_button(ui, "laser", app.tool == Tool::Laser, true).on_hover_text(format!("{} ({key})", t("Laser pointer"))).clicked() {
-                app.set_tool(Tool::Laser);
-            }
-            theme::vsep(ui);
-            let name = t("Keep the tool active after drawing");
-            let tip = format!("{name} ({})", app.keymap.label(Action::ToolLock));
-            let resp = theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, true);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, app.tool_lock, &name));
-            if resp.on_hover_text(tip).clicked() {
-                app.tool_lock = !app.tool_lock;
-            }
-        });
+        }
+        if theme::icon_button(ui, "image", false, !view_only).on_hover_text(t("Insert image")).clicked() {
+            app.insert_images_dialog();
+        }
+        if theme::icon_button(ui, "library", app.palette.open, !view_only).on_hover_text(t("Icon library")).clicked() {
+            app.palette.toggle();
+        }
+        let key = Action::for_tool(Tool::Laser).map(|a| app.keymap.label(a)).unwrap_or_default();
+        if theme::icon_button(ui, "laser", app.tool == Tool::Laser, true).on_hover_text(format!("{} ({key})", t("Laser pointer"))).clicked() {
+            app.set_tool(Tool::Laser);
+        }
+        theme::vsep(ui);
+        let name = t("Keep the tool active after drawing");
+        let tip = format!("{name} ({})", app.keymap.label(Action::ToolLock));
+        let resp = theme::icon_button(ui, if app.tool_lock { "lock" } else { "unlock" }, app.tool_lock, !view_only);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, app.tool_lock, &name));
+        if resp.on_hover_text(tip).clicked() {
+            app.tool_lock = !app.tool_lock;
+        }
     });
 }
 
@@ -170,11 +194,11 @@ fn zoom_card(app: &mut App, ctx: &Context) {
     theme::floating(ctx, "zoom", Align2::LEFT_BOTTOM, vec2(12.0, -12.0), 3, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
-            if theme::icon_button(ui, "undo", false, app.ed.can_undo()).on_hover_text(format!("{} ({})", t("Undo"), app.keymap.label(Action::Undo))).clicked() {
-                app.ed.undo();
+            if theme::icon_button(ui, "undo", false, app.can_undo()).on_hover_text(format!("{} ({})", t("Undo"), app.keymap.label(Action::Undo))).clicked() {
+                app.undo();
             }
-            if theme::icon_button(ui, "redo", false, app.ed.can_redo()).on_hover_text(format!("{} ({})", t("Redo"), app.keymap.label(Action::Redo))).clicked() {
-                app.ed.redo();
+            if theme::icon_button(ui, "redo", false, app.can_redo()).on_hover_text(format!("{} ({})", t("Redo"), app.keymap.label(Action::Redo))).clicked() {
+                app.redo();
             }
             theme::vsep(ui);
             if theme::icon_button(ui, "minus", false, true).on_hover_text(t("Zoom out")).clicked() {
@@ -234,6 +258,7 @@ fn help_card(app: &mut App, ctx: &Context) {
     theme::floating(ctx, "help", Align2::RIGHT_BOTTOM, vec2(-12.0, -12.0), 3, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            crate::share_ui::title_button(app, ui);
             let timer = theme::icon_button(ui, "timer", app.timer.is_some(), true).on_hover_text(t("Timer (time-box a workshop or a presentation)"));
             egui::Popup::from_toggle_button_response(&timer).close_behavior(egui::PopupCloseBehavior::CloseOnClick).width(230.0).show(|ui| timer_menu(app, ui));
             if theme::icon_button(ui, "help", false, true).on_hover_text(t("Keyboard shortcuts")).clicked() {
@@ -292,7 +317,12 @@ fn pages_card(app: &mut App, ctx: &Context) {
 /* ------------------------------------------------------------ menu principal */
 
 fn mi(ui: &mut Ui, icon: &str, label: &str, key: &str) -> bool {
-    let clicked = theme::menu_item(ui, Some(icon), label, key, false, true);
+    mi_if(ui, icon, label, key, true)
+}
+
+/// Menu row that may be disabled (grayed out, no click).
+fn mi_if(ui: &mut Ui, icon: &str, label: &str, key: &str, enabled: bool) -> bool {
+    let clicked = theme::menu_item(ui, Some(icon), label, key, false, enabled);
     if clicked {
         ui.close();
     }
@@ -382,6 +412,7 @@ fn language_items(app: &mut App, ui: &mut Ui) {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "one menu, one entry after the other")]
 fn main_menu(app: &mut App, ui: &mut Ui) {
     // opening the menu validates the text being typed (saving or exporting from it must include it)
     app.commit_editing();
@@ -391,13 +422,23 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
     egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
         theme::menu_style(ui);
         ui.set_min_width(238.0);
-        if mi(ui, "filenew", "New board", &key(app, Action::New)) {
+        // in a shared session the board is the host's: no new board, no opening another one
+        let (guest, view_only) = (app.guest_active(), app.view_only());
+        if mi_if(ui, "filenew", "New board", &key(app, Action::New), !guest) {
             app.request_new_document();
         }
-        if mi(ui, "folder", "Open / import a file…", &key(app, Action::Open)) {
+        if mi_if(ui, "folder", "Open / import a file…", &key(app, Action::Open), !guest) {
             app.open_dialog();
         }
-        if mi(ui, "mermaid", "Import Mermaid…", "") {
+        if guest || app.guest.is_some() {
+            if mi(ui, "play", "Leave the session", "") {
+                app.leave_guest();
+                app.join.window = None;
+            }
+        } else if mi(ui, "play", "Join a session…", "") {
+            app.open_join_window(None);
+        }
+        if mi_if(ui, "mermaid", "Import Mermaid…", "", !guest) {
             app.dialog = Some(Dialog::Mermaid {
                 text: t("flowchart TD\n  A[Idea] --> B{Feasible?}\n  B -->|Yes| C[Prototype]\n  B -->|No| D[Drop it]"),
                 new_board: false,
@@ -413,33 +454,33 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         export_items(app, ui);
         theme::menu_sep(ui);
         theme::menu_label(ui, "Insert");
-        if mi(ui, "image", "Image…", "") {
+        if mi_if(ui, "image", "Image…", "", !view_only) {
             app.insert_images_dialog();
         }
-        if mi(ui, "library", "Icon library…", "") {
+        if mi_if(ui, "library", "Icon library…", "", !view_only) {
             app.palette.toggle();
         }
-        if mi(ui, "code", "Code block", "") {
+        if mi_if(ui, "code", "Code block", "", !view_only) {
             app.insert_code_block();
         }
-        if mi(ui, "formula", "Formula (LaTeX)…", "") {
+        if mi_if(ui, "formula", "Formula (LaTeX)…", "", !view_only) {
             app.dialog = Some(Dialog::Formula {
                 src: r"E = mc^2, \quad \sum_{i=1}^{n} x_i \leq \frac{a+b}{2}".into(),
                 editing: None,
                 preview: crate::app::FormulaPreview::default(),
             });
         }
-        if mi(ui, "vote", "Vote dot", "") {
+        if mi_if(ui, "vote", "Vote dot", "", !view_only) {
             app.set_tool(Tool::Vote);
         }
         theme::menu_sep(ui);
         theme::menu_label(ui, "Edit");
-        if theme::menu_item(ui, Some("undo"), "Undo", &key(app, Action::Undo), false, app.ed.can_undo()) {
-            app.ed.undo();
+        if theme::menu_item(ui, Some("undo"), "Undo", &key(app, Action::Undo), false, app.can_undo()) {
+            app.undo();
             ui.close();
         }
-        if theme::menu_item(ui, Some("redo"), "Redo", &key(app, Action::Redo), false, app.ed.can_redo()) {
-            app.ed.redo();
+        if theme::menu_item(ui, Some("redo"), "Redo", &key(app, Action::Redo), false, app.can_redo()) {
+            app.redo();
             ui.close();
         }
         if mi(ui, "all", "Select all", &key(app, Action::SelectAll)) {
@@ -450,6 +491,17 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         }
         theme::menu_sep(ui);
         background_items(app, ui, &p);
+        if theme::menu_item(ui, Some("select"), "Animate the agent", "", app.agent.animate, true) {
+            app.agent.animate = !app.agent.animate;
+            crate::presence::save_animate(app.agent.animate);
+            if !app.agent.animate {
+                app.agent.state.clear();
+            }
+        }
+        if !crate::fonts::ALWAYS_EMBEDDED && theme::menu_item(ui, Some("edit"), "Use built-in fonts", "", app.fonts_pref, true) {
+            app.fonts_pref = !app.fonts_pref;
+            crate::fonts::save_embedded_pref(app.fonts_pref);
+        }
         theme::menu_sep(ui);
         theme::menu_label(ui, "View");
         if mi(ui, "play", "Present full screen", &key(app, Action::Present)) {
@@ -469,7 +521,7 @@ fn main_menu(app: &mut App, ui: &mut Ui) {
         if mi(ui, "keyboard", "Keyboard shortcuts…", "") {
             app.dialog = Some(Dialog::Shortcuts { filter: String::new(), recording: None });
         }
-        if mi(ui, "trashAll", "Clear the whole board", "") {
+        if mi_if(ui, "trashAll", "Clear the whole board", "", !guest) {
             let ids: Vec<Id> = app.ed.page().objects.iter().map(|o| o.id.clone()).collect();
             app.ed.remove(&ids);
             app.sel.clear();

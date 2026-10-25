@@ -1,0 +1,14 @@
+{
+  "name": "inkboard-web-test",
+  "private": true,
+  "type": "module",
+  "description": "Drives the built web page in an installed Chrome (puppeteer-core); see docs/WEB.md",
+  "scripts": {
+    "test": "node page.mjs",
+    "e2e": "node e2e.mjs",
+    "sizes": "node sizes.mjs ../dist"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

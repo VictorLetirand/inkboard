@@ -2,6 +2,38 @@
 //!
 //! The protocol is implemented by hand (JSON-RPC 2.0, one JSON message per line on stdin/stdout): `initialize`, `ping`, `tools/list`, `tools/call`.
 //! See [`tools`] for the list of tools.
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::float_cmp,
+        clippy::many_single_char_names,
+        clippy::similar_names,
+        clippy::assert_is_empty,
+        clippy::default_trait_access,
+        clippy::format_collect,
+        clippy::format_push_string,
+        clippy::too_many_lines,
+        clippy::items_after_statements,
+        clippy::needless_raw_string_hashes,
+        clippy::needless_pass_by_value,
+        clippy::explicit_iter_loop,
+        clippy::needless_for_each,
+        clippy::collapsible_else_if,
+        clippy::single_match_else,
+        clippy::manual_assert,
+        clippy::redundant_closure_for_method_calls,
+        clippy::unnested_or_patterns,
+        clippy::range_plus_one,
+        clippy::clone_on_copy,
+        clippy::match_same_arms,
+        clippy::struct_excessive_bools
+    )
+)]
 
 pub mod live;
 pub mod resources;
@@ -11,6 +43,10 @@ use serde_json::{Value, json};
 
 /// Protocol versions this server can speak; the most recent one is offered by default.
 const PROTOCOL_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
+
+/// Resources a client may be subscribed to at once, and the longest URI it may use (the watcher looks at each one every 600 ms).
+const MAX_SUBSCRIPTIONS: usize = 256;
+const MAX_URI_LEN: usize = 4096;
 
 /// Execution context: optional root that confines all file paths.
 #[derive(Clone, Debug, Default)]
@@ -85,6 +121,9 @@ impl Server {
                 let uri = msg.pointer("/params/uri").and_then(Value::as_str).unwrap_or("").to_owned();
                 let mut subs = self.subs.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if method == "resources/subscribe" {
+                    if uri.len() > MAX_URI_LEN || (subs.len() >= MAX_SUBSCRIPTIONS && !subs.contains(&uri)) {
+                        return Some(err(id, -32602, &format!("too many subscriptions (at most {MAX_SUBSCRIPTIONS}) or URI too long")));
+                    }
                     subs.insert(uri);
                 } else {
                     subs.remove(&uri);

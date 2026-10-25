@@ -1,0 +1,34 @@
+[package]
+name = "inkboard-net"
+description = "Network transport of shared sessions (iroh: QUIC, NAT traversal, relays; relay only in a browser) and relay diagnostics."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+inkboard-session = { path = "../inkboard-session" }
+iroh = { version = "1.4.0", default-features = false, features = ["tls-ring"] }
+# Channels only: no runtime is needed (the native transport adds its own features, the browser one has none).
+tokio = { version = "1", default-features = false, features = ["sync"] }
+
+# Native only: relay diagnostics (no HTTP client crate) and the runtime owned by the transport.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Already in the tree through iroh: used directly by the relay diagnostics.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread", "sync", "time"] }
+webpki-roots = "1"
+
+# Browser only (relay only, no direct path): timers and tasks come from the page. `ring` compiles C for wasm32 and needs a clang
+# with the WebAssembly backend (see context/mcp-remote/lot-f2-notes.md); `getrandom` needs its `wasm_js` backend (.cargo/config.toml).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+n0-future = "0.3"
+wasm-bindgen-futures = "0.4"
+# The HTTPS probe of the relay (a `fetch` with a time-out), see `web_transport::probe_relay`.
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "Navigator", "Request", "RequestCache", "RequestCredentials", "RequestInit", "RequestMode", "Window"] }
+
+[lints]
+workspace = true

@@ -34,6 +34,7 @@ fn next_seed() -> u64 {
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0x9E37_79B9, |d| d.as_secs().wrapping_mul(1_000_000_000).wrapping_add(u64::from(d.subsec_nanos())));
+    // no clock on wasm32: the web entry point must call `seed_ids` (with crypto.getRandomValues) before the first id
     #[cfg(target_arch = "wasm32")]
     let t = 0x9E37_79B9_7F4A_7C15u64;
     let t = t | 1;

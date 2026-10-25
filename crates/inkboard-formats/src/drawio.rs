@@ -508,12 +508,18 @@ pub fn html_to_rich(h: &str) -> RichText {
     RichText(spans)
 }
 
+/// Largest compressed diagram once inflated (a few kilobytes of deflate can stand for gigabytes).
+const MAX_INFLATED_BYTES: u64 = 64 << 20;
+
 fn inflate(raw: &str) -> Result<String, FormatError> {
     use base64::{Engine, engine::general_purpose::STANDARD};
     let bytes =
         STANDARD.decode(raw.split_whitespace().collect::<String>().as_bytes()).map_err(|_| FormatError::Invalid("unreadable compressed diagram".into()))?;
     let mut s = String::new();
-    DeflateDecoder::new(bytes.as_slice()).read_to_string(&mut s).map_err(|_| FormatError::Invalid("cannot decompress".into()))?;
+    DeflateDecoder::new(bytes.as_slice()).take(MAX_INFLATED_BYTES + 1).read_to_string(&mut s).map_err(|_| FormatError::Invalid("cannot decompress".into()))?;
+    if s.len() as u64 > MAX_INFLATED_BYTES {
+        return Err(FormatError::Invalid("compressed diagram too large once decompressed".into()));
+    }
     let decoded = percent_encoding::percent_decode_str(&s).decode_utf8_lossy().into_owned();
     Ok(decoded)
 }

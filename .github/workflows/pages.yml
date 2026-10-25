@@ -1,0 +1,57 @@
+# Publishes the web page (guests join a shared session from a browser) on GitHub Pages.
+#
+# DISABLED until decision D3 (where the page is published, and under which address) is taken: it only runs by hand
+# (workflow_dispatch) and both jobs need the repository variable PAGES_ENABLED=true, which does not exist. To enable: decide D3, turn on Pages for the repository
+# (Settings > Pages > Source: GitHub Actions), create the variable PAGES_ENABLED=true, and add the trigger you want (for example a release tag).
+# Nothing here touches the repository's settings or secrets.
+name: Pages
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: vars.PAGES_ENABLED == 'true' # off until decision D3: the variable does not exist
+    runs-on: ubuntu-latest
+    env:
+      CC_wasm32_unknown_unknown: clang
+      AR_wasm32_unknown_unknown: llvm-ar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: wasm32-unknown-unknown }
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang lld llvm
+      - name: Install Trunk 0.22.0 (checked against its published SHA-256)
+        run: |
+          curl -fsSL -o trunk.tar.gz https://github.com/trunk-rs/trunk/releases/download/v0.22.0/trunk-x86_64-unknown-linux-gnu.tar.gz
+          echo "f78c1989240c56592d8cfc4df5cc27399a3ff66a3f9cc819e16f1e3d809ce7c2  trunk.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf trunk.tar.gz -C "$HOME/.local/bin" trunk
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # the links of the page are relative (public_url = "./"): it works under https://<user>.github.io/<repo>/ as well as at a root
+      - name: Build the page
+        working-directory: crates/inkboard-app/web
+        run: trunk build --release
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: crates/inkboard-app/web/dist
+
+  deploy:
+    if: vars.PAGES_ENABLED == 'true' # off until decision D3: the variable does not exist
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

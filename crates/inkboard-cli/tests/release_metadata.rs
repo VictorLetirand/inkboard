@@ -46,15 +46,31 @@ fn installers_declare_the_file_association() {
     assert_eq!(value(&iw, "exe"), "inkboard.exe", "Installway: the association opens the application");
 }
 
-/// Targets of the released binaries (same list as `scripts/gen_third_party.py`).
-const RELEASE_TARGETS: [&str; 4] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"];
+/// Targets of the released binaries and of the web page (same list as `scripts/gen_third_party.py`).
+const RELEASE_TARGETS: [&str; 5] =
+    ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin", "wasm32-unknown-unknown"];
 
 /// `(name, version)` of the third-party crates compiled into the binaries for one target (normal and build dependencies, no dev dependencies).
 /// Prerequisite: `cargo fetch --locked` (offline, `cargo tree` needs the sources of the crates of the other platforms too; the CI runs it before the tests).
 fn embedded_crates(target: &str) -> std::collections::BTreeSet<(String, String)> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let out = std::process::Command::new(cargo)
-        .args(["tree", "--workspace", "-e", "normal,build", "--prefix", "none", "-f", "{p}", "--offline", "--locked", "--target", target])
+        .args([
+            "tree",
+            "--workspace",
+            "--exclude",
+            "inkboard-crowd",
+            "-e",
+            "normal,build",
+            "--prefix",
+            "none",
+            "-f",
+            "{p}",
+            "--offline",
+            "--locked",
+            "--target",
+            target,
+        ])
         .current_dir(root())
         .output()
         .expect("cargo tree can be started");

@@ -1,0 +1,46 @@
+# Example configuration of an iroh relay (iroh-relay 1.4.x) for Inkboard.
+# Field names checked against the source of iroh-relay 1.4.0 (src/main.rs) and the
+# iroh documentation (self-hosted relay, rate limiting). See docs/RELAY.md.
+
+# Plain-HTTP side. Inside the container, IPv4 is used so that it also works where the
+# container has no IPv6 (the upstream default is "[::]:80").
+http_bind_addr = "0.0.0.0:80"
+
+# The metrics server is on by default (port 9090). Nothing needs it here, and it must
+# never be reachable from the Internet: switch it off.
+enable_metrics = false
+
+# QUIC address discovery (UDP 7842): helps computers find a direct path. Optional.
+# If you enable it, also publish 7842/udp in docker-compose.yml.
+# Whether Inkboard makes use of it with a custom relay: not verified.
+enable_quic_addr_discovery = false
+
+[tls]
+# HTTPS side: the relay itself. Needs TCP 443.
+https_bind_addr = "0.0.0.0:443"
+
+# Your relay's domain name (the A/AAAA record must point at this machine).
+hostname = "relay.example.org"
+
+# Automatic certificate from Let's Encrypt. The source of iroh-relay answers the
+# challenge on port 443 (TLS-ALPN-01). `contact` is mandatory in this mode.
+cert_mode = "LetsEncrypt"
+contact = "you@example.org"
+cert_dir = "/var/lib/iroh-relay/certs"
+
+# While testing, `prod_tls = false` uses Let's Encrypt's staging service (avoids its
+# rate limits) but gives certificates that browsers and Inkboard do not trust.
+# prod_tls = false
+
+# Per-client limit on the data the relay reads from each connection (token bucket).
+# Off by default upstream: set a value suited to your machine's bandwidth.
+# 2_000_000 bytes/s is about 16 Mbit/s per connection (the public relays gave
+# 5 to 17 Mbit/s in our measures). Data is not dropped, only slowed down.
+[limits.client.rx]
+bytes_per_second = 2_000_000
+max_burst_bytes = 4_000_000
+
+# Access control: leave the default (everybody may use the relay; it only sees
+# encrypted data). Restrictions exist upstream (allowlist, denylist, shared token,
+# HTTP check) but Inkboard's compatibility with them is NOT verified: do not enable.
+# access = "everyone"
