@@ -3,6 +3,17 @@
 All notable changes to Inkboard are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen, e.g. `0.2.0-beta.1`).
 
+## [Unreleased]
+
+### Fixed
+
+- **Mermaid import:** a link written to a subgraph (`B --> Back`) no longer creates a stray box named like the subgraph: it is attached to the subgraph's frame. A `;` inside a quoted label (`A["a; b"]`) no longer cuts the node in two.
+- **MCP server:** a page given as text (`"2"`) selects that page number; `batch` accepts the `inkboard_` prefix that some clients add to tool names.
+
+### Added
+
+- **MCP `export`:** creates the missing folders of `output` (under the allowed root, as `render` does), and a `.png` can be given a `width` in pixels or a `scale`, so that diagrams come out at the same width.
+
 ## [0.2.0-beta.1] - Unreleased
 
 **Pre-release.** The headline feature, live sharing, is new: it is covered by automated tests (including simulated crowds and hostile inputs) and

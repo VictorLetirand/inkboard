@@ -148,11 +148,40 @@ pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, FormatError> {
     svg_to_png_with(svg, scale, system_fonts())
 }
 
+/// Converts an SVG to PNG of exactly `width` pixels across (the height follows the aspect ratio), whatever the size of the SVG.
+///
+/// # Errors
+///
+/// Same as [`svg_to_png`].
+pub fn svg_to_png_width(svg: &str, width: u32) -> Result<Vec<u8>, FormatError> {
+    png_with(svg, Sizing::Width(width), system_fonts())
+}
+
+/// How big a PNG is drawn: `Scale` times the size of the SVG, or a fixed `Width` in pixels.
+#[derive(Clone, Copy)]
+enum Sizing {
+    Scale(f32),
+    Width(u32),
+}
+
 fn svg_to_png_with(svg: &str, scale: f32, fontdb: std::sync::Arc<usvg::fontdb::Database>) -> Result<Vec<u8>, FormatError> {
+    png_with(svg, Sizing::Scale(scale), fontdb)
+}
+
+fn png_with(svg: &str, sizing: Sizing, fontdb: std::sync::Arc<usvg::fontdb::Database>) -> Result<Vec<u8>, FormatError> {
     let opt = sandboxed_options!(usvg, fontdb);
     let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     let size = tree.size();
-    let (w, h) = (num::to_u32(f64::from((size.width() * scale).ceil())), num::to_u32(f64::from((size.height() * scale).ceil())));
+    let scale = match sizing {
+        Sizing::Scale(s) => s,
+        Sizing::Width(w) if size.width() > 0.0 => num::f32(f64::from(w)) / size.width(),
+        Sizing::Width(_) => 0.0,
+    };
+    let w = match sizing {
+        Sizing::Width(w) => w,
+        Sizing::Scale(_) => num::to_u32(f64::from((size.width() * scale).ceil())),
+    };
+    let h = num::to_u32(f64::from((size.height() * scale).ceil()));
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 200_000_000 {
         return Err(FormatError::Unsupported("invalid or too large image dimensions".into()));
     }
