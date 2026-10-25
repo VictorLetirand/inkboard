@@ -72,7 +72,7 @@ Tableaux complets : `charge/matrice-profil-realiste.md` (profil par défaut : 10
 
 - **Avant les correctifs du lot** (même scénario, 100 invités × 20 000 objets) : tours de l'hôte jusqu'à 31 s, 35 exclusions, divergences. **Après** : plus aucun gel ni exclusion, aucune divergence.
 - **Convergence** : dans le profil réaliste, 19/20, 48/50, 90/100 invités ont le même tableau que l'hôte à la fin. Les non-convergés sont toujours les mêmes (G9, G26, G76…) : les invités lents (512 kbit/s, 200 ms) ou figés du profil ; à 512 kbit/s un instantané de 4 Mio prend plus d'une minute, donc ils reçoivent encore à la fin des 52 s. **Contrôle sans invités dégradés : 50/50 et 100/100 convergent** (5 000 et 20 000 objets), aucun invité divergent.
-- **Mémoire de l'hôte** : 140–200 Mio (≤ 20 invités), 250–350 Mio (50), 660–1 040 Mio (100).
+- **Mémoire de l'hôte** : 140–245 Mio (≤ 20 invités), 250–350 Mio (50), 660–1 040 Mio (100).
 - **Conclusion pour la conception** : 20 participants sont confortables même sur un gros tableau (confirmation < 20 ms médiane, hôte < 0,3 cœur) ; 50 sont corrects ; 100 fonctionnent sans casse mais avec des pics de latence de plusieurs secondes et un hôte à 2–3 cœurs : à ne pas promettre comme usage normal. Le plafond par défaut de 10 reste très prudent.
 
 ### Limites et points non expliqués
