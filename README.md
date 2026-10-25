@@ -40,13 +40,13 @@ Grab the installer for your system from the [**Releases**](../../releases) page 
 
 | System | File | Notes |
 |---|---|---|
-| **Windows 10/11** | `inkboard_*_x64-setup.exe` or `inkboard_*_x64_en-US.msi` | The `.exe` installs for the current user (no administrator rights needed); the `.msi` is the classic Windows Installer package. |
+| **Windows 10/11** | `inkboard_*_x64-setup.exe` | Installs for the current user (no administrator rights needed). |
 | **Linux** (x86-64) | `inkboard_*_amd64.deb` or `inkboard_*_x86_64.AppImage` | `sudo apt install ./inkboard_*.deb`, or `chmod +x *.AppImage && ./*.AppImage`. Needs OpenGL and X11/Wayland libraries (`libxkbcommon`). |
 | **macOS** (Apple Silicon / Intel) | `Inkboard_*.dmg` | Drag *Inkboard* to *Applications*. |
 
 The installers also provide the `ink` command-line tool and the `inkboard-mcp` server next to the app.
 
-**On Windows**, download `inkboard_*_x64-setup.exe` and double-click it: it installs for your user in a few seconds (no administrator rights, nothing else to install first), adds a Start menu shortcut, and uninstalls cleanly from *Settings → Apps*. Add `/S` for a silent install. A `winget` package is being prepared (`winget install Inkboard.Inkboard`).
+**On Windows**, download `inkboard_*_x64-setup.exe` and double-click it: it installs for your user in a few seconds (no administrator rights, nothing else to install first), adds a Start menu shortcut, and uninstalls cleanly from *Settings → Apps*. Add `--silent` for a silent install. A `winget` package is being prepared (`winget install Inkboard.Inkboard`).
 
 > **The installers are not code-signed yet**, so your system will warn you the first time:
 > on **Windows**, SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*; on **macOS**, Control-click the app → *Open*.
