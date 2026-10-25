@@ -8,12 +8,12 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 ### Fixed
 
 - **Mermaid import:** the content of each subgraph is laid out on its own and placed as one block, so the frames of subgraphs no longer overlap (nested ones stay inside their parent), and the `direction` written in a subgraph is honoured when no link joins it to the outside (state diagrams: composite states too).
-
 - **Mermaid import:** a link written to a subgraph (`B --> Back`) no longer creates a stray box named like the subgraph: it is attached to the subgraph's frame. A `;` inside a quoted label (`A["a; b"]`) no longer cuts the node in two.
 - **MCP server:** a page given as text (`"2"`) selects that page number; `batch` accepts the `inkboard_` prefix that some clients add to tool names.
 
 ### Added
 
+- **Mermaid import:** `classDiagram` and `erDiagram`. A class or an entity becomes a table (name, attributes, methods; or type, name, keys and comment) and links become bound connectors: inheritance and realization end in a triangle, composition and aggregation in a dot (named on the link, as the model has no diamond head), and an entity link spells out its cardinalities. `direction` is honoured.
 - **MCP `export`:** creates the missing folders of `output` (under the allowed root, as `render` does), and a `.png` can be given a `width` in pixels or a `scale`, so that diagrams come out at the same width.
 
 ## [0.2.0-beta.1] - Unreleased

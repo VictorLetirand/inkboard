@@ -78,7 +78,7 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(pos_props(json!({"code": {"type": "string"}})), &["code"])}),
         json!({"name": "add_formula", "description": "Adds a LaTeX formula (math mode) typeset the way TeX does. Errors if the LaTeX is not supported.",
             "inputSchema": obj(pos_props(json!({"latex": {"type": "string"}, "color": color.clone()})), &["latex"])}),
-        json!({"name": "import_mermaid", "description": "Adds a Mermaid diagram (flowchart/graph, stateDiagram, sequenceDiagram) with automatic layout. Returns the ids created.",
+        json!({"name": "import_mermaid", "description": "Adds a Mermaid diagram (flowchart/graph, stateDiagram, sequenceDiagram, classDiagram, erDiagram) with automatic layout. Returns the ids created.",
             "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Create a new page for the diagram."}})), &["mermaid"])}),
         json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors, line style, font, lock, rotation; a connector's route, arrowheads and ends; one table cell. \
             Everything is validated before anything is applied (an error changes nothing); a parameter that does not suit the object's type is ignored and listed in `avertissements`. Locked objects can still be modified here.",

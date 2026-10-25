@@ -115,7 +115,7 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
 | draw.io `.drawio` (compressé ou non, multi-pages) | ✔ | ✔ |
 | Excalidraw `.excalidraw` | ✔ | ✔ |
 | JSON Canvas `.canvas` | ✔ | ✔ (formes avec texte et flèches entre formes) |
-| Mermaid (`flowchart`, `stateDiagram`, `sequenceDiagram`) | ✔ | – |
+| Mermaid (`flowchart`, `stateDiagram`, `sequenceDiagram`, `classDiagram`, `erDiagram`) | ✔ | – |
 | SVG, PNG, PDF | – | ✔ |
 
 Les tableaux s'enregistrent en `.inkboard` (du JSON ; l'installeur associe l'extension : un double-clic ouvre le fichier). Les fichiers `.inkboard.json` des versions précédentes et les `.tableau.json` du prototype restent lisibles ; un `.inkboard.json` rouvert est réenregistré sous son propre nom.
