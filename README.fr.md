@@ -133,5 +133,16 @@ L'index n'est utilisé qu'à partir de 400 objets et suspendu pendant les gestes
 
 ## Licence
 
-Double licence **MIT OU Apache-2.0**, à votre choix : voir [LICENSE-MIT](LICENSE-MIT) et [LICENSE-APACHE](LICENSE-APACHE). Les licences des composants tiers embarqués sont dans
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Contributions : [CONTRIBUTING.md](CONTRIBUTING.md).
+Inkboard est un logiciel libre en **double licence** : vous pouvez l'utiliser sous **l'une ou l'autre** des deux licences ci-dessous. **Vous en choisissez une seule** ; il n'est pas nécessaire de respecter les deux.
+
+| | [MIT](LICENSE-MIT) | [Apache-2.0](LICENSE-APACHE) |
+|---|---|---|
+| L'utiliser, y compris dans un produit commercial | ✔ | ✔ |
+| Le modifier et le redistribuer | ✔ | ✔ |
+| Conserver la mention de copyright et de licence | ✔ | ✔ |
+| Licence de brevet explicite de la part des contributeurs | – | ✔ |
+| Longueur du texte | très court | plus long |
+
+*Laquelle choisir ?* L'une ou l'autre convient. MIT est la plus courte et la plus simple ; Apache-2.0 ajoute la licence de brevet explicite. Ce tableau est un résumé en langage courant, pas un avis juridique : les deux fichiers de licence font foi.
+
+Les licences des composants tiers embarqués sont dans [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Contributions : [CONTRIBUTING.md](CONTRIBUTING.md) ; toute contribution est placée sous la même double licence.
