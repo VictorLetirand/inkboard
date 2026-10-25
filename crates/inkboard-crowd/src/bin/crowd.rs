@@ -12,6 +12,7 @@
 //! Method and results: `context/mcp-remote/test-charge.md`.
 // A load-test tool, not shipped: its measurements and random draws convert numbers freely.
 #![allow(
+    clippy::must_use_candidate,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
