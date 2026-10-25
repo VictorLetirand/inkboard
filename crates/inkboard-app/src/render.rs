@@ -4,14 +4,13 @@ use crate::fonts::{EguiMeasurer, font_id};
 use eframe::egui::epaint::{Mesh, TextShape, Vertex};
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{self, Color32, Painter, Pos2, Shape, Stroke, TextureHandle, pos2, vec2};
-use inkboard_core::connector::{head_points, path_midpoint};
+use inkboard_core::connector::{head_glyph, path_midpoint};
 use inkboard_core::geom::{Frame, Pt, Rect};
 use inkboard_core::model::Outline;
 use inkboard_core::num;
 use inkboard_core::text::{TextLayout, layout_rich};
 use inkboard_core::{
-    Align, Arrowhead, Asset, BoxGeom, BoxObj, Color, Connector, Dash, Document, Id, ImageObj, Kind, Label, Object, Page, Pattern, PenObj, RichText, Table,
-    style,
+    Align, Asset, BoxGeom, BoxObj, Color, Connector, Dash, Document, HeadPart, Id, ImageObj, Kind, Label, Object, Page, Pattern, PenObj, RichText, Table, style,
 };
 use std::collections::HashMap;
 
@@ -673,27 +672,9 @@ impl Renderer<'_> {
         let pts: Vec<Pos2> = path.iter().map(|p| self.cam.s(*p)).collect();
         self.stroke_path(&pts, false, st.width, color, st.dash, true);
         let size = (st.width * 4.5).max(12.0);
-        for (head, tip, from) in [(c.head_start, path[0], path[1]), (c.head_end, path[path.len() - 1], path[path.len() - 2])] {
-            let hp: Vec<Pos2> = head_points(tip, from, size, head).iter().map(|p| self.cam.s(*p)).collect();
-            let w = num::f32(st.width) * self.cam.zoom;
-            match head {
-                Arrowhead::None => {}
-                Arrowhead::Arrow => {
-                    self.painter.add(Shape::line(hp.clone(), Stroke::new(w, color)));
-                    for p in &hp {
-                        self.painter.circle_filled(*p, w / 2.0, color);
-                    }
-                }
-                Arrowhead::Triangle => {
-                    self.painter.add(Shape::convex_polygon(hp.clone(), color, Stroke::new(w * 0.6, color)));
-                }
-                Arrowhead::Bar => {
-                    self.painter.add(Shape::line(hp, Stroke::new(w, color)));
-                }
-                Arrowhead::Dot => {
-                    self.painter.circle_filled(hp[0], num::f32(size) * 0.4 * self.cam.zoom, color);
-                }
-            }
+        let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
+        for (head, ext, tip, from) in heads {
+            paint_head(self.painter, &head_glyph(tip, from, size, head, ext), &|p| self.cam.s(p), self.cam.zoom, num::f32(st.width), color, self.bg);
         }
         if let Some(l) = c.label.as_ref().filter(|l| !l.text.is_empty()) {
             let (mid, _) = path_midpoint(&path);
@@ -775,6 +756,39 @@ impl Renderer<'_> {
                 let area = Rect::new(cr.x + 8.0, cr.y + 4.0, (cr.w - 16.0).max(1.0), (cr.h - 8.0).max(1.0));
                 let lay = layout_rich(cell, Some(area.w), self.measurer, t.family, t.size);
                 self.paint_lines(&lay, &label, area, &|p| p, 0.0, color, t.header && ri == 0);
+            }
+        }
+    }
+}
+
+/// Draws the pieces of an arrowhead: `to_screen` maps a page point, `zoom` scales sizes, `width` is the stroke width of the connector, `hollow` the
+/// color that fills hollow pieces (the background, so that they hide the line behind them).
+pub fn paint_head(painter: &egui::Painter, parts: &[HeadPart], to_screen: &dyn Fn(Pt) -> Pos2, zoom: f32, width: f32, color: Color32, hollow: Color32) {
+    let w = width * zoom;
+    for part in parts {
+        match part {
+            HeadPart::Line(pts) => {
+                let line: Vec<Pos2> = pts.iter().map(|p| to_screen(*p)).collect();
+                painter.add(Shape::line(line.clone(), Stroke::new(w, color)));
+                for p in &line {
+                    painter.circle_filled(*p, w / 2.0, color);
+                }
+            }
+            HeadPart::Polygon { pts, solid } => {
+                let corners: Vec<Pos2> = pts.iter().map(|p| to_screen(*p)).collect();
+                if *solid {
+                    painter.add(Shape::convex_polygon(corners, color, Stroke::new(w * 0.6, color)));
+                } else {
+                    painter.add(Shape::convex_polygon(corners, hollow, Stroke::new(w, color)));
+                }
+            }
+            HeadPart::Circle { center, radius, solid } => {
+                let (c, r) = (to_screen(*center), num::f32(*radius) * zoom);
+                if *solid {
+                    painter.circle_filled(c, r, color);
+                } else {
+                    painter.circle(c, r, hollow, Stroke::new(w, color));
+                }
             }
         }
     }

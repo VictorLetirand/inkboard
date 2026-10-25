@@ -1,6 +1,6 @@
 //! SVG export of a page (or a selection), with no UI dependency.
 
-use crate::connector::{Arrowhead, head_points, path_midpoint};
+use crate::connector::{HeadPart, head_glyph, path_midpoint};
 use crate::geom::{Pt, Rect};
 use crate::model::{BoxGeom, BoxObj, Document, Id, Kind, Label, Object, Page, Table};
 use crate::style::{Align, Color, Dash, NOTE_YELLOW, Style};
@@ -239,37 +239,42 @@ impl Ctx<'_> {
         let mut out = format!(r#"<path d="{}" fill="none" {}/>"#, d.join(""), self.stroke(st, false));
         let size = (st.width * 4.5).max(12.0);
         let col = self.col(st.stroke);
-        for (head, tip, from) in [(c.head_start, path[0], path[1]), (c.head_end, path[path.len() - 1], path[path.len() - 2])] {
-            let pts = head_points(tip, from, size, head);
-            let list: Vec<String> = pts.iter().map(|p| format!("{},{}", n(p.x), n(p.y))).collect();
-            match head {
-                Arrowhead::None => {}
-                Arrowhead::Arrow => {
-                    let _ = write!(
-                        out,
-                        r#"<polyline points="{}" fill="none" stroke="{col}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round"/>"#,
-                        list.join(" "),
-                        n(st.width)
-                    );
-                }
-                Arrowhead::Triangle => {
-                    let _ = write!(
-                        out,
-                        r#"<polygon points="{}" fill="{col}" stroke="{col}" stroke-width="{}" stroke-linejoin="round"/>"#,
-                        list.join(" "),
-                        n(st.width)
-                    );
-                }
-                Arrowhead::Bar => {
-                    let _ = write!(
-                        out,
-                        r#"<polyline points="{}" fill="none" stroke="{col}" stroke-width="{}" stroke-linecap="round"/>"#,
-                        list.join(" "),
-                        n(st.width)
-                    );
-                }
-                Arrowhead::Dot => {
-                    let _ = write!(out, r#"<circle cx="{}" cy="{}" r="{}" fill="{col}"/>"#, n(pts[0].x), n(pts[0].y), n(size * 0.4));
+        let background = if self.dark { "#262b38" } else { "#ffffff" };
+        let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
+        for (head, ext, tip, from) in heads {
+            for part in head_glyph(tip, from, size, head, ext) {
+                let list = |pts: &[crate::geom::Pt]| pts.iter().map(|p| format!("{},{}", n(p.x), n(p.y))).collect::<Vec<_>>().join(" ");
+                match part {
+                    HeadPart::Line(pts) => {
+                        let _ = write!(
+                            out,
+                            r#"<polyline points="{}" fill="none" stroke="{col}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round"/>"#,
+                            list(&pts),
+                            n(st.width)
+                        );
+                    }
+                    HeadPart::Polygon { pts, solid } => {
+                        let fill = if solid { col.as_str() } else { background };
+                        let _ = write!(
+                            out,
+                            r#"<polygon points="{}" fill="{fill}" stroke="{col}" stroke-width="{}" stroke-linejoin="round"/>"#,
+                            list(&pts),
+                            n(st.width)
+                        );
+                    }
+                    HeadPart::Circle { center, radius, solid: true } => {
+                        let _ = write!(out, r#"<circle cx="{}" cy="{}" r="{}" fill="{col}"/>"#, n(center.x), n(center.y), n(radius));
+                    }
+                    HeadPart::Circle { center, radius, solid: false } => {
+                        let _ = write!(
+                            out,
+                            r#"<circle cx="{}" cy="{}" r="{}" fill="{background}" stroke="{col}" stroke-width="{}"/>"#,
+                            n(center.x),
+                            n(center.y),
+                            n(radius),
+                            n(st.width)
+                        );
+                    }
                 }
             }
         }
@@ -421,7 +426,7 @@ pub fn export_approx(doc: &Document, page: &Page) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connector::{Connector, End};
+    use crate::connector::{Arrowhead, Connector, End};
     use crate::geom::Frame;
     use crate::model::Document;
 

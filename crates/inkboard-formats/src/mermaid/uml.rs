@@ -1,15 +1,15 @@
 //! Mermaid `classDiagram` and `erDiagram`: one table per class or entity (name, then attributes, then methods), linked by bound connectors.
 //!
-//! The model has no diamond or crow's foot arrowheads, so the closest ones are used and the meaning is also written on the link:
-//! inheritance and realization end in a triangle, composition and aggregation in a dot (with a « stereotype » on the link), a "one" end in a bar,
-//! a "zero or one" end in a dot and a "many" end in an arrow; the cardinalities of an entity-relationship link are spelled out in its label.
+//! The ends of the links use the extended arrowheads (`HeadExt`): hollow triangle for inheritance and realization, diamond (filled or hollow) for
+//! composition and aggregation, and the crow's foot family for the cardinalities of an entity-relationship link, which are also spelled out in the
+//! label (versions that do not know the extended heads draw the closest original ones: triangle, dot, bar, arrow).
 
 use super::clean;
 use crate::common::FormatError;
 use inkboard_core::layout::{Direction, NodeSpec, layered};
 use inkboard_core::num;
 use inkboard_core::text::{Measurer, layout_rich};
-use inkboard_core::{Align, Arrowhead, Connector, Dash, End, FontFamily, Kind, Label, Object, Pt, Rect, RichText, Route, Style, Table};
+use inkboard_core::{Align, Arrowhead, Connector, Dash, End, FontFamily, HeadExt, Kind, Label, Object, Pt, Rect, RichText, Route, Style, Table};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -29,13 +29,20 @@ struct Entity {
     attributes: Vec<[String; 4]>,
 }
 
+/// What is drawn at an end of a link: an original arrowhead or an extended one.
+#[derive(Clone, Copy)]
+enum Head {
+    Original(Arrowhead),
+    Ext(HeadExt),
+}
+
 /// A link between two entities, with what to draw at each end.
 struct Link {
     from: String,
     to: String,
     label: String,
-    start: Arrowhead,
-    end: Arrowhead,
+    start: Head,
+    end: Head,
     dashed: bool,
 }
 
@@ -153,12 +160,12 @@ fn add_member(e: &mut Entity, text: &str) {
 
 fn class_link(from: String, to: String, relation: &str, from_card: &str, to_card: &str, label: &str) -> Link {
     let dashed = relation.contains("..");
-    let (mut start, mut end) = (Arrowhead::None, Arrowhead::None);
-    let mut stereotype = "";
+    let (mut start, mut end) = (Head::Original(Arrowhead::None), Head::Original(Arrowhead::None));
     let head = |marker: &str| match marker {
-        "<|" | "|>" => Arrowhead::Triangle,
-        "*" | "o" => Arrowhead::Dot,
-        _ => Arrowhead::Arrow,
+        "<|" | "|>" => Head::Ext(HeadExt::TriangleOpen),
+        "*" => Head::Ext(HeadExt::Diamond),
+        "o" => Head::Ext(HeadExt::DiamondOpen),
+        _ => Head::Original(Arrowhead::Arrow),
     };
     let (left, right) = relation.split_once("--").or_else(|| relation.split_once("..")).unwrap_or(("", ""));
     let left = left.trim_end_matches(['-', '.']);
@@ -169,16 +176,11 @@ fn class_link(from: String, to: String, relation: &str, from_card: &str, to_card
     if !right.is_empty() {
         end = head(right);
     }
-    if [left, right].contains(&"*") {
-        stereotype = "\u{ab}composition\u{bb}";
-    } else if [left, right].contains(&"o") {
-        stereotype = "\u{ab}aggregation\u{bb}";
-    }
     let cardinalities = match (from_card.is_empty(), to_card.is_empty()) {
         (true, true) => String::new(),
         _ => format!("{from_card} \u{2014} {to_card}"),
     };
-    let label = [clean(label), stereotype.to_owned(), cardinalities].iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("\n");
+    let label = [clean(label), cardinalities].iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("\n");
     Link { from, to, label, start, end, dashed }
 }
 
@@ -228,12 +230,12 @@ fn parse_er(lines: &[String]) -> Diagram {
 }
 
 /// The arrowhead and the cardinality of an end of an entity-relationship link (`||`, `|o`, `o|`, `}o`, `o{`, `}|`, `|{`).
-fn er_end(token: &str) -> (Arrowhead, &'static str) {
+fn er_end(token: &str) -> (Head, &'static str) {
     match token {
-        "||" => (Arrowhead::Bar, "1"),
-        "|o" | "o|" => (Arrowhead::Dot, "0..1"),
-        "}o" | "o{" => (Arrowhead::Arrow, "0..*"),
-        _ => (Arrowhead::Arrow, "1..*"),
+        "||" => (Head::Ext(HeadExt::OneOnly), "1"),
+        "|o" | "o|" => (Head::Ext(HeadExt::ZeroOrOne), "0..1"),
+        "}o" | "o{" => (Head::Ext(HeadExt::CrowFootZero), "0..*"),
+        _ => (Head::Ext(HeadExt::CrowFootOne), "1..*"),
     }
 }
 
@@ -346,8 +348,14 @@ fn build(diagram: &Diagram, measurer: &dyn Measurer) -> Result<Vec<Object>, Form
     for (index, link) in diagram.links.iter().enumerate() {
         let (from, to) = edges[index];
         let mut conn = Connector::new(End::bound(ids[from].clone()), End::bound(ids[to].clone()));
-        conn.head_start = link.start;
-        conn.head_end = link.end;
+        match link.start {
+            Head::Original(head) => conn.set_head_start(head),
+            Head::Ext(ext) => conn.set_ext_start(ext),
+        }
+        match link.end {
+            Head::Original(head) => conn.set_head_end(head),
+            Head::Ext(ext) => conn.set_ext_end(ext),
+        }
         if !link.label.is_empty() {
             conn.label = Some(Label::new(&link.label, 14.0, Align::Center));
         }
@@ -424,15 +432,17 @@ mod tests {
             *conns(&o).iter().find(|c| c.start.target() == Some(&id(from)) && c.end.target() == Some(&id(to))).unwrap_or_else(|| panic!("{from} -> {to}"))
         };
         let inherit = find("Animal", "Dog");
-        assert_eq!((inherit.head_start, inherit.head_end), (Arrowhead::Triangle, Arrowhead::None), "the parent has the triangle");
+        assert_eq!((inherit.head_start_ext, inherit.head_end), (Some(HeadExt::TriangleOpen), Arrowhead::None), "the parent has the hollow triangle");
+        assert_eq!(inherit.head_start, Arrowhead::Triangle, "older versions draw the closest original head");
         let comp = find("Dog", "Tail");
-        assert_eq!(comp.head_start, Arrowhead::Dot);
-        assert_eq!(comp.label.as_ref().unwrap().text.to_plain(), "has\n\u{ab}composition\u{bb}");
+        assert_eq!((comp.head_start_ext, comp.head_start), (Some(HeadExt::Diamond), Arrowhead::Dot));
+        assert_eq!(comp.label.as_ref().unwrap().text.to_plain(), "has");
         let assoc = find("Owner", "Dog");
         assert_eq!(assoc.head_end, Arrowhead::Arrow);
         assert_eq!(assoc.label.as_ref().unwrap().text.to_plain(), "owns\n1 \u{2014} *");
         let aggregation = find("List<int>", "Item");
-        assert_eq!(aggregation.label.as_ref().unwrap().text.to_plain(), "\u{ab}aggregation\u{bb}");
+        assert_eq!(aggregation.head_start_ext, Some(HeadExt::DiamondOpen));
+        assert!(aggregation.label.is_none());
         let styles: Vec<Dash> = o.iter().filter(|x| matches!(x.kind, Kind::Connector(_))).map(|x| x.style.dash).collect();
         assert_eq!(styles.iter().filter(|d| **d == Dash::Dashed).count(), 2, "dependency and realization are dashed");
         assert_eq!(conns(&o).len(), 6);
@@ -484,11 +494,12 @@ mod tests {
             *conns(&o).iter().find(|c| c.start.target() == Some(&id(from)) && c.end.target() == Some(&id(to))).unwrap_or_else(|| panic!("{from} -> {to}"))
         };
         let places = find("CUSTOMER", "ORDER");
-        assert_eq!((places.head_start, places.head_end), (Arrowhead::Bar, Arrowhead::Arrow));
+        assert_eq!((places.head_start_ext, places.head_end_ext), (Some(HeadExt::OneOnly), Some(HeadExt::CrowFootZero)));
+        assert_eq!((places.head_start, places.head_end), (Arrowhead::Bar, Arrowhead::Arrow), "what older versions draw");
         assert_eq!(places.label.as_ref().unwrap().text.to_plain(), "places\n1 \u{2014} 0..*");
         assert_eq!(find("ORDER", "LINE_ITEM").label.as_ref().unwrap().text.to_plain(), "contains\n1 \u{2014} 1..*");
         let optional = find("PRODUCT", "LINE_ITEM");
-        assert_eq!((optional.head_start, optional.head_end), (Arrowhead::Dot, Arrowhead::Dot));
+        assert_eq!((optional.head_start_ext, optional.head_end_ext), (Some(HeadExt::ZeroOrOne), Some(HeadExt::ZeroOrOne)));
         assert_eq!(optional.label.as_ref().unwrap().text.to_plain(), "is in\n0..1 \u{2014} 0..1");
         let styles: Vec<Dash> = o.iter().filter(|x| matches!(x.kind, Kind::Connector(_))).map(|x| x.style.dash).collect();
         assert_eq!(styles.iter().filter(|d| **d == Dash::Dashed).count(), 1, "a non-identifying relationship is dashed");

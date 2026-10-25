@@ -364,6 +364,28 @@ fn extreme_numbers_are_refused_not_stored() {
 }
 
 #[test]
+fn the_font_size_of_a_new_shape_is_bounded_like_the_one_of_an_update() {
+    // found by the fuzzer: a size of 0 was stored, and the guests of a shared board refuse a board that holds it
+    let root = temp_dir("font");
+    let srv = server(&root);
+    let board = make_board(&srv, &root);
+    let p = board.to_str().unwrap();
+    let before = std::fs::read(&board).unwrap();
+    for bad in [json!(0), json!(0.5), json!(3.9), json!(401), json!(2000), json!(-1)] {
+        let r = call(&srv, "add_shape", &json!({"path": p, "geom": "diamond", "text": "x", "font_size": bad}));
+        assert_eq!(r["result"]["isError"], json!(true), "font_size {bad}: {r}");
+        assert!(r.to_string().contains("font_size"), "the message names the argument: {r}");
+        assert_eq!(std::fs::read(&board).unwrap(), before, "font_size {bad}: the board changed");
+    }
+    for good in [json!(4), json!(20), json!(400)] {
+        let r = ok(&srv, "add_shape", json!({"path": p, "geom": "diamond", "text": "x", "font_size": good}));
+        assert!(r["id"].is_string(), "font_size {good}: {r}");
+        assert_board_sound(&board, &format!("font_size {good}"));
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn ids_that_do_not_exist_or_are_hostile_give_errors() {
     let root = temp_dir("ids");
     let srv = server(&root);

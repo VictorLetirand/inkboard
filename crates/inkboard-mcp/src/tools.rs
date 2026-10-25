@@ -32,6 +32,12 @@ fn path_prop() -> Value {
     json!({"type": "string", "description": "Path of the board file (.inkboard; .inkboard.json and .tableau.json also accepted). Optional when the application is open: the tool then acts live on the displayed board (undoable with Ctrl+Z)."})
 }
 
+/// Schema of `head_start` / `head_end`: the name of an arrowhead.
+fn head_prop(end: &str) -> Value {
+    json!({"type": "string", "enum": edit::head_names(),
+        "description": format!("Arrowhead at the {end} of the connector, which takes precedence over `arrow` for that end. Original heads: none, arrow, triangle, dot, bar. Added heads, shown by older versions as the closest original one: diamond (UML composition), diamond_open (aggregation), triangle_open (inheritance), crow_foot (many), crow_foot_one (one or many), crow_foot_zero (zero or many), one_only (exactly one), zero_or_one.")})
+}
+
 fn page_prop() -> Value {
     json!({"description": "Page: number (from 1) or name. Defaults to the first.", "oneOf": [{"type": "integer"}, {"type": "string"}]})
 }
@@ -65,11 +71,12 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(pos_props(json!({
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
                 "text": {"type": "string"}, "markdown": richtext::markdown_prop("`text`"), "w": {"type": "number"}, "h": {"type": "number"},
-                "font_size": {"type": "number"}, "fill": color.clone(), "stroke": color.clone()})), &["geom"])}),
+                "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "fill": color.clone(), "stroke": color.clone()})), &["geom"])}),
         json!({"name": "add_connector", "description": "Connects two objects with an arrow that follows them when they move (ids returned by add_shape or describe_board).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "from": {"type": "string"}, "to": {"type": "string"},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"]},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Arrowheads (default: end)."},
+                "head_start": head_prop("start"), "head_end": head_prop("end"),
                 "label": {"type": "string"}, "markdown": richtext::markdown_prop("`label`"), "stroke": color.clone()}), &["from", "to"])}),
         json!({"name": "add_table", "description": "Adds a table of cells; `rows` is a list of rows (lists of texts). The first row is the header.",
             "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
@@ -94,6 +101,7 @@ pub fn list() -> Vec<Value> {
                 "rotation": {"type": "number", "minimum": -360, "maximum": 360, "description": "Absolute angle in degrees (shapes and images; 0 resets)."},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"], "description": "Connector only."},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Connector only: arrowheads."},
+                "head_start": head_prop("start"), "head_end": head_prop("end"),
                 "from": {"type": "string", "description": "Connector only: id of the object to connect the start to (shape, table or image)."},
                 "to": {"type": "string", "description": "Connector only: id of the object to connect the end to."},
                 "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."}}), &["id"])}),
@@ -757,7 +765,9 @@ fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
         roundness: if geom == BoxGeom::Rect { 0.15 } else { 0.0 },
         ..Style::default()
     };
-    let mut label = Label::new(text, of(a, "font_size").unwrap_or(20.0), if geom == BoxGeom::Text { Align::Left } else { Align::Center });
+    // as `update_object`: a size of 0 or a huge one would make the guests of a shared board refuse it
+    let size = edit::num_arg(a, "font_size", 4.0, 400.0)?.unwrap_or(20.0);
+    let mut label = Label::new(text, size, if geom == BoxGeom::Text { Align::Left } else { Align::Center });
     let mut warnings = Vec::new();
     label.text = richtext::rich(text, markdown, &mut warnings);
     let mut o = Object::new_box(geom, Frame::new(at.x, at.y, of(a, "w").unwrap_or(dw), of(a, "h").unwrap_or(dh)), style, label);
@@ -792,6 +802,13 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
         "none" => (Arrowhead::None, Arrowhead::None),
         r => return Err(format!("unknown arrowhead \"{r}\" (end, start, both, none)")),
     };
+    // a head named for one end replaces what `arrow` gave it
+    if let Some(h) = edit::head_arg(a, "head_start")? {
+        h.apply(&mut c, false);
+    }
+    if let Some(h) = edit::head_arg(a, "head_end")? {
+        h.apply(&mut c, true);
+    }
     let markdown = richtext::markdown_flag(a)?;
     let mut warnings = Vec::new();
     if let Some(l) = os(a, "label").filter(|l| !l.is_empty()) {

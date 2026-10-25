@@ -73,6 +73,120 @@ pub enum Arrowhead {
     Bar,
 }
 
+/// Arrowheads added after the first version of the file format. They are stored in separate, optional fields of the connector
+/// (`head_start_ext`, `head_end_ext`) next to the original `head_start` / `head_end`, which keep the closest original head ([`HeadExt::fallback`]):
+/// a version that does not know these fields ignores them and draws that fallback, so nothing is lost or refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadExt {
+    /// Filled diamond (UML composition).
+    Diamond,
+    /// Hollow diamond (UML aggregation).
+    DiamondOpen,
+    /// Hollow triangle (UML inheritance, realization).
+    TriangleOpen,
+    /// Crow's foot: many.
+    CrowFoot,
+    /// Crow's foot and a bar: one or many.
+    CrowFootOne,
+    /// Crow's foot and a circle: zero or many.
+    CrowFootZero,
+    /// Two bars: exactly one.
+    OneOnly,
+    /// A circle and a bar: zero or one.
+    ZeroOrOne,
+}
+
+impl HeadExt {
+    /// Every extended head, in the order the interface lists them.
+    pub const ALL: [HeadExt; 8] = [
+        HeadExt::Diamond,
+        HeadExt::DiamondOpen,
+        HeadExt::TriangleOpen,
+        HeadExt::CrowFoot,
+        HeadExt::CrowFootOne,
+        HeadExt::CrowFootZero,
+        HeadExt::OneOnly,
+        HeadExt::ZeroOrOne,
+    ];
+
+    /// The original arrowhead that stands for this one in a version that does not know it.
+    #[must_use]
+    pub fn fallback(self) -> Arrowhead {
+        match self {
+            HeadExt::Diamond | HeadExt::DiamondOpen | HeadExt::ZeroOrOne => Arrowhead::Dot,
+            HeadExt::TriangleOpen => Arrowhead::Triangle,
+            HeadExt::CrowFoot | HeadExt::CrowFootOne | HeadExt::CrowFootZero => Arrowhead::Arrow,
+            HeadExt::OneOnly => Arrowhead::Bar,
+        }
+    }
+
+    /// Name used by the MCP server and in text (`diamond_open`, `crow_foot`…).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            HeadExt::Diamond => "diamond",
+            HeadExt::DiamondOpen => "diamond_open",
+            HeadExt::TriangleOpen => "triangle_open",
+            HeadExt::CrowFoot => "crow_foot",
+            HeadExt::CrowFootOne => "crow_foot_one",
+            HeadExt::CrowFootZero => "crow_foot_zero",
+            HeadExt::OneOnly => "one_only",
+            HeadExt::ZeroOrOne => "zero_or_one",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<HeadExt> {
+        HeadExt::ALL.into_iter().find(|h| h.name() == name)
+    }
+}
+
+/// One piece of an arrowhead, in page coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HeadPart {
+    /// Open path drawn with the stroke of the connector (round ends).
+    Line(Vec<Pt>),
+    /// Closed polygon; `solid`: filled with the color of the connector, otherwise with the background (a hollow head hides the line behind it).
+    Polygon { pts: Vec<Pt>, solid: bool },
+    /// Circle; same meaning of `solid`.
+    Circle { center: Pt, radius: f64, solid: bool },
+}
+
+/// The pieces of the arrowhead at `tip` of a path whose previous point is `from`, for an original head, or for the extended one when there is one.
+#[must_use]
+pub fn head_glyph(tip: Pt, from: Pt, size: f64, head: Arrowhead, ext: Option<HeadExt>) -> Vec<HeadPart> {
+    let d = (tip - from).normalized();
+    let n = Pt::new(-d.y, d.x);
+    let at = |along: f64, across: f64| tip - d * (size * along) + n * (size * across);
+    let bar = |along: f64| HeadPart::Line(vec![at(along, 0.5), at(along, -0.5)]);
+    let crow = |extra: Vec<HeadPart>| {
+        let mut parts = vec![HeadPart::Line(vec![at(0.0, 0.5), at(1.0, 0.0), at(0.0, -0.5)]), HeadPart::Line(vec![at(1.0, 0.0), at(0.0, 0.0)])];
+        parts.extend(extra);
+        parts
+    };
+    let diamond = |solid: bool| vec![HeadPart::Polygon { pts: vec![at(0.0, 0.0), at(0.5, 0.35), at(1.0, 0.0), at(0.5, -0.35)], solid }];
+    match ext {
+        Some(HeadExt::Diamond) => diamond(true),
+        Some(HeadExt::DiamondOpen) => diamond(false),
+        Some(HeadExt::TriangleOpen) => vec![HeadPart::Polygon { pts: vec![at(1.0, 0.5), at(0.0, 0.0), at(1.0, -0.5)], solid: false }],
+        Some(HeadExt::CrowFoot) => crow(Vec::new()),
+        Some(HeadExt::CrowFootOne) => crow(vec![bar(1.3)]),
+        Some(HeadExt::CrowFootZero) => crow(vec![HeadPart::Circle { center: at(1.55, 0.0), radius: size * 0.28, solid: false }]),
+        Some(HeadExt::OneOnly) => vec![bar(0.25), bar(0.6)],
+        Some(HeadExt::ZeroOrOne) => vec![bar(0.3), HeadPart::Circle { center: at(0.95, 0.0), radius: size * 0.28, solid: false }],
+        None => {
+            let pts = head_points(tip, from, size, head);
+            match head {
+                Arrowhead::None => Vec::new(),
+                Arrowhead::Arrow | Arrowhead::Bar => vec![HeadPart::Line(pts)],
+                Arrowhead::Triangle => vec![HeadPart::Polygon { pts, solid: true }],
+                Arrowhead::Dot => vec![HeadPart::Circle { center: pts[0], radius: size * 0.4, solid: true }],
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Connector {
     pub start: End,
@@ -86,6 +200,12 @@ pub struct Connector {
     pub head_start: Arrowhead,
     #[serde(default)]
     pub head_end: Arrowhead,
+    /// Head at the start that was added after the first format (see [`HeadExt`]); `head_start` then holds its fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_start_ext: Option<HeadExt>,
+    /// Same at the end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_end_ext: Option<HeadExt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<Label>,
 }
@@ -93,7 +213,43 @@ pub struct Connector {
 impl Connector {
     #[must_use]
     pub fn new(start: End, end: End) -> Self {
-        Self { start, end, via: Vec::new(), route: Route::Straight, head_start: Arrowhead::None, head_end: Arrowhead::Arrow, label: None }
+        Self {
+            start,
+            end,
+            via: Vec::new(),
+            route: Route::Straight,
+            head_start: Arrowhead::None,
+            head_end: Arrowhead::Arrow,
+            head_start_ext: None,
+            head_end_ext: None,
+            label: None,
+        }
+    }
+    /// Sets an original head at the start (an extended head set before is dropped).
+    pub fn set_head_start(&mut self, head: Arrowhead) {
+        (self.head_start, self.head_start_ext) = (head, None);
+    }
+    /// Sets an original head at the end (an extended head set before is dropped).
+    pub fn set_head_end(&mut self, head: Arrowhead) {
+        (self.head_end, self.head_end_ext) = (head, None);
+    }
+    /// Sets an extended head at the start; the original field takes its fallback, so that older versions draw something close.
+    pub fn set_ext_start(&mut self, ext: HeadExt) {
+        (self.head_start, self.head_start_ext) = (ext.fallback(), Some(ext));
+    }
+    /// Sets an extended head at the end.
+    pub fn set_ext_end(&mut self, ext: HeadExt) {
+        (self.head_end, self.head_end_ext) = (ext.fallback(), Some(ext));
+    }
+    /// Whether there is a head at the start (original or extended).
+    #[must_use]
+    pub fn has_head_start(&self) -> bool {
+        self.head_start != Arrowhead::None || self.head_start_ext.is_some()
+    }
+    /// Whether there is a head at the end.
+    #[must_use]
+    pub fn has_head_end(&self) -> bool {
+        self.head_end != Arrowhead::None || self.head_end_ext.is_some()
     }
     #[must_use]
     pub fn straight(a: Pt, b: Pt) -> Self {

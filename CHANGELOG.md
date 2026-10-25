@@ -13,7 +13,8 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ### Added
 
-- **Mermaid import:** `classDiagram` and `erDiagram`. A class or an entity becomes a table (name, attributes, methods; or type, name, keys and comment) and links become bound connectors: inheritance and realization end in a triangle, composition and aggregation in a dot (named on the link, as the model has no diamond head), and an entity link spells out its cardinalities. `direction` is honoured.
+- **UML and entity-relationship arrowheads:** diamond (filled and hollow), hollow triangle and the crow's foot family (many, one or many, zero or many, exactly one, zero or one), in the arrowhead buttons of the style panel, in the MCP tools (`head_start`, `head_end`), in the SVG / PNG / PDF exports, in draw.io (`diamond`, `ER…`, `endFill`) and Excalidraw (`diamond`, `crowfoot_…`). They are stored in separate optional fields of the connector, next to the original heads, which keep the closest one: an older version ignores the new fields and draws that head, and a board that does not use them is written exactly as before. Class and entity-relationship diagrams imported from Mermaid now use them (the «composition» / «aggregation» names on the links are gone).
+- **Mermaid import:** `classDiagram` and `erDiagram`. A class or an entity becomes a table (name, attributes, methods; or type, name, keys and comment) and links become bound connectors: inheritance and realization end in a hollow triangle, composition and aggregation in a diamond, and an entity link ends in crow's foot symbols and spells out its cardinalities. `direction` is honoured.
 - **MCP `export`:** creates the missing folders of `output` (under the allowed root, as `render` does), and a `.png` can be given a `width` in pixels or a `scale`, so that diagrams come out at the same width.
 
 ### Changed

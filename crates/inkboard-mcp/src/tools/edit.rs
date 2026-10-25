@@ -6,7 +6,9 @@
 use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, summary};
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::num;
-use inkboard_core::{Align, ApproxMeasurer, Arrowhead, Color, Dash, Editor, FontFamily, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route};
+use inkboard_core::{
+    Align, ApproxMeasurer, Arrowhead, Color, Dash, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route,
+};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -30,6 +32,48 @@ const ARROWS: [(&str, (Arrowhead, Arrowhead)); 4] = [
     ("both", (Arrowhead::Arrow, Arrowhead::Arrow)),
     ("none", (Arrowhead::None, Arrowhead::None)),
 ];
+/// What `head_start` / `head_end` can name: an original arrowhead or an extended one.
+#[derive(Clone, Copy)]
+pub(super) enum HeadKind {
+    Original(Arrowhead),
+    Ext(HeadExt),
+}
+
+impl HeadKind {
+    /// Gives this head to the start (`at_end` false) or the end of the connector.
+    pub(super) fn apply(self, c: &mut inkboard_core::Connector, at_end: bool) {
+        match (self, at_end) {
+            (HeadKind::Original(h), true) => c.set_head_end(h),
+            (HeadKind::Original(h), false) => c.set_head_start(h),
+            (HeadKind::Ext(e), true) => c.set_ext_end(e),
+            (HeadKind::Ext(e), false) => c.set_ext_start(e),
+        }
+    }
+}
+
+/// Names of the arrowheads: the original ones, then the extended ones.
+pub(super) fn head_names() -> Vec<&'static str> {
+    ["none", "arrow", "triangle", "dot", "bar"].into_iter().chain(HeadExt::ALL.iter().map(|h| h.name())).collect()
+}
+
+fn head_kind(name: &str) -> Option<HeadKind> {
+    Some(match name {
+        "none" => HeadKind::Original(Arrowhead::None),
+        "arrow" => HeadKind::Original(Arrowhead::Arrow),
+        "triangle" => HeadKind::Original(Arrowhead::Triangle),
+        "dot" => HeadKind::Original(Arrowhead::Dot),
+        "bar" => HeadKind::Original(Arrowhead::Bar),
+        other => HeadKind::Ext(HeadExt::from_name(other)?),
+    })
+}
+
+/// A head named by `head_start` / `head_end` (`None` when absent).
+pub(super) fn head_arg(a: &Value, k: &str) -> Res<Option<HeadKind>> {
+    let Some(v) = a.get(k).filter(|v| !v.is_null()) else { return Ok(None) };
+    let name = v.as_str().ok_or_else(|| format!("\"{k}\" must be a string (one of: {})", head_names().join(", ")))?;
+    head_kind(name).map(Some).ok_or_else(|| format!("unknown {k} \"{name}\" (one of: {})", head_names().join(", ")))
+}
+
 const TYPES: [&str; 11] = ["rect", "ellipse", "diamond", "triangle", "sticky", "text", "connector", "table", "image", "formula", "pen"];
 const ACTIONS: [&str; 16] = [
     "align_left",
@@ -77,7 +121,7 @@ fn bool_arg(a: &Value, k: &str) -> Res<Option<bool>> {
     }
 }
 
-fn num_arg(a: &Value, k: &str, min: f64, max: f64) -> Res<Option<f64>> {
+pub(super) fn num_arg(a: &Value, k: &str, min: f64, max: f64) -> Res<Option<f64>> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => {
@@ -174,17 +218,17 @@ pub(super) fn full(z: usize, o: &Object) -> Value {
                 map.insert("font".into(), font(l));
             }
             map.insert("route".into(), json!(name_of(&ROUTES, c.route)));
-            let has = |h: Arrowhead| h != Arrowhead::None;
-            let arrow = match (has(c.head_start), has(c.head_end)) {
+            let arrow = match (c.has_head_start(), c.has_head_end()) {
                 (false, true) => "end",
                 (true, false) => "start",
                 (true, true) => "both",
                 (false, false) => "none",
             };
             map.insert("arrow".into(), json!(arrow));
-            let head = |h: Arrowhead| format!("{h:?}").to_lowercase();
-            if ![Arrowhead::None, Arrowhead::Arrow].contains(&c.head_start) || ![Arrowhead::None, Arrowhead::Arrow].contains(&c.head_end) {
-                map.insert("heads".into(), json!({"start": head(c.head_start), "end": head(c.head_end)}));
+            let head = |h: Arrowhead, ext: Option<HeadExt>| ext.map_or_else(|| format!("{h:?}").to_lowercase(), |e| e.name().to_owned());
+            let plain = |h: Arrowhead, ext: Option<HeadExt>| ext.is_none() && [Arrowhead::None, Arrowhead::Arrow].contains(&h);
+            if !plain(c.head_start, c.head_start_ext) || !plain(c.head_end, c.head_end_ext) {
+                map.insert("heads".into(), json!({"start": head(c.head_start, c.head_start_ext), "end": head(c.head_end, c.head_end_ext)}));
             }
             map.insert("stroke".into(), json!(st.stroke.to_hex()));
         }
@@ -287,6 +331,8 @@ pub(super) struct Patch {
     angle: Option<f64>,
     route: Option<Route>,
     arrow: Option<(Arrowhead, Arrowhead)>,
+    head_start: Option<HeadKind>,
+    head_end: Option<HeadKind>,
     from: Option<Id>,
     to: Option<Id>,
     cell: Option<Cell>,
@@ -313,6 +359,8 @@ impl Patch {
             angle: num_arg(a, "rotation", -360.0, 360.0)?.map(f64::to_radians),
             route: enum_arg(a, "route", &ROUTES)?,
             arrow: enum_arg(a, "arrow", &ARROWS)?,
+            head_start: head_arg(a, "head_start")?,
+            head_end: head_arg(a, "head_end")?,
             from: attachable("from")?,
             to: attachable("to")?,
             cell: None,
@@ -357,6 +405,20 @@ impl Patch {
     }
 
     /// Applies the validated changes; parameters that make no sense for this kind of object are listed in `warn`.
+    /// The arrowheads asked for: `arrow` for both ends, then the head named for an end, which wins for that end.
+    fn apply_heads(&self, c: &mut inkboard_core::Connector) {
+        if let Some((start, end)) = self.arrow {
+            c.set_head_start(start);
+            c.set_head_end(end);
+        }
+        if let Some(h) = self.head_start {
+            h.apply(c, false);
+        }
+        if let Some(h) = self.head_end {
+            h.apply(c, true);
+        }
+    }
+
     pub(super) fn apply(&self, o: &mut Object, warn: &mut Vec<String>) {
         if let Some(w) = self.width {
             o.style.width = w;
@@ -376,7 +438,14 @@ impl Patch {
         let kind = kind_name(o);
         let present = |ps: &[(&'static str, bool)]| ps.iter().filter(|p| p.1).map(|p| p.0).collect::<Vec<_>>();
         let font = [("font_size", self.size.is_some()), ("font_family", self.family.is_some()), ("align", self.align.is_some())];
-        let link = [("route", self.route.is_some()), ("arrow", self.arrow.is_some()), ("from", self.from.is_some()), ("to", self.to.is_some())];
+        let link = [
+            ("route", self.route.is_some()),
+            ("arrow", self.arrow.is_some()),
+            ("head_start", self.head_start.is_some()),
+            ("head_end", self.head_end.is_some()),
+            ("from", self.from.is_some()),
+            ("to", self.to.is_some()),
+        ];
         let rotation = [("rotation", self.angle.is_some())];
         let mut ignored: Vec<&str> = Vec::new();
         match &mut o.kind {
@@ -420,9 +489,7 @@ impl Patch {
                 if let Some(r) = self.route {
                     c.route = r;
                 }
-                if let Some((s, e)) = self.arrow {
-                    (c.head_start, c.head_end) = (s, e);
-                }
+                self.apply_heads(c);
                 if let Some(id) = &self.from {
                     c.start = inkboard_core::End::bound(id.clone());
                 }
