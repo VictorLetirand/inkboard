@@ -106,6 +106,8 @@ fn parse(a: &Value) -> Res<Vec<(String, Value)>> {
                 return Err(format!("operation {i}: unknown key \"{k}\" (an operation is {{\"tool\": ..., \"args\": {{...}}}})"));
             }
             let tool = m.get("tool").and_then(Value::as_str).ok_or_else(|| format!("operation {i}: missing \"tool\" (the name of the tool to run)"))?;
+            // some clients show the tools as `inkboard_<name>`: the server knows them as `<name>`
+            let tool = tool.strip_prefix("inkboard_").unwrap_or(tool);
             if FORBIDDEN.contains(&tool) {
                 return Err(format!("operation {i}: tool {tool} cannot be used inside a batch"));
             }

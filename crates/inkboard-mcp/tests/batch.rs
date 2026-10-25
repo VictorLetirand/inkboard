@@ -174,6 +174,28 @@ fn malformed_requests_are_refused() {
 }
 
 #[test]
+fn the_client_prefix_of_a_tool_name_is_accepted_and_the_rules_still_apply() {
+    let (mut c, board) = setup("batch-prefix");
+    let r = batch(&mut c, &board, json!({"operations": [{"tool": "inkboard_add_shape", "args": {"geom": "rect", "text": "prefixed"}}]})).unwrap();
+    assert_eq!(r["applied"], 1);
+    assert_eq!(texts(&load(&board), 0), ["prefixed"]);
+    let e = batch(&mut c, &board, json!({"operations": [{"tool": "inkboard_export", "args": {}}]})).unwrap_err();
+    assert!(e.contains("cannot be used inside a batch"), "{e}");
+    let e = batch(&mut c, &board, json!({"operations": [{"tool": "inkboard_nope", "args": {}}]})).unwrap_err();
+    assert!(e.contains("unknown tool"), "{e}");
+}
+
+#[test]
+fn a_page_number_written_as_text_selects_the_page() {
+    let (mut c, board) = setup("batch-page-text");
+    c.tool("add_page", json!({"path": board.display().to_string(), "name": "second"})).unwrap();
+    batch(&mut c, &board, json!({"page": "2", "operations": [shape("on page two")]})).unwrap();
+    let doc = load(&board);
+    assert_eq!(texts(&doc, 1), ["on page two"]);
+    assert_eq!(texts(&doc, 0).len(), 0, "nothing on page 1");
+}
+
+#[test]
 fn two_hundred_operations_are_accepted() {
     let (mut c, board) = setup("batch-200");
     let ops: Vec<Value> = (0..200).map(|i| json!({"tool": "add_shape", "args": {"geom": "rect", "text": format!("s{i}")}})).collect();

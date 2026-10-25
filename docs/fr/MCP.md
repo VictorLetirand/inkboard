@@ -91,7 +91,7 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 | `search_icons` | Cherche dans la bibliothèque d'icônes intégrée (environ 28 800 icônes : AWS, Azure, Google Cloud, Cisco, Kubernetes, logos de marques, symboles d'interface…) par mots-clés (`query`, noms en anglais, sans distinction de casse, chaque mot doit correspondre) ; `group`, `set`, `limit` facultatifs (20 par défaut, 100 au plus). Renvoie `{count, truncated, icons: [{id, name, set, group, mono}]}`. Lecture seule. |
 | `list_icon_groups` | Les groupes de la bibliothèque d'icônes avec leurs jeux et leur nombre d'icônes (`{total, groups: [{group, sets: [{set, icons}]}]}`), pour savoir quoi chercher. Lecture seule. |
 | `add_icon` | Place une icône (`icon` = un `id` issu de `search_icons`) comme objet image auquel `add_connector` peut s'attacher. `size` (plus grand côté, 64 par défaut, de 8 à 2000) ou `w`/`h` (proportions conservées quand un seul est donné) ; `stroke` teinte les icônes monochromes ; `label` ajoute un texte centré sous l'icône, groupé avec elle (`markdown: true` pour du [texte enrichi](#texte-enrichi)). Renvoie `{id, x, y, w, h, icon, label_id?, warnings?}`. |
-| `import_mermaid` | Diagramme Mermaid (flowchart, état, séquence) avec mise en page automatique ; page dédiée possible. |
+| `import_mermaid` | Diagramme Mermaid (flowchart, état, séquence) avec mise en page automatique ; page dédiée possible. Un `subgraph` devient un cadre en pointillés avec son titre, et un lien écrit vers un sous-graphe (`B --> Back`) s'attache à ce cadre. Un `;` dans un libellé entre guillemets (`A["a; b"]`) reste dans le libellé. Non pris en charge : diagrammes de classes et ER, pie, mindmap, gantt (une erreur explicite le dit) ; la `direction` d'un sous-graphe est ignorée. |
 | `update_object` | Modifier le texte ([texte enrichi](#texte-enrichi) facultatif), la position, la taille, les couleurs, le [style de trait, la police, le verrou, la rotation](#update_object), le tracé / les pointes / les extrémités d'un connecteur, ou une cellule de tableau. |
 | `delete_object` | Supprime un objet (`id`) ou plusieurs (`ids`). |
 | `move_objects` | Déplace des objets ensemble (en relatif ou vers une position) ; les connecteurs liés suivent. |
@@ -102,7 +102,7 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 | `add_page` | Nouvelle page. |
 | `manage_pages` | Liste, renomme ou supprime des pages (`add_page` les crée). |
 | `batch` | **Plusieurs appels d'outils en une seule demande** (1 à 200), exécutés dans l'ordre sur un même tableau, avec des références aux résultats précédents (`"$0.id"`), tout ou rien par défaut, une seule étape d'annulation. |
-| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard` d'après l'extension. |
+| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard` d'après l'extension. Les dossiers manquants de `output` sont créés (sous la racine ; `render` fait de même pour son `output`). Pour un `.png`, `width` (16 à 8000) donne la largeur en pixels quelle que soit la taille du diagramme, pour que plusieurs diagrammes aient la même largeur ; ou `scale` (0,1 à 8, 2 par défaut) donne les pixels par unité du tableau. Pas les deux. |
 
 Sans `x`/`y`, un nouvel objet est placé sous le contenu existant. Les ids renvoyés servent à relier ou modifier les objets.
 Les erreurs sont renvoyées comme résultat d'outil (`isError`) avec un message en anglais que l'agent peut exploiter.

@@ -12,7 +12,7 @@ use inkboard_core::{
     Style,
 };
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 const FONT: f64 = 18.0;
@@ -267,6 +267,23 @@ fn parse_flow_line(s: &str, f: &mut Flow) {
     }
 }
 
+/// Splits a line at the `;` that end a statement, not at those inside a quoted label (`A["a; b"]`).
+fn split_statements(line: &str) -> Vec<&str> {
+    let (mut out, mut start, mut quoted) = (Vec::new(), 0, false);
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            ';' if !quoted => {
+                out.push(&line[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&line[start..]);
+    out
+}
+
 fn parse_flowchart(lines: &[String], f: &mut Flow) {
     static SUB: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^subgraph\s+(.+)$").unwrap());
     static SUB_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([\w\p{L}]+)\s*\[(.*)\]\s*$").unwrap());
@@ -274,7 +291,7 @@ fn parse_flowchart(lines: &[String], f: &mut Flow) {
     static CLASS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^class\s+(\S+)\s+([\w-]+)$").unwrap());
     static STYLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^style\s+([\w\p{L}]+)\s+(.+)$").unwrap());
     for raw in lines {
-        for stmt in raw.split(';') {
+        for stmt in split_statements(raw) {
             let s = stmt.trim();
             if s.is_empty() {
                 continue;
@@ -307,6 +324,42 @@ fn parse_flowchart(lines: &[String], f: &mut Flow) {
             }
         }
     }
+}
+
+/// Whether subgraph `i` holds a node that is not one of the `placeholders` (directly or in a nested subgraph).
+fn has_real_member(i: usize, f: &Flow, placeholders: &HashSet<String>) -> bool {
+    f.subs[i].members.iter().any(|m| !placeholders.contains(m))
+        || f.subs.iter().enumerate().any(|(k, s)| s.parent == Some(i) && has_real_member(k, f, placeholders))
+}
+
+/// A link written to a subgraph (`B --> Back`) makes `Flow::node` create a node named like the subgraph. It is not a node of the diagram:
+/// it is dropped, and `build_flow` attaches the link to the frame of the subgraph.
+fn drop_subgraph_placeholders(f: &mut Flow) {
+    let candidates: HashSet<String> = f
+        .nodes
+        .iter()
+        .filter(|n| n.label == n.id && n.shape == Shape::Rect && n.props.is_empty() && n.classes.is_empty() && f.subs.iter().any(|s| s.id == n.id))
+        .map(|n| n.id.clone())
+        .collect();
+    let dropped: HashSet<String> =
+        candidates.iter().filter(|id| f.subs.iter().enumerate().any(|(i, s)| &s.id == *id && has_real_member(i, f, &candidates))).cloned().collect();
+    if dropped.is_empty() {
+        return;
+    }
+    f.nodes.retain(|n| !dropped.contains(&n.id));
+    f.index = f.nodes.iter().enumerate().map(|(i, n)| (n.id.clone(), i)).collect();
+    for s in &mut f.subs {
+        s.members.retain(|m| !dropped.contains(m));
+    }
+}
+
+/// The node standing for subgraph `i` in the layout: the first one it contains.
+fn first_member(i: usize, f: &Flow) -> Option<usize> {
+    f.subs[i]
+        .members
+        .iter()
+        .find_map(|id| f.index.get(id).copied())
+        .or_else(|| f.subs.iter().enumerate().filter(|(_, s)| s.parent == Some(i)).find_map(|(k, _)| first_member(k, f)))
 }
 
 fn parse_state(lines: &[String], f: &mut Flow) {
@@ -461,23 +514,38 @@ fn node_object(n: &Node, geom: BoxGeom, frame: Frame, classes: &HashMap<String, 
     Object::new_box(geom, frame, style, label)
 }
 
-fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
-    let sizes: Vec<(BoxGeom, f64, f64)> = flow.nodes.iter().map(|n| node_size(n, measurer)).collect();
-    let specs: Vec<NodeSpec> = sizes.iter().map(|s| NodeSpec { w: s.1, h: s.2 }).collect();
-    let edges: Vec<(usize, usize)> = flow.links.iter().filter_map(|l| Some((*flow.index.get(&l.from)?, *flow.index.get(&l.to)?))).collect();
-    let link_idx: Vec<usize> =
-        (0..flow.links.len()).filter(|&i| flow.index.contains_key(&flow.links[i].from) && flow.index.contains_key(&flow.links[i].to)).collect();
-    let lay = layered(&specs, &edges, flow.dir);
-    let mut nodes: Vec<Object> = Vec::new();
-    let mut rects: Vec<Rect> = Vec::new();
-    for (i, n) in flow.nodes.iter().enumerate() {
-        let (g, w, h) = sizes[i];
-        let center = lay.centers[i];
-        let rect = Rect::new(center.x - w / 2.0, center.y - h / 2.0, w, h);
-        rects.push(rect);
-        nodes.push(node_object(n, g, Frame::from_rect(rect), &flow.classes));
+/// The links whose two ends exist. An end is a node, or a subgraph: laid out as its first node, and attached to its frame.
+struct Resolved {
+    /// Layout edges (node indices).
+    edges: Vec<(usize, usize)>,
+    /// Index in `Flow::links` of each edge.
+    link_idx: Vec<usize>,
+    /// The subgraph that each end of each edge stands for, if any.
+    frame_ends: Vec<[Option<usize>; 2]>,
+}
+
+fn resolve_links(flow: &Flow) -> Resolved {
+    let sub_by_id: HashMap<&str, usize> = flow.subs.iter().enumerate().rev().map(|(i, s)| (s.id.as_str(), i)).collect();
+    let end_of = |id: &str| -> Option<(usize, Option<usize>)> {
+        if let Some(&k) = flow.index.get(id) {
+            return Some((k, None));
+        }
+        let s = *sub_by_id.get(id)?;
+        Some((first_member(s, flow)?, Some(s)))
+    };
+    let mut r = Resolved { edges: Vec::new(), link_idx: Vec::new(), frame_ends: Vec::new() };
+    for (i, l) in flow.links.iter().enumerate() {
+        if let (Some(a), Some(b)) = (end_of(&l.from), end_of(&l.to)) {
+            r.edges.push((a.0, b.0));
+            r.link_idx.push(i);
+            r.frame_ends.push([a.1, b.1]);
+        }
     }
-    // subgraphs
+    r
+}
+
+/// The frame and the title of every subgraph that holds something (outer ones first, so that inner ones are drawn above), and the id of each frame.
+fn subgraph_objects(flow: &Flow, rects: &[Rect], measurer: &dyn Measurer) -> (Vec<Object>, HashMap<usize, Id>) {
     let mut bounds: HashMap<usize, Option<Rect>> = HashMap::new();
     let depth = |mut i: usize| {
         let mut d = 0;
@@ -490,14 +558,17 @@ fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
     let mut order: Vec<usize> = (0..flow.subs.len()).collect();
     order.sort_by_key(|&i| depth(i));
     let mut out: Vec<Object> = Vec::new();
+    let mut frame_id: HashMap<usize, Id> = HashMap::new();
     for i in order {
-        let Some(b) = bounds_of(i, flow, &rects, &mut bounds) else { continue };
-        out.push(Object::new_box(
+        let Some(b) = bounds_of(i, flow, rects, &mut bounds) else { continue };
+        let frame = Object::new_box(
             BoxGeom::Rect,
             Frame::from_rect(b),
             Style { dash: Dash::Dashed, width: 2.0, opacity: 0.85, roundness: 0.1, ..Style::default() },
             Label::default(),
-        ));
+        );
+        frame_id.insert(i, frame.id.clone());
+        out.push(frame);
         let mut t = Object::new_box(
             BoxGeom::Text,
             Frame::new(b.x + 12.0, b.y + 8.0, 10.0, 10.0),
@@ -509,12 +580,32 @@ fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
         }
         out.push(t);
     }
+    (out, frame_id)
+}
+
+fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
+    let sizes: Vec<(BoxGeom, f64, f64)> = flow.nodes.iter().map(|n| node_size(n, measurer)).collect();
+    let specs: Vec<NodeSpec> = sizes.iter().map(|s| NodeSpec { w: s.1, h: s.2 }).collect();
+    let Resolved { edges, link_idx, frame_ends } = resolve_links(flow);
+    let lay = layered(&specs, &edges, flow.dir);
+    let mut nodes: Vec<Object> = Vec::new();
+    let mut rects: Vec<Rect> = Vec::new();
+    for (i, n) in flow.nodes.iter().enumerate() {
+        let (g, w, h) = sizes[i];
+        let center = lay.centers[i];
+        let rect = Rect::new(center.x - w / 2.0, center.y - h / 2.0, w, h);
+        rects.push(rect);
+        nodes.push(node_object(n, g, Frame::from_rect(rect), &flow.classes));
+    }
+    let (mut out, frame_id) = subgraph_objects(flow, &rects, measurer);
     let ids: Vec<Id> = nodes.iter().map(|o| o.id.clone()).collect();
     out.extend(nodes);
     // edges: real bound connectors; layout relays become waypoints
     let mut pair_count: HashMap<(usize, usize), usize> = HashMap::new();
-    for &(a, b) in &edges {
-        *pair_count.entry((a.min(b), a.max(b))).or_default() += 1;
+    for (&(a, b), ends) in edges.iter().zip(&frame_ends) {
+        if ends.iter().all(Option::is_none) {
+            *pair_count.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
     }
     let mut pair_seen: HashMap<(usize, usize), usize> = HashMap::new();
     for (k, &li) in link_idx.iter().enumerate() {
@@ -529,13 +620,17 @@ fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
             dash: if link.line == Line::Dashed { Dash::Dashed } else { Dash::Solid },
             ..Style::default()
         };
-        let mut conn = Connector::new(End::bound(ids[a].clone()), End::bound(ids[b].clone()));
+        let [sub_a, sub_b] = frame_ends[k];
+        let target = |node: usize, sub: Option<usize>| End::bound(sub.and_then(|s| frame_id.get(&s)).unwrap_or(&ids[node]).clone());
+        let mut conn = Connector::new(target(a, sub_a), target(b, sub_b));
         conn.head_end = head(link.end);
         conn.head_start = head(link.start);
         if !link.label.is_empty() {
             conn.label = Some(Label::new(&link.label, 15.0, Align::Center));
         }
-        if a == b {
+        if sub_a.is_some() || sub_b.is_some() {
+            // attached to a frame: the waypoints computed for the node inside it would cross it
+        } else if a == b {
             let src_rect = rects[a];
             conn.start = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.25 } };
             conn.end = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.75 } };
@@ -785,6 +880,7 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
     if let Some(c) = FLOW.captures(head) {
         let mut f = Flow::new(dir_of(c.get(1).map_or("TD", |d| d.as_str())));
         parse_flowchart(&lines[1..], &mut f);
+        drop_subgraph_placeholders(&mut f);
         if f.nodes.is_empty() {
             return Err(FormatError::Invalid("no node found".into()));
         }
@@ -794,6 +890,7 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
     if head.starts_with("stateDiagram") {
         let mut f = Flow::new(Direction::TopDown);
         parse_state(&lines[1..], &mut f);
+        drop_subgraph_placeholders(&mut f);
         if f.nodes.is_empty() {
             return Err(FormatError::Invalid("no state found".into()));
         }
@@ -978,5 +1075,37 @@ mod tests {
         let t: Vec<String> = boxes(&o).iter().map(|x| x.1.label.text.to_plain()).collect();
         assert!(t.contains(&"Text with (parentheses)".to_owned()));
         assert!(t.contains(&"Line 1\nLine 2".to_owned()));
+    }
+
+    #[test]
+    fn a_semicolon_inside_a_quoted_label_does_not_end_the_statement() {
+        let o = objs("graph TD\n E[\"first; second\"] --> A; A --> B");
+        let t: Vec<String> = boxes(&o).iter().map(|x| x.1.label.text.to_plain()).collect();
+        assert_eq!(t.len(), 3, "{t:?}");
+        assert!(t.contains(&"first; second".to_owned()), "{t:?}");
+        assert_eq!(conns(&o).len(), 2);
+    }
+
+    #[test]
+    fn a_link_to_a_subgraph_is_attached_to_its_frame() {
+        let o = objs(
+            "flowchart TD\n subgraph Front [Views]\n  A[View] --> B[Controller]\n end\n subgraph Back [Plugins]\n  C[Study] --> D[Balance]\n end\n B --> Back\n Front --> C",
+        );
+        let t: Vec<String> = boxes(&o).iter().map(|x| x.1.label.text.to_plain()).collect();
+        // four nodes, two titles: no node named after a subgraph
+        assert!(!t.contains(&"Back".to_owned()) && !t.contains(&"Front".to_owned()), "{t:?}");
+        let frames: Vec<&Object> = boxes(&o).into_iter().filter(|(x, _)| x.style.dash == Dash::Dashed).map(|(x, _)| x).collect();
+        assert_eq!(frames.len(), 2);
+        let c = conns(&o);
+        assert_eq!(c.len(), 4);
+        let bound_to = |end: &End, id: &Id| end.target() == Some(id);
+        assert!(c.iter().any(|k| frames.iter().any(|f| bound_to(&k.end, &f.id))), "a link ends on a frame");
+        assert!(c.iter().any(|k| frames.iter().any(|f| bound_to(&k.start, &f.id))), "a link starts on a frame");
+    }
+
+    #[test]
+    fn ordinary_nodes_are_kept_around_a_subgraph() {
+        let o = objs("flowchart TD\n subgraph S\n  A --> B\n end\n C --> A");
+        assert_eq!(boxes(&o).iter().filter(|x| x.0.style.dash != Dash::Dashed && x.1.geom != BoxGeom::Text).count(), 3);
     }
 }

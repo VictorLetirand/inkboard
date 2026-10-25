@@ -104,8 +104,10 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."}}), &[])}),
         json!({"name": "add_page", "description": "Adds a page. Returns its number.",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
-        json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard.",
-            "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop()}), &["output"])}),
+        json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard. Missing folders of `output` are created (under the allowed root). For a PNG, `width` fixes the width in pixels (the same width for every diagram, whatever its size) or `scale` the pixels per board unit (default 2).",
+            "inputSchema": obj(json!({"path": path_prop(), "output": {"type": "string"}, "page": page_prop(),
+                "width": {"type": "integer", "minimum": PNG_WIDTH_MIN, "maximum": PNG_WIDTH_MAX, "description": "PNG only: width of the image in pixels."},
+                "scale": {"type": "number", "minimum": PNG_SCALE_MIN, "maximum": PNG_SCALE_MAX, "description": "PNG only: pixels per board unit. Default 2. Not with `width`."}}), &["output"])}),
     ];
     tools.extend(ext_specs());
     tools
@@ -173,6 +175,34 @@ fn resolve(srv: &Server, p: &str) -> Res<PathBuf> {
     Ok(full)
 }
 
+/// Like [`resolve`] for a file about to be written: the folders missing above it are created, once it is known that the file stays under
+/// the root (the deepest existing folder is resolved, so a link or `..` cannot lead outside; `..` is refused in the part to create).
+fn resolve_new(srv: &Server, p: &str) -> Res<PathBuf> {
+    let path = PathBuf::from(p);
+    if let Some(root) = &srv.root {
+        let root = root.canonicalize().map_err(|e| format!("root not accessible: {e}"))?;
+        let abs = if path.is_absolute() { path } else { root.join(path) };
+        if let Some(parent) = abs.parent() {
+            let existing = parent.ancestors().find(|a| a.exists()).ok_or("invalid path")?;
+            let real = existing.canonicalize().map_err(|e| format!("folder not accessible ({}): {e}", existing.display()))?;
+            if !real.starts_with(&root) {
+                return Err(format!("path outside the allowed root ({})", root.display()));
+            }
+            let rest = parent.strip_prefix(existing).map_err(|_| "invalid path")?;
+            if rest.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                return Err("invalid path".into());
+            }
+            let wanted = real.join(rest);
+            std::fs::create_dir_all(&wanted).map_err(|e| format!("creating folder {}: {e}", wanted.display()))?;
+        }
+        return resolve(srv, &abs.display().to_string());
+    }
+    if let Some(parent) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| format!("creating folder {}: {e}", parent.display()))?;
+    }
+    resolve(srv, p)
+}
+
 fn lower_name(p: &Path) -> String {
     p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase()
 }
@@ -197,7 +227,10 @@ fn select_page(ed: &mut Editor, spec: Option<&Value>) -> Res<()> {
     let pages = &ed.doc.pages;
     let found = match spec {
         Value::Number(n) => n.as_u64().and_then(|n| usize::try_from(n).ok()).and_then(|n| n.checked_sub(1)).and_then(|i| pages.get(i)),
-        Value::String(name) => pages.iter().find(|p| &p.name == name),
+        // a name first; a number written as text ("2") is the page number, as models often send it
+        Value::String(name) => {
+            pages.iter().find(|p| &p.name == name).or_else(|| name.trim().parse::<usize>().ok().and_then(|n| n.checked_sub(1)).and_then(|i| pages.get(i)))
+        }
         _ => None,
     };
     let id = found.ok_or_else(|| format!("page not found ({spec}); the board has {} page(s)", pages.len()))?.id.clone();
@@ -388,7 +421,7 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     // paths are resolved (and confined to the root) here, never in the application
     for key in ["path", "output"] {
         if let Some(p) = os(&a, key) {
-            let abs = resolve(srv, p)?;
+            let abs = if key == "output" && (name == "export" || name == "render") { resolve_new(srv, p)? } else { resolve(srv, p)? };
             a[key] = json!(abs.display().to_string());
         }
     }
@@ -942,6 +975,33 @@ fn table_rect(o: &Object) -> Rect {
     }
 }
 
+const PNG_WIDTH_MIN: u32 = 16;
+const PNG_WIDTH_MAX: u32 = 8000;
+const PNG_SCALE_MIN: f64 = 0.1;
+const PNG_SCALE_MAX: f64 = 8.0;
+
+/// The size asked for a PNG export: a width in pixels, or a scale (default 2).
+fn png_size(a: &Value) -> Res<(Option<u32>, f32)> {
+    let width = match a.get("width").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(
+            v.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| (PNG_WIDTH_MIN..=PNG_WIDTH_MAX).contains(n))
+                .ok_or_else(|| format!("\"width\" must be an integer between {PNG_WIDTH_MIN} and {PNG_WIDTH_MAX}"))?,
+        ),
+    };
+    let scale = match a.get("scale").filter(|v| !v.is_null()) {
+        None => 2.0,
+        Some(_) if width.is_some() => return Err("give \"width\" or \"scale\", not both".into()),
+        Some(v) => v
+            .as_f64()
+            .filter(|n| (PNG_SCALE_MIN..=PNG_SCALE_MAX).contains(n))
+            .ok_or_else(|| format!("\"scale\" must be a number between {PNG_SCALE_MIN} and {PNG_SCALE_MAX}"))?,
+    };
+    Ok((width, inkboard_core::num::f32(scale)))
+}
+
 fn export(ed: &mut Editor, a: &Value) -> Res<Value> {
     let output = PathBuf::from(s(a, "output")?);
     let name = lower_name(&output);
@@ -949,13 +1009,22 @@ fn export(ed: &mut Editor, a: &Value) -> Res<Value> {
         return Err(format!("unsupported output extension (expected: {})", EXPORTS.join(", ")));
     }
     let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if ext != "png" && (a.get("width").is_some_and(|v| !v.is_null()) || a.get("scale").is_some_and(|v| !v.is_null())) {
+        return Err("\"width\" and \"scale\" only apply to a .png output".into());
+    }
     let doc = &ed.doc;
     let page = ed.page();
     let svg = || export_svg(doc, page, None, &ApproxMeasurer, &SvgOptions::default()).ok_or_else(|| "the page is empty: nothing to export".to_owned());
     let bytes: Vec<u8> = if ext == "svg" {
         svg()?.into_bytes()
     } else if ext == "png" {
-        inkboard_formats::raster::svg_to_png(&svg()?, 2.0).map_err(|e| e.to_string())?
+        let (width, scale) = png_size(a)?;
+        let svg = svg()?;
+        match width {
+            Some(w) => inkboard_formats::raster::svg_to_png_width(&svg, w),
+            None => inkboard_formats::raster::svg_to_png(&svg, scale),
+        }
+        .map_err(|e| e.to_string())?
     } else if ext == "pdf" {
         inkboard_formats::raster::svg_to_pdf(&svg()?).map_err(|e| e.to_string())?
     } else if ext == "drawio" {

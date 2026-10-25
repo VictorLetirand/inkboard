@@ -92,7 +92,7 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 | `search_icons` | Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI symbols…) by keywords (`query`, English names, case-insensitive, every word must match); optional `group`, `set`, `limit` (default 20, at most 100). Returns `{count, truncated, icons: [{id, name, set, group, mono}]}`. Read-only. |
 | `list_icon_groups` | The groups of the icon library with their sets and icon counts (`{total, groups: [{group, sets: [{set, icons}]}]}`), to know what to search for. Read-only. |
 | `add_icon` | Places an icon (`icon` = an `id` from `search_icons`) as an image object that `add_connector` can attach to. `size` (longest side, default 64, 8 to 2000) or `w`/`h` (ratio kept when only one is given); `stroke` tints monochrome icons; `label` adds a text centered under the icon, grouped with it (`markdown: true` for [rich text](#rich-text)). Returns `{id, x, y, w, h, icon, label_id?, warnings?}`. |
-| `import_mermaid` | Mermaid diagram (flowchart, state, sequence) with automatic layout; optional dedicated page. |
+| `import_mermaid` | Mermaid diagram (flowchart, state, sequence) with automatic layout; optional dedicated page. A `subgraph` becomes a dashed frame with its title, and a link written to a subgraph (`B --> Back`) is attached to that frame. A `;` inside a quoted label (`A["a; b"]`) is kept in the label. Not supported: class and ER diagrams, pie, mindmap, gantt (an explicit error says so); the `direction` of a subgraph is ignored. |
 | `update_object` | Modify text ([rich text](#rich-text) optional), position, size, colors, [line style, font, lock, rotation](#update_object), a connector's route / arrowheads / ends, or one table cell. |
 | `delete_object` | Deletes one object (`id`) or several (`ids`). |
 | `move_objects` | Moves objects together (relative or to a position); bound connectors follow. |
@@ -103,7 +103,7 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 | `add_page` | New page. |
 | `manage_pages` | Lists, renames or deletes pages (`add_page` creates them). |
 | `batch` | **Several tool calls in one request** (1 to 200), run in order on one board, with references to earlier results (`"$0.id"`), all-or-nothing by default, one undo step. |
-| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard` according to the extension. |
+| `export` | `.svg`, `.png`, `.pdf`, `.drawio`, `.excalidraw`, `.canvas`, `.inkboard` according to the extension. The missing folders of `output` are created (under the root; `render` does the same for its `output`). For a `.png`, `width` (16 to 8000) gives the width in pixels whatever the size of the diagram, so that several diagrams get the same width; or `scale` (0.1 to 8, default 2) gives the pixels per board unit. Not both. |
 
 Without `x`/`y`, a new object is placed below the existing content. The returned ids are used to connect or modify objects.
 Errors are returned as a tool result (`isError`) with an English message the agent can act on.
@@ -237,7 +237,7 @@ Locked objects (and objects on a locked layer) are skipped by `align_*` and `dis
 | `action` | Meaning |
 |---|---|
 | `list` | `{"pages": [{"number", "name", "objects"}]}`. |
-| `rename` | `page` (number from 1 or name) and `name` (not empty, 120 characters at most, trimmed). `warnings` says if another page has the same name. |
+| `rename` | `page` (number from 1, also written as text such as `"2"`, or name) and `name` (not empty, 120 characters at most, trimmed). `warnings` says if another page has the same name. |
 | `delete` | `page`; also deletes its objects (`objects_removed`). The last page of a board cannot be deleted. |
 
 `rename` and `delete` require `page` (the first page is never assumed). `add_page` creates pages.
@@ -338,7 +338,7 @@ Limits: formatting a table cell is done with `add_table` (`markdown: true`) or `
 | `atomic` | Default `true`: all or nothing (see below). `false`: keep what succeeded before the first error. |
 | `path`, `page` | As for the other tools. They apply to **every** operation; an operation can name another `page` in its own `args`. An operation without `page` always acts on the batch-level `page` (default: the first page), whatever the previous operations did (even `add_page`). |
 
-Any tool of the server can be used in a batch, including the ones added by later versions. **Not allowed**: `batch` (no nesting), `create_board`, `save_board`, `board_changes`, `export` and `render` (they write elsewhere than on the board or would confuse the change tracking). The error is `tool X cannot be used inside a batch`.
+Any tool of the server can be used in a batch, including the ones added by later versions. Names are given as the server knows them (`add_shape`); the `inkboard_` prefix that some clients show (`inkboard_add_shape`) is accepted too. **Not allowed**: `batch` (no nesting), `create_board`, `save_board`, `board_changes`, `export` and `render` (they write elsewhere than on the board or would confuse the change tracking). The error is `tool X cannot be used inside a batch`.
 
 ### References
 
