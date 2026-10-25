@@ -13,6 +13,11 @@ pub trait Connection {
     fn recv(&mut self) -> Option<Vec<u8>>;
     fn is_open(&self) -> bool;
     fn close(&mut self);
+    /// Bytes handed to `send` that the network has not taken yet (0 when the transport cannot tell). The host uses it to pace what it
+    /// sends to a guest that reads slowly.
+    fn queued_bytes(&self) -> usize {
+        0
+    }
 }
 
 pub trait Transport {

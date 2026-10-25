@@ -57,6 +57,7 @@ workspace = true
 
 [dev-dependencies]
 base64 = "0.23.1"
+inkboard-crowd = { path = "../inkboard-crowd" }
 egui_kittest = { version = "0.33.3", features = ["eframe", "snapshot", "wgpu"] }
 # Counting allocator of the robustness tests (memory growth after a flood of hostile frames); tests only.
 peak_alloc = "0.3.0"

@@ -42,6 +42,9 @@ pub struct Limits {
     pub max_ops_per_message: usize,
     pub max_objects_per_message: usize,
     pub max_ids_per_message: usize,
+    /// Identifiers of one `Order` operation: it lists the whole stacking order of a page, so it must allow the biggest page (it stays
+    /// under `max_message_bytes`: about 15 bytes per identifier).
+    pub max_order_ids: usize,
     /// Maximum magnitude of any number (positions, sizes...).
     pub max_abs_value: f64,
     pub max_object_size: f64,
@@ -84,6 +87,7 @@ impl Limits {
             max_ops_per_message: 10_000,
             max_objects_per_message: 100_000,
             max_ids_per_message: 200_000,
+            max_order_ids: 200_000,
             max_text_chars: 1_000_000,
             max_pen_points: 500_000,
             max_pages: 1_000,
@@ -100,6 +104,7 @@ impl Default for Limits {
             max_ops_per_message: 200,
             max_objects_per_message: 500,
             max_ids_per_message: 5_000,
+            max_order_ids: 60_000,
             max_abs_value: 1e7,
             max_object_size: 1e6,
             max_stroke_width: 1_000.0,
@@ -278,7 +283,7 @@ pub fn check_object(l: &Limits, o: &Object) -> Result<(), Violation> {
 /// separately with [`check_page_count`].
 pub fn check_ops(l: &Limits, ops: &[WireOp]) -> Result<(), Violation> {
     too_many("operations", ops.len(), l.max_ops_per_message)?;
-    let (mut objects, mut ids) = (0usize, 0usize);
+    let (mut objects, mut ids, mut order_ids) = (0usize, 0usize, 0usize);
     for op in ops {
         match op {
             WireOp::Put { page, object } => {
@@ -287,10 +292,16 @@ pub fn check_ops(l: &Limits, ops: &[WireOp]) -> Result<(), Violation> {
                 too_many("objects", objects, l.max_objects_per_message)?;
                 check_object(l, object)?;
             }
-            WireOp::Delete { page, ids: v } | WireOp::Order { page, ids: v } => {
+            WireOp::Delete { page, ids: v } => {
                 check_id(l, page)?;
                 ids += v.len();
                 too_many("identifiers", ids, l.max_ids_per_message)?;
+                v.iter().try_for_each(|id| check_id(l, id))?;
+            }
+            WireOp::Order { page, ids: v } => {
+                check_id(l, page)?;
+                order_ids += v.len();
+                too_many("identifiers in the stacking order", order_ids, l.max_order_ids)?;
                 v.iter().try_for_each(|id| check_id(l, id))?;
             }
             WireOp::SetLayers { page, layers } => {

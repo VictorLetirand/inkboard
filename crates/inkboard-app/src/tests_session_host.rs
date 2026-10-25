@@ -188,6 +188,18 @@ impl World {
         self.guests.iter().all(|g| same(g.client.doc(), &self.ed.doc))
     }
 
+    /// Rounds until every guest holds the host's board, bounded. A big board is encoded on a thread (real time): this gives it the time.
+    fn settle(&mut self) {
+        let began = std::time::Instant::now();
+        while began.elapsed() < std::time::Duration::from_secs(120) {
+            if self.converged() {
+                return;
+            }
+            self.step();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
     fn edit(&mut self, guest: usize, ops: Vec<WireOp>) {
         let now = self.net.now();
         assert!(self.guests[guest].client.edit(ops, now).is_some());
@@ -1376,6 +1388,7 @@ fn a_board_of_10000_objects_can_be_joined_and_a_guest_who_comes_back_resumes_its
     });
     let a = w.join("a", Role::Edit);
     assert!(w.guests[a].client.is_live(), "joined over a transport that refuses frames above 1 MiB");
+    w.settle();
     assert!(w.converged(), "all 10 000 objects arrived");
     assert_eq!(w.guests[a].client.doc().pages[0].objects.len(), 10_000);
     // away while the host works (more than the host keeps in its log: the way back is a snapshot, in parts too)
@@ -1389,6 +1402,7 @@ fn a_board_of_10000_objects_can_be_joined_and_a_guest_who_comes_back_resumes_its
     let now = w.net.now();
     w.guests[a].connect(now);
     w.rounds(10);
+    w.settle();
     assert_eq!(w.guests[a].client.participant(), pid, "same place");
     assert_eq!(w.host.members().len(), 1, "no second place");
     assert!(w.converged(), "caught up");
@@ -1407,7 +1421,7 @@ fn a_frame_the_transport_refuses_closes_that_connection_cleanly_and_the_place_is
         w.ed.insert(boxed(&format!("b{i}"), f64::from(i)));
     }
     w.rounds(2);
-    w.net.set_max_frame(Some(20_000)); // the snapshot (about 85 KB, below the size at which it is cut) cannot be sent
+    w.net.set_max_frame(Some(1_500)); // the snapshot (about 85 KB, 5 KB once packed, below the size at which it is cut) cannot be sent
     let a = w.join("a", Role::Edit);
     assert!(w.guests[a].client.doc().pages[0].objects.is_empty(), "no snapshot arrived");
     assert!(!w.guests[a].conn.as_ref().unwrap().is_open(), "the host closed the connection instead of ignoring the failure");
@@ -1710,4 +1724,213 @@ fn one_identity_cannot_hold_more_places_than_allowed_nor_flood_the_host_with_con
     let conns: Vec<SimConn> = (0..10).map(|_| w.net.transport("flood").connect(HOST_ID).unwrap()).collect();
     w.rounds(3);
     assert_eq!(conns.iter().filter(|c| c.is_open()).count(), 4, "the others were closed unread");
+}
+
+/* ------------------------------------------------------------------------------------ load: big boards, slow and stuck guests */
+
+/// A board of `n` objects of about a kilobyte each, with text that does not compress well (hexadecimal noise): once packed, the board is
+/// still about half its size.
+fn heavy_board(n: usize) -> Document {
+    let mut doc = Document::new("heavy");
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    doc.pages[0].objects = (0..n)
+        .map(|i| {
+            let mut o = boxed(&format!("h{i}"), i as f64);
+            let text: String = (0..56)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    format!("{x:016x}")
+                })
+                .collect();
+            if let Kind::Box(b) = &mut o.kind {
+                b.label = Label::new(&text, 18.0, inkboard_core::style::Align::Left);
+            }
+            o
+        })
+        .collect();
+    doc
+}
+
+fn heavy_world(seed: u64, n: usize, ordered_bytes_per_poll: usize) -> World {
+    let net = SimNet::new(seed, NetConfig::ideal());
+    let ed = Editor::new(heavy_board(n));
+    let cfg = HostConfig {
+        entropy_seed: Some(seed ^ 0xA5A5),
+        max_total_objects: 100_000,
+        snapshot_thread_min_objects: 100,
+        ordered_bytes_per_poll,
+        ..HostConfig::default()
+    };
+    let host = SessionHost::start(cfg, &ed, Box::new(net.transport(HOST_ID)) as Box<dyn HostTransport>).unwrap();
+    let addr = HostAddress { host: HOST_ID.to_owned(), relays: Vec::new() };
+    World { net, ed, host, addr, guests: Vec::new(), seed }
+}
+
+#[test]
+fn a_big_board_leaves_the_host_in_paced_pieces_in_order_while_the_host_goes_on_working() {
+    let mut w = heavy_world(61, 3_000, 256 << 10); // about 3.6 MB of JSON, 1.8 MB packed: seven polls at 256 KiB
+    let a = w.add_guest("a", Role::Edit);
+    w.rounds(3);
+    w.admit_all(Role::Edit);
+    let (mut busy_rounds, mut most, mut before) = (0, 0u64, w.net.stats().sent);
+    let began = std::time::Instant::now();
+    for i in 0.. {
+        // the host works while the board is on its way: its modifications must arrive after the board, never before
+        if i % 5 == 0 && i < 100 {
+            w.ed.insert(boxed(&format!("during{i}"), 3.0));
+        }
+        w.step();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let sent = w.net.stats().sent;
+        busy_rounds += usize::from(sent > before);
+        most = most.max(sent - before);
+        before = sent;
+        if (i > 100 && w.converged()) || began.elapsed() > std::time::Duration::from_secs(120) {
+            break;
+        }
+    }
+    assert!(w.converged(), "the board and the modifications made meanwhile arrived");
+    assert!(w.guests[a].client.is_live() && w.guests[a].client.doc().pages[0].objects.len() >= 3_000);
+    let polls_needed = 5; // 1.5 MB packed at least, 256 KiB per poll at most
+    assert!(busy_rounds >= polls_needed, "the board left in {busy_rounds} polls: paced, not all at once ({most} frames in the busiest, small ones included)");
+    assert!(!w.events(a).iter().any(|e| matches!(e, ClientEvent::PendingDiscarded(_))));
+}
+
+#[test]
+fn guests_who_arrive_within_a_few_seconds_share_one_encoding_of_the_board() {
+    let mut w = heavy_world(62, 3_000, 4 << 20);
+    for k in 0..6 {
+        w.ed.insert(boxed(&format!("between{k}"), 1.0)); // the board moves between arrivals: the cached one is completed by the log
+        let i = w.add_guest(&format!("g{k}"), Role::Edit);
+        w.rounds(3);
+        w.admit_all(Role::Edit);
+        w.settle();
+        assert!(w.guests[i].client.is_live());
+    }
+    w.settle();
+    assert!(w.converged(), "all six hold the host's board, however old the encoding they were given");
+    assert_eq!(w.host.stats().snapshots_built, 1, "one encoding for six arrivals");
+    // an image the board gains makes the encoding obsolete: a newcomer must find the image in its list
+    let id = w.ed.doc.add_asset("image/png", vec![1, 2, 3]);
+    let img = Object::new(Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: id.clone(), latex: None, mono: false }), Style::default());
+    w.ed.insert(img);
+    w.rounds(3);
+    let late = w.add_guest("late", Role::Edit);
+    w.rounds(3);
+    w.admit_all(Role::Edit);
+    w.settle();
+    assert!(w.guests[late].client.is_live() && w.converged());
+    assert_eq!(w.host.stats().snapshots_built, 2, "a new image: a new encoding");
+}
+
+#[test]
+fn a_guest_that_keeps_retrying_without_resuming_does_not_use_up_the_places_of_the_session() {
+    let mut w = World::new(63, NetConfig::ideal(), |_| {});
+    for _ in 0..6 {
+        // the same device: it never got the whole board, so it asks again as a newcomer each time
+        let g = w.join("slow", Role::Edit);
+        assert!(w.guests[g].client.is_live(), "never refused");
+        w.guests[g].drop_connection();
+        w.rounds(3);
+    }
+    let g = w.join("slow", Role::Edit);
+    assert!(w.guests[g].client.is_live());
+    assert_eq!(w.host.members().len(), 1, "the places it left behind were freed");
+}
+
+struct Stuck(SimConn);
+
+impl Connection for Stuck {
+    fn peer(&self) -> &str {
+        self.0.peer()
+    }
+    fn send(&mut self, f: &[u8]) -> inkboard_session::error::Result<()> {
+        self.0.send(f)
+    }
+    fn recv(&mut self) -> Option<Vec<u8>> {
+        self.0.recv()
+    }
+    fn is_open(&self) -> bool {
+        self.0.is_open()
+    }
+    fn close(&mut self) {
+        self.0.close();
+    }
+    /// A guest that reads nothing: what was handed to the network stays there.
+    fn queued_bytes(&self) -> usize {
+        5 << 20
+    }
+}
+
+struct StuckTransport(SimTransport);
+
+impl HostTransport for StuckTransport {
+    fn accept(&mut self) -> Option<Box<dyn Connection>> {
+        Transport::accept(&mut self.0).map(|c| Box::new(Stuck(c)) as Box<dyn Connection>)
+    }
+}
+
+#[test]
+fn a_guest_that_does_not_read_is_dropped_after_a_while_and_the_others_do_not_wait_for_it() {
+    let net = SimNet::new(64, NetConfig::ideal());
+    let mut ed = Editor::new(Document::new("board"));
+    ed.insert(boxed("seed-1", 0.0));
+    let cfg = HostConfig { entropy_seed: Some(64), stall_ms: 2_000, ..HostConfig::default() };
+    let host = SessionHost::start(cfg, &ed, Box::new(StuckTransport(net.transport(HOST_ID)))).unwrap();
+    let addr = HostAddress { host: HOST_ID.to_owned(), relays: Vec::new() };
+    let mut w = World { net, ed, host, addr, guests: Vec::new(), seed: 64 };
+    let a = w.join("stuck", Role::Edit);
+    assert_eq!(w.host.members().len(), 1);
+    assert!(w.host.members()[0].connected);
+    w.rounds(150); // 1.5 s of virtual time: still waiting
+    assert!(w.host.members()[0].connected, "not yet");
+    w.rounds(100);
+    assert!(!w.host.members()[0].connected, "dropped: its queue never shrank");
+    assert!(w.host.take_events().iter().any(|e| matches!(e, HostEvent::Warned { reason, .. } if reason.contains("does not read"))));
+    assert!(!w.guests[a].conn.as_ref().unwrap().is_open());
+}
+
+#[test]
+fn with_many_cursors_each_one_is_relayed_less_often_and_the_latest_position_always_arrives() {
+    let mut w = World::new(65, NetConfig::ideal(), |c| {
+        c.max_participants = 60;
+        c.max_pending = 60;
+    });
+    for k in 0..40 {
+        w.join(&format!("g{k}"), Role::Edit);
+    }
+    for g in 0..40 {
+        w.events(g);
+    }
+    for r in 0..30 {
+        for g in 0..40 {
+            let p = Presence {
+                participant: None,
+                page: w.page(),
+                cursor: Some(inkboard_core::Pt::new(f64::from(r), g as f64)),
+                selection: vec![],
+                tool: None,
+                editing: None,
+                viewport: None,
+            };
+            w.send(g, Message::Presence(p));
+        }
+        w.rounds(1);
+    }
+    w.rounds(80);
+    let mut last: std::collections::HashMap<ParticipantId, f64> = std::collections::HashMap::new();
+    let mut relayed = 0;
+    for ev in w.events(0) {
+        if let ClientEvent::Relay(m) = ev
+            && let Message::Presence(p) = *m
+        {
+            relayed += 1;
+            last.insert(p.participant.unwrap(), p.cursor.unwrap().x);
+        }
+    }
+    assert!(relayed < 39 * 30 / 2, "{relayed} relays of {} sent: far fewer", 39 * 30);
+    assert_eq!(last.len(), 39, "everybody else was seen");
+    assert!(last.values().all(|x| *x == 29.0), "the last position of each cursor arrived: {last:?}");
 }

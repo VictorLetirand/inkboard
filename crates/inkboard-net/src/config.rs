@@ -177,6 +177,9 @@ pub struct NetConfig {
     pub max_frame: usize,
     /// Host only: bind `127.0.0.1` only and advertise it (tests, two processes on one machine).
     pub loopback_only: bool,
+    /// Native only: no direct path at all (the endpoint opens no UDP socket of its own and talks through a relay). For the tests of
+    /// the relay path and the load tests; a real session lets iroh upgrade to a direct path when it can.
+    pub relay_only: bool,
     /// Test mode: a guest also uses relays from a ticket that [`check_relay_url`] would refuse (`http`, loopback, LAN). Off by default.
     pub allow_private_relays: bool,
 }
@@ -192,6 +195,7 @@ impl Default for NetConfig {
             probe_delay: Duration::from_secs(2),
             max_frame: (1 << 20) + 1024,
             loopback_only: false,
+            relay_only: false,
             allow_private_relays: false,
         }
     }

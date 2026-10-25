@@ -198,6 +198,8 @@ fn simplify(pts: Vec<Pt>) -> Vec<Pt> {
 const STUB: f64 = 24.0;
 /// Minimum clearance between an elbow connector and the shapes it goes around.
 const CLEARANCE: f64 = 14.0;
+/// How far around the straight elbow path (px) the shapes taken into account when routing around obstacles may be.
+const ROUTE_REGION: f64 = 400.0;
 /// Above this many objects, elbow connectors no longer try to go around shapes (linear cost per connector).
 const AVOID_MAX_OBJECTS: usize = 5000;
 
@@ -358,7 +360,10 @@ impl Page {
         // the search start inside an obstacle and give up: it is left out, the others are still avoided.
         let holds = |r: &Rect, p: Pt| r.expand(CLEARANCE).contains(p);
         own.retain(|r| !holds(r, a1) && !holds(r, b1));
-        let all: Vec<Rect> = others.into_iter().chain(own).collect();
+        // Only the shapes near the path matter to the search, whose cost grows with the square of their number: on a board with a
+        // thousand shapes, routing around all of them took seconds for each elbow connector, at every modification of the board.
+        let near = Rect::from_points(path.iter().copied()).map(|r| r.expand(ROUTE_REGION));
+        let all: Vec<Rect> = others.into_iter().filter(|r| near.as_ref().is_none_or(|n| n.intersects(r))).chain(own).collect();
         let Some(mid) = crate::route::route_around(a1, b1, a.side.map(Side::horizontal), &all, CLEARANCE) else { return path };
         let mut out = vec![a.pt];
         out.extend(mid);
@@ -558,6 +563,24 @@ mod tests {
         let mut alone = Page::new("t");
         alone.objects = p.objects[..2].to_vec();
         assert_eq!(alone.connector_path(&c).unwrap(), with_far_shape);
+    }
+
+    #[test]
+    fn elbow_around_a_shape_ignores_the_thousand_shapes_far_away() {
+        use crate::route::crosses;
+        let mut p = Page::new("t");
+        let a = bx(&mut p, BoxGeom::Rect, 0.0, 0.0, 100.0, 50.0);
+        let b = bx(&mut p, BoxGeom::Rect, 500.0, 0.0, 100.0, 50.0);
+        let wall = bx(&mut p, BoxGeom::Rect, 250.0, -60.0, 100.0, 170.0);
+        let mut c = Connector::new(End::bound(a), End::bound(b));
+        c.route = Route::Elbow;
+        let alone = p.connector_path(&c).unwrap();
+        for i in 0..1000 {
+            bx(&mut p, BoxGeom::Rect, 3000.0 + f64::from(i % 40) * 120.0, 3000.0 + f64::from(i / 40) * 90.0, 100.0, 60.0);
+        }
+        let crowded = p.connector_path(&c).unwrap();
+        assert_eq!(crowded, alone, "same path with or without the shapes that are far away");
+        assert!(!crosses(&crowded, &[p.get(&wall).unwrap().frame().unwrap().aabb()]));
     }
 
     #[test]

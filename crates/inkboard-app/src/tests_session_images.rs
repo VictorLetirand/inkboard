@@ -434,6 +434,28 @@ fn an_image_the_host_adds_after_the_guest_joined_reaches_it_without_a_new_snapsh
 }
 
 #[test]
+fn the_images_of_a_board_that_arrives_compressed_reach_a_late_guest() {
+    // the snapshot of a board with a few hundred objects is sent packed (protocol v3): the list of images it carries must still be read
+    let mut r = Room::new(13, |_| {});
+    let png = noise_png(90, 70, 77);
+    let aid = r.ed.doc.add_asset("image/png", png.clone());
+    for i in 0..300 {
+        let mut o =
+            Object::new_box(inkboard_core::BoxGeom::Rect, Frame::new(f64::from(i) * 20.0, 0.0, 80.0, 40.0), Style::default(), inkboard_core::Label::default());
+        o.id = Id(format!("filler{i}"));
+        r.ed.insert(o);
+    }
+    r.ed.insert(Object::new(
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 100.0, 60.0, 50.0), asset: aid, latex: None, mono: false }),
+        Style { width: 0.0, fill: None, ..Style::default() },
+    ));
+    r.rounds(3);
+    let a = r.join("Anna", Role::Edit);
+    r.until("the late guest to show the image", |r| shows(&r.guests[a].app().ed, &png));
+    assert_eq!(r.guests[a].app().ed.doc.pages[0].objects.len(), 301);
+}
+
+#[test]
 fn a_reader_cannot_upload() {
     let mut r = Room::new(9, |_| {});
     let v = r.join("Viewer", Role::View);

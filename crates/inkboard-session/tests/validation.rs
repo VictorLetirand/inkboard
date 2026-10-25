@@ -67,6 +67,12 @@ fn counts_per_message() {
     assert!(check_ops(&l(), &del(5000)).is_ok());
     assert!(matches!(check_ops(&l(), &del(5001)), Err(Violation::TooMany { what: "identifiers", .. })));
 
+    // "bring to front" lists the whole page: a board of 20 000 objects on one page must be reorderable (found by the load test)
+    let order = |n: usize| vec![WireOp::Order { page: Id("p".into()), ids: (0..n).map(|i| Id(format!("o{i}"))).collect() }];
+    assert!(check_ops(&l(), &order(20_000)).is_ok());
+    assert!(check_ops(&l(), &order(60_000)).is_ok());
+    assert!(matches!(check_ops(&l(), &order(60_001)), Err(Violation::TooMany { what: "identifiers in the stacking order", .. })));
+
     let mut page = Page::new("big");
     page.objects = (0..501).map(|i| boxed(&format!("o{i}"))).collect();
     let add = WireOp::AddPage { index: 0, page: Box::new(page) };

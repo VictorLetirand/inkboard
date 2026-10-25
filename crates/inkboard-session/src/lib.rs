@@ -14,6 +14,7 @@ pub mod codec;
 pub mod crypto;
 pub mod error;
 pub mod limits;
+pub mod pack;
 pub mod proto;
 pub mod sequencer;
 pub mod sim;

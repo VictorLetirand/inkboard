@@ -28,7 +28,7 @@ def main():
     by_key = {(p['name'], p['version']): p for p in meta['packages']}
     wanted = set()
     for t in TARGETS:
-        out = run('cargo', 'tree', '--workspace', '-e', 'normal,build', '--target', t, '--prefix', 'none', '--no-dedupe', '-f', '{p}')
+        out = run('cargo', 'tree', '--workspace', '--exclude', 'inkboard-crowd', '-e', 'normal,build', '--target', t, '--prefix', 'none', '--no-dedupe', '-f', '{p}')
         for line in out.splitlines():
             m = re.match(r'^(\S+) v(\S+)', line.strip())
             if m:

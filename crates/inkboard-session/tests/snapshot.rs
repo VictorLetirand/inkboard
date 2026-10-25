@@ -263,3 +263,38 @@ fn a_byte_limiter_takes_the_size_of_what_it_counts() {
     assert!(!rl.allow_n(0, 1));
     assert!(rl.allow_n(1_000, 1_000), "refilled with time");
 }
+
+#[test]
+fn a_packed_board_is_much_smaller_and_comes_back_identical() {
+    use inkboard_session::pack::pack;
+    let doc = big_doc(10_000);
+    let msgs = into_messages(Snapshot::new(&doc, 7, vec![]), PART_BYTES);
+    let plain: usize = msgs.iter().map(|m| JsonCodec.encode(m).len()).sum();
+    let packed: Vec<Message> = msgs.into_iter().map(|m| pack(&m).unwrap_or(m)).collect();
+    let small: usize = packed.iter().map(|m| JsonCodec.encode(m).len()).sum();
+    assert!(packed.iter().all(|m| matches!(m, Message::Packed { .. })), "every part is big enough to be packed");
+    assert!(small * 3 < plain, "{small} bytes packed for {plain}: at least three times smaller");
+    let mut c = joined_client();
+    for m in packed {
+        c.handle(m, 0).unwrap();
+    }
+    assert!(c.is_live() && c.last_seq() == 7);
+    assert!(same_pages(&c.doc().pages, &doc.pages));
+}
+
+#[test]
+fn a_packed_message_cannot_expand_without_limit_nor_hide_anything_but_a_snapshot() {
+    use inkboard_session::pack::{pack, unpack};
+    // a small frame that expands to 40 MB of zeros: refused at the ceiling, the guest closes
+    let bomb = miniz_oxide::deflate::compress_to_vec(&vec![b' '; 40 << 20], 9);
+    assert!(bomb.len() < 100 << 10);
+    let mut c = joined_client();
+    let r = c.handle(Message::Packed { data: bomb }, 0);
+    assert!(r.is_err() && c.take_events().iter().any(|e| matches!(e, ClientEvent::Closed(_))));
+    // a packed message that is not a board (here a Pong, and a Packed inside a Packed)
+    let inner = serde_json::to_vec(&Message::Pong { nonce: 1 }).unwrap();
+    assert!(unpack(&miniz_oxide::deflate::compress_to_vec(&inner, 1), 1 << 20).is_err());
+    let part = &into_messages(Snapshot::new(&big_doc(500), 1, vec![]), PART_BYTES)[0];
+    let nested = serde_json::to_vec(&pack(part).expect("big enough")).unwrap();
+    assert!(unpack(&miniz_oxide::deflate::compress_to_vec(&nested, 1), 1 << 20).is_err());
+}

@@ -80,7 +80,22 @@ const RELEASE_TARGETS: [&str; 5] =
 fn embedded_crates(target: &str) -> std::collections::BTreeSet<(String, String)> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let out = std::process::Command::new(cargo)
-        .args(["tree", "--workspace", "-e", "normal,build", "--prefix", "none", "-f", "{p}", "--offline", "--locked", "--target", target])
+        .args([
+            "tree",
+            "--workspace",
+            "--exclude",
+            "inkboard-crowd",
+            "-e",
+            "normal,build",
+            "--prefix",
+            "none",
+            "-f",
+            "{p}",
+            "--offline",
+            "--locked",
+            "--target",
+            target,
+        ])
         .current_dir(root())
         .output()
         .expect("cargo tree can be started");
