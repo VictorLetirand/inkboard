@@ -702,8 +702,8 @@ impl LayoutCtx<'_> {
     }
 }
 
-/// Positions of the nodes (centers) and routes of the edges of a flow.
-fn layout_flow(flow: &Flow, sizes: &[(BoxGeom, f64, f64)], edges: &[(usize, usize)]) -> Layout {
+/// Innermost subgraph of each node.
+fn innermost_subs(flow: &Flow) -> Vec<Option<usize>> {
     let mut node_sub = vec![None; flow.nodes.len()];
     for (i, s) in flow.subs.iter().enumerate() {
         for id in &s.members {
@@ -712,7 +712,34 @@ fn layout_flow(flow: &Flow, sizes: &[(BoxGeom, f64, f64)], edges: &[(usize, usiz
             }
         }
     }
-    let g = LayoutCtx { flow, sizes, edges, node_sub }.group(None, flow.dir);
+    node_sub
+}
+
+/// Whether `node` is in subgraph `sub`, directly or in a subgraph inside it.
+fn in_subgraph(flow: &Flow, node_sub: &[Option<usize>], node: usize, sub: usize) -> bool {
+    let mut cur = node_sub[node];
+    while let Some(c) = cur {
+        if c == sub {
+            return true;
+        }
+        cur = flow.subs[c].parent;
+    }
+    false
+}
+
+/// Moves the waypoints of a link around the nodes it does not link, which its straight lines would cross. `ends`: each end as a node (the one
+/// the layout used) and the subgraph it stands for, if any; what is inside a subgraph that a link ends on is not in its way.
+fn clear_of_nodes(conn: &mut Connector, ends: [(usize, Option<usize>); 2], flow: &Flow, node_sub: &[Option<usize>], rects: &[Rect]) {
+    let blocks = |n: usize| ends.iter().all(|&(e, sub)| n != e && !sub.is_some_and(|s| in_subgraph(flow, node_sub, n, s)));
+    let obstacles: Vec<Rect> = (0..rects.len()).filter(|&n| blocks(n)).map(|n| rects[n]).collect();
+    let path: Vec<Pt> = std::iter::once(rects[ends[0].0].center()).chain(conn.via.iter().copied()).chain(std::iter::once(rects[ends[1].0].center())).collect();
+    let routed = inkboard_core::route::detour(&path, &obstacles, 14.0);
+    conn.via = routed[1..routed.len() - 1].to_vec();
+}
+
+/// Positions of the nodes (centers) and routes of the edges of a flow.
+fn layout_flow(flow: &Flow, sizes: &[(BoxGeom, f64, f64)], edges: &[(usize, usize)]) -> Layout {
+    let g = LayoutCtx { flow, sizes, edges, node_sub: innermost_subs(flow) }.group(None, flow.dir);
     let mut lay = Layout { centers: vec![Pt::ZERO; flow.nodes.len()], routes: vec![Vec::new(); edges.len()] };
     for (n, c) in g.centers {
         lay.centers[n] = c;
@@ -746,6 +773,7 @@ fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
             *pair_count.entry((a.min(b), a.max(b))).or_default() += 1;
         }
     }
+    let node_sub = innermost_subs(flow);
     let mut pair_seen: HashMap<(usize, usize), usize> = HashMap::new();
     for (k, &li) in link_idx.iter().enumerate() {
         let link = &flow.links[li];
@@ -793,6 +821,9 @@ fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
                 }
                 *idx += 1;
             }
+        }
+        if a != b && conn.route == Route::Straight {
+            clear_of_nodes(&mut conn, [(a, sub_a), (b, sub_b)], flow, &node_sub, &rects);
         }
         out.push(Object::new(Kind::Connector(conn), style));
     }
@@ -1299,6 +1330,79 @@ mod tests {
         let o = objs("flowchart TD\n subgraph S\n  direction LR\n  A --> B\n end\n C --> A");
         let (a, b) = (center_of(&o, "A"), center_of(&o, "B"));
         assert!((a.x - b.x).abs() < 1.0 && (a.y - b.y).abs() > 20.0, "inherits the direction of the diagram: {a:?} {b:?}");
+    }
+
+    /// Links whose lines (through their waypoints) cross a node they do not link. A link to a frame, and frames themselves, are not counted.
+    fn lines_through_nodes(o: &[Object]) -> usize {
+        let frame_ids: Vec<&Id> = boxes(o).into_iter().filter(|(x, _)| x.style.dash == Dash::Dashed).map(|(x, _)| &x.id).collect();
+        let nodes: Vec<(&Id, Rect)> = o
+            .iter()
+            .filter(|x| !frame_ids.contains(&&x.id) && !matches!(&x.kind, Kind::Box(b) if b.geom == BoxGeom::Text))
+            .filter_map(|x| x.frame().map(|f| (&x.id, f.rect())))
+            .collect();
+        let rect_of = |id: &Id| nodes.iter().find(|n| n.0 == id).map(|n| n.1);
+        let mut count = 0;
+        for c in conns(o) {
+            let (Some(a), Some(b)) = (c.start.target().and_then(rect_of), c.end.target().and_then(rect_of)) else { continue };
+            let path: Vec<Pt> = std::iter::once(a.center()).chain(c.via.iter().copied()).chain(std::iter::once(b.center())).collect();
+            let in_the_way: Vec<Rect> = nodes
+                .iter()
+                .filter(|n| Some(n.0) != c.start.target() && Some(n.0) != c.end.target())
+                .map(|n| Rect::new(n.1.x + 2.0, n.1.y + 2.0, n.1.w - 4.0, n.1.h - 4.0))
+                .collect();
+            count += usize::from(inkboard_core::route::crosses(&path, &in_the_way));
+        }
+        count
+    }
+
+    #[test]
+    fn a_link_that_crosses_a_frame_goes_around_the_nodes_in_its_way() {
+        // Model -> Export used to run straight through "Study generator"
+        let o = objs(
+            "flowchart TD\n subgraph Front [Views]\n  A[View table] --> B[Controller]\n  A --> B2[Model]\n end\n subgraph Back [Plugins]\n  C[Study generator] --> D[Balance]\n  C --> D2[Export]\n end\n B --> Back\n Front --> C\n E[Text] --> A\n B2 --> D2",
+        );
+        assert_eq!(lines_through_nodes(&o), 0);
+        // the detour exists: that link has waypoints
+        let model = boxes(&o).into_iter().find(|(_, b)| b.label.text.to_plain() == "Model").unwrap().0.id.clone();
+        let link = conns(&o).into_iter().find(|c| c.start.target() == Some(&model)).unwrap();
+        assert!(!link.via.is_empty(), "the link goes around by waypoints");
+    }
+
+    #[test]
+    fn links_never_cross_nodes_on_ordinary_flowcharts_and_state_diagrams() {
+        for src in [
+            "flowchart TD\n A --> B --> C --> D\n A --> C\n A --> D\n B --> D",
+            "flowchart LR\n A --> B & C & D\n B --> E\n C --> E\n D --> E\n A --> E",
+            "stateDiagram-v2\n [*] --> A\n A --> B\n B --> C\n A --> C\n C --> [*]",
+            FLOW,
+        ] {
+            assert_eq!(lines_through_nodes(&objs(src)), 0, "{src}");
+        }
+    }
+
+    #[test]
+    fn routing_around_nodes_keeps_the_diagram_valid_on_a_dense_graph() {
+        // 30 nodes, about 90 links: whatever the detours, every link is still bound to its two nodes and nothing is lost
+        let mut src = String::from("flowchart TD\n");
+        let mut seed = 7u64;
+        let mut next = |m: usize| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            usize::try_from((seed >> 33) % u64::try_from(m).unwrap()).unwrap()
+        };
+        let mut links = 0;
+        for i in 0..30 {
+            for _ in 0..3 {
+                let j = next(30);
+                if i != j {
+                    src.push_str(&format!(" N{i} --> N{j}\n"));
+                    links += 1;
+                }
+            }
+        }
+        let o = objs(&src);
+        assert_eq!(conns(&o).len(), links);
+        assert!(conns(&o).iter().all(|c| c.start.target().is_some() && c.end.target().is_some()));
+        assert!(lines_through_nodes(&o) <= 3, "{} of {links} links cross a node", lines_through_nodes(&o));
     }
 
     #[test]

@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ### Fixed
 
+- **Mermaid import:** a link no longer runs straight through a node it does not link (it used to happen to links between subgraphs and to long links in dense diagrams): its waypoints now go around the nodes in its way. Class and entity-relationship diagrams too.
 - **Mermaid import:** the content of each subgraph is laid out on its own and placed as one block, so the frames of subgraphs no longer overlap (nested ones stay inside their parent), and the `direction` written in a subgraph is honoured when no link joins it to the outside (state diagrams: composite states too).
 - **Mermaid import:** a link written to a subgraph (`B --> Back`) no longer creates a stray box named like the subgraph: it is attached to the subgraph's frame. A `;` inside a quoted label (`A["a; b"]`) no longer cuts the node in two.
 - **MCP server:** a page given as text (`"2"`) selects that page number; `batch` accepts the `inkboard_` prefix that some clients add to tool names.
