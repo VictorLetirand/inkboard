@@ -2,7 +2,7 @@
 
 *Branche `test/load`, base `a7b9160`. Objectif de conception (PLAN_REMOTE §0, D2) : 20 participants confortables, plafond par défaut 10, charge validée à 50–100 sans casse.*
 
-(Rapport en cours de rédaction : les sections « Méthode » et « Rejouer » sont définitives, les chiffres sont ajoutés au fil des mesures.)
+
 
 ## 1. Méthode
 
@@ -57,3 +57,25 @@ CROWD_OBJECTS=5000 CROWD_PARTICIPANTS=0,5,10,20,50 cargo +1.99.1 test --release 
 ```
 
 Taille d'un tableau seed : `crowd board --objects 20000`.
+
+## 3. Résultats (2026-10-25, hôte réel + invités simulés sur la même machine, boucle locale, 24 cœurs)
+
+Tableaux complets : `charge/matrice-profil-realiste.md` (profil par défaut : 10 % d'invités lents, 5 % figés, coupures/reprises) et `charge/matrice-controle-sans-lents.md` (contrôle : `--slow 0 --stuck 0`). 40 s d'activité puis 12 s de calme par exécution.
+
+| Invités | Objets | Arrivée d'un invité (snapshot) médiane / p95 | Confirmation d'une modification médiane / p95 | Tour de boucle de l'hôte, max | CPU hôte médian | Exclusions |
+|---|---|---|---|---|---|---|
+| 5 | 20 000 | 0,24 s / 1,0 s | 12 / 42 ms | 66 ms | 0,09 cœur | 0 |
+| 20 | 20 000 | 0,5 s / 2,0 s | 14 / 314 ms | 80 ms | 0,27 cœur | 0 |
+| 50 | 20 000 | 1,2 s / 3,8 s | 17 / 1 203 ms | 88 ms | 0,63 cœur | 0 |
+| 100 | 20 000 | 1,6 s / 6,1 s | 111 / 4 189 ms | 155 ms | 2,1 cœurs | 0 |
+| 100 | 5 000 | 0,7 s / 2,7 s | 123 / 1 342 ms | 33 ms | 1,6 cœur | 0 |
+
+- **Avant les correctifs du lot** (même scénario, 100 invités × 20 000 objets) : tours de l'hôte jusqu'à 31 s, 35 exclusions, divergences. **Après** : plus aucun gel ni exclusion, aucune divergence.
+- **Convergence** : dans le profil réaliste, 19/20, 48/50, 90/100 invités ont le même tableau que l'hôte à la fin. Les non-convergés sont toujours les mêmes (G9, G26, G76…) : les invités lents (512 kbit/s, 200 ms) ou figés du profil ; à 512 kbit/s un instantané de 4 Mio prend plus d'une minute, donc ils reçoivent encore à la fin des 52 s. **Contrôle sans invités dégradés : 50/50 et 100/100 convergent** (5 000 et 20 000 objets), aucun invité divergent.
+- **Mémoire de l'hôte** : 140–200 Mio (≤ 20 invités), 250–350 Mio (50), 660–1 040 Mio (100).
+- **Conclusion pour la conception** : 20 participants sont confortables même sur un gros tableau (confirmation < 20 ms médiane, hôte < 0,3 cœur) ; 50 sont corrects ; 100 fonctionnent sans casse mais avec des pics de latence de plusieurs secondes et un hôte à 2–3 cœurs : à ne pas promettre comme usage normal. Le plafond par défaut de 10 reste très prudent.
+
+### Limites et points non expliqués
+- **Latence « visible chez les autres », p99** : 6 à 20 s dans plusieurs exécutions, y compris le contrôle. Hypothèse (non vérifiée) : invités qui reprennent leur place après une coupure simulée et rattrapent leur retard ; la médiane (11–14 ms jusqu'à 50 invités) n'est pas touchée. À investiguer si des utilisateurs signalent des mises à jour tardives.
+- Pas d'interface côté invités simulés (coût de rendu non mesuré) ; boucle locale (pas de vrai réseau, optimiste) sur une machine partagée entre hôte et invités (pessimiste pour le CPU de l'hôte).
+- **Non fait faute de temps/limite d'usage** : session d'endurance de 60–90 min (fuites mémoire), essai avec des invités sur le serveur Linux (vraie seconde machine), essai de 10–20 invités par le relais public, mesure du coût d'une image de l'interface avec N participants (`crowd_ui_frames`, outil prêt).
