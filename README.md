@@ -88,7 +88,7 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
   | draw.io `.drawio` (compressed or not, multi-page) | ✔ | ✔ |
   | Excalidraw `.excalidraw` | ✔ | ✔ |
   | JSON Canvas `.canvas` (Obsidian) | ✔ | ✔ |
-  | Mermaid (flowchart, state, sequence) | ✔ | – |
+  | Mermaid (flowchart, state, sequence, class, entity-relationship) | ✔ | – |
   | SVG, PNG, PDF (vector) | – | ✔ |
 
 - **Customizable shortcuts** (41 commands, several shortcuts per command, conflict handling) and a **light/dark theme** that follows the board background.

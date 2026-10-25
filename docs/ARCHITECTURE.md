@@ -84,7 +84,7 @@ limited accessibility. If rendering ever outgrew egui
 | Crate | Tests | What is covered |
 |---|---|---|
 | `inkboard-core` | 101 | geometry, model, connectors (rotation, elbow, curve), selection, history, saving, SVG, layout, handles, rich text (insert/delete/style toggling), obstacle routing, spatial index, pen pressure, highlighting |
-| `inkboard-formats` | 46 | draw.io / Excalidraw / JSON Canvas round trips, foreign imports, compressed draw.io, Mermaid (flowchart, state, sequence), PNG, PDF, LaTeX typesetting, realistic Excalidraw/Canvas files |
+| `inkboard-formats` | 46 | draw.io / Excalidraw / JSON Canvas round trips, foreign imports, compressed draw.io, Mermaid (flowchart, state, sequence, class, ER), PNG, PDF, LaTeX typesetting, realistic Excalidraw/Canvas files |
 | `inkboard-mcp` | 8 | full session on the real binary (handshake, tools, root confinement, exports, resources and notifications); live mode and live `board_changes` are tested in `inkboard-app` (editing with undo, targeting the open file, token, resources and notifications, changes and images) |
 | `inkboard-app` | 88 | creation, moving with bound arrows, resizing, rotation, lasso, eraser, undoing a gesture, text, tables, import, zoom; **rich text** (typing, keyboard selection, bold/color/highlight); **shortcuts** (reassigning, removing, recording a key, persistence, shortcuts while editing); **waypoints**, obstacle avoidance, code block (colored), typeset formula (insert, edit, tinted export), vote, pen eraser, presentation, timer, clipboard, pen, languages |
 

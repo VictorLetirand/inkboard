@@ -1,4 +1,4 @@
-//! Mermaid : `flowchart` / `graph`, `stateDiagram`, `sequenceDiagram`.
+//! Mermaid : `flowchart` / `graph`, `stateDiagram`, `sequenceDiagram`, `classDiagram`, `erDiagram`.
 //!
 //! The text becomes real shapes linked by real connectors: moving a node
 //! makes its arrows follow. The layout comes from `inkboard_core::layout`.
@@ -14,6 +14,8 @@ use inkboard_core::{
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
+
+mod uml;
 
 const FONT: f64 = 18.0;
 
@@ -1037,8 +1039,16 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
     if head.starts_with("sequenceDiagram") {
         return build_sequence(&lines[1..], m);
     }
+    if head.starts_with("classDiagram") {
+        return uml::class_diagram(&lines[1..], m);
+    }
+    if head.starts_with("erDiagram") {
+        return uml::er_diagram(&lines[1..], m);
+    }
     let kind = head.split_whitespace().next().unwrap_or("");
-    Err(FormatError::Unsupported(format!("unsupported diagram type (\"{kind}\"). Supported: flowchart/graph, stateDiagram, sequenceDiagram")))
+    Err(FormatError::Unsupported(format!(
+        "unsupported diagram type (\"{kind}\"). Supported: flowchart/graph, stateDiagram, sequenceDiagram, classDiagram, erDiagram"
+    )))
 }
 
 /// Imports a Mermaid diagram as a one-page document.
@@ -1192,7 +1202,7 @@ mod tests {
 
     #[test]
     fn errors_are_explicit() {
-        assert!(matches!(to_objects("erDiagram\n A ||--o{ B : has", &ApproxMeasurer), Err(FormatError::Unsupported(_))));
+        assert!(matches!(to_objects("pie\n \"a\" : 1", &ApproxMeasurer), Err(FormatError::Unsupported(_))));
         assert!(to_objects("", &ApproxMeasurer).is_err());
         assert!(to_objects("graph TD", &ApproxMeasurer).is_err());
         assert!(to_objects("sequenceDiagram", &ApproxMeasurer).is_err());

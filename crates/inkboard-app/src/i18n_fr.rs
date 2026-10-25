@@ -453,8 +453,8 @@ pub const FR: &[(&str, &str)] = &[
     ("egui pressure (touch force):", "pression egui (force tactile) :"),
     ("eraser:", "gomme :"),
     (
-        "flowchart / graph, stateDiagram or sequenceDiagram. The layout is automatic.",
-        "flowchart / graph, stateDiagram ou sequenceDiagram. La mise en page est automatique.",
+        "flowchart / graph, stateDiagram, sequenceDiagram, classDiagram or erDiagram. The layout is automatic.",
+        "flowchart / graph, stateDiagram, sequenceDiagram, classDiagram ou erDiagram. La mise en page est automatique.",
     ),
     (
         "flowchart TD\n  A[Idea] --> B{Feasible?}\n  B -->|Yes| C[Prototype]\n  B -->|No| D[Drop it]",

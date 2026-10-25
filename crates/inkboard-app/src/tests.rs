@@ -365,7 +365,7 @@ fn mermaid_import_adds_bound_objects_and_selects_them() {
     t.h.step();
     assert_eq!(t.objects().len(), 3);
     assert_eq!(t.app().sel.len(), 3);
-    assert!(t.app().import_mermaid("erDiagram\n A ||--o{ B : x", false).is_err());
+    assert!(t.app().import_mermaid("pie\n \"a\" : 1", false).is_err());
 }
 
 #[test]

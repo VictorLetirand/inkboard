@@ -123,7 +123,7 @@ fn mermaid_dialog(app: &mut App, ctx: &egui::Context, mut text: String, mut new_
     let mut open = true;
     let mut generate = false;
     modal(t("Import Mermaid")).open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
-        ui.label(t("flowchart / graph, stateDiagram or sequenceDiagram. The layout is automatic."));
+        ui.label(t("flowchart / graph, stateDiagram, sequenceDiagram, classDiagram or erDiagram. The layout is automatic."));
         ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_rows(14).desired_width(f32::INFINITY));
         ui.radio_value(&mut new_board, false, t("Add to this board"));
         ui.radio_value(&mut new_board, true, t("New board"));
