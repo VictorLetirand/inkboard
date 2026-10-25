@@ -4,7 +4,7 @@
 //! makes its arrows follow. The layout comes from `inkboard_core::layout`.
 
 use crate::common::{FormatError, Imported, Report, parse_color};
-use inkboard_core::layout::{Direction, NodeSpec, layered};
+use inkboard_core::layout::{Direction, Layout, NodeSpec, layered};
 use inkboard_core::num;
 use inkboard_core::text::Measurer;
 use inkboard_core::{
@@ -69,6 +69,8 @@ struct Sub {
     title: String,
     members: Vec<String>,
     parent: Option<usize>,
+    /// `direction` written inside the subgraph.
+    dir: Option<Direction>,
 }
 
 #[derive(Debug)]
@@ -299,11 +301,15 @@ fn parse_flowchart(lines: &[String], f: &mut Flow) {
             if let Some(m) = SUB.captures(s) {
                 let rest = m[1].trim();
                 let (id, title) = SUB_ID.captures(rest).map_or((rest.to_owned(), clean(rest)), |c| (c[1].to_owned(), clean(&c[2])));
-                f.subs.push(Sub { id, title, members: Vec::new(), parent: f.stack.last().copied() });
+                f.subs.push(Sub { id, title, members: Vec::new(), parent: f.stack.last().copied(), dir: None });
                 f.stack.push(f.subs.len() - 1);
             } else if s.eq_ignore_ascii_case("end") {
                 f.stack.pop();
-            } else if s.starts_with("direction ") || ["linkStyle", "click", "accTitle", "accDescr", "title"].iter().any(|k| s.starts_with(k)) {
+            } else if let Some(d) = s.strip_prefix("direction ") {
+                if let Some(&i) = f.stack.last() {
+                    f.subs[i].dir = Some(dir_of(d.trim()));
+                }
+            } else if ["linkStyle", "click", "accTitle", "accDescr", "title"].iter().any(|k| s.starts_with(k)) {
                 // directives without effect on the board
             } else if let Some(m) = CLASSDEF.captures(s) {
                 for c in m[1].split(',') {
@@ -371,14 +377,17 @@ fn parse_state(lines: &[String], f: &mut Flow) {
     static DIR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^direction\s+(TB|TD|LR|RL|BT)").unwrap());
     for s in lines {
         if let Some(m) = DIR.captures(s) {
-            f.dir = dir_of(&m[1]);
+            match f.stack.last() {
+                Some(&i) => f.subs[i].dir = Some(dir_of(&m[1])),
+                None => f.dir = dir_of(&m[1]),
+            }
         } else if let Some(m) = ALIAS.captures(s) {
             f.node(&m[2], Some(m[1].to_owned()), Some(Shape::Round), None);
         } else if let Some(m) = SPECIAL.captures(s) {
             f.node(&m[1], Some(String::new()), Some(if &m[2] == "choice" { Shape::Diamond } else { Shape::Bar }), None);
         } else if let Some(m) = COMPOSITE.captures(s) {
             let title = m.get(1).map_or(m[2].to_owned(), |t| t.as_str().to_owned());
-            f.subs.push(Sub { id: m[2].to_owned(), title, members: Vec::new(), parent: f.stack.last().copied() });
+            f.subs.push(Sub { id: m[2].to_owned(), title, members: Vec::new(), parent: f.stack.last().copied(), dir: None });
             f.stack.push(f.subs.len() - 1);
         } else if s == "}" {
             f.stack.pop();
@@ -440,6 +449,11 @@ fn node_size(n: &Node, m: &dyn Measurer) -> (BoxGeom, f64, f64) {
     (geom, w, h)
 }
 
+/// Room between the frame of a subgraph and what it holds: on the sides, above (the title) and below.
+const FRAME_SIDE: f64 = 28.0;
+const FRAME_TOP: f64 = 46.0;
+const FRAME_BOTTOM: f64 = 28.0;
+
 fn bounds_of(i: usize, f: &Flow, rects: &[Rect], cache: &mut HashMap<usize, Option<Rect>>) -> Option<Rect> {
     if let Some(b) = cache.get(&i) {
         return *b;
@@ -458,7 +472,7 @@ fn bounds_of(i: usize, f: &Flow, rects: &[Rect], cache: &mut HashMap<usize, Opti
             add(b);
         }
     }
-    let r = acc.map(|a| Rect::new(a.x - 28.0, a.y - 46.0, a.w + 56.0, a.h + 74.0));
+    let r = acc.map(|a| Rect::new(a.x - FRAME_SIDE, a.y - FRAME_TOP, a.w + 2.0 * FRAME_SIDE, a.h + FRAME_TOP + FRAME_BOTTOM));
     cache.insert(i, r);
     r
 }
@@ -583,11 +597,134 @@ fn subgraph_objects(flow: &Flow, rects: &[Rect], measurer: &dyn Measurer) -> (Ve
     (out, frame_id)
 }
 
+/// What the layout arranges inside a group: a node, or the whole content of a subgraph (a block).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Item {
+    Node(usize),
+    Block(usize),
+}
+
+/// A laid-out group of nodes and blocks, relative to the top-left corner of its content.
+#[derive(Default)]
+struct Group {
+    w: f64,
+    h: f64,
+    /// Center of each node, by node index.
+    centers: Vec<(usize, Pt)>,
+    /// Waypoints of each edge, by edge index (the ends are the centers of what the edge links in this group).
+    routes: Vec<(usize, Vec<Pt>)>,
+}
+
+/// Lays a flow out one subgraph at a time: the content of a subgraph is arranged on its own (with its own `direction`, when nothing links it to
+/// the outside), then it takes part as one block in the layout of the group that holds it, so frames never overlap and hold their members.
+struct LayoutCtx<'a> {
+    flow: &'a Flow,
+    sizes: &'a [(BoxGeom, f64, f64)],
+    edges: &'a [(usize, usize)],
+    /// Innermost subgraph of each node.
+    node_sub: Vec<Option<usize>>,
+}
+
+impl LayoutCtx<'_> {
+    /// What stands for `node` in group `g` (`None`: the page): the node itself, or the block of the subgraph that holds it; `None` if it is outside `g`.
+    fn item_of(&self, node: usize, g: Option<usize>) -> Option<Item> {
+        let mut cur = self.node_sub[node];
+        if cur == g {
+            return Some(Item::Node(node));
+        }
+        while let Some(c) = cur {
+            let parent = self.flow.subs[c].parent;
+            if parent == g {
+                return Some(Item::Block(c));
+            }
+            cur = parent;
+        }
+        None
+    }
+
+    /// Whether an edge links the inside of subgraph `sub` to the outside.
+    fn crosses(&self, sub: usize) -> bool {
+        self.edges.iter().any(|&(a, b)| self.item_of(a, Some(sub)).is_some() != self.item_of(b, Some(sub)).is_some())
+    }
+
+    fn group(&self, g: Option<usize>, dir: Direction) -> Group {
+        let mut items: Vec<Item> = (0..self.flow.nodes.len()).filter(|&n| self.node_sub[n] == g).map(Item::Node).collect();
+        let mut children: HashMap<usize, Group> = HashMap::new();
+        for (c, s) in self.flow.subs.iter().enumerate().filter(|(_, s)| s.parent == g) {
+            let child = self.group(Some(c), if self.crosses(c) { dir } else { s.dir.unwrap_or(dir) });
+            if !child.centers.is_empty() {
+                items.push(Item::Block(c));
+                children.insert(c, child);
+            }
+        }
+        if items.is_empty() {
+            return Group::default();
+        }
+        let size = |it: &Item| match *it {
+            Item::Node(n) => NodeSpec { w: self.sizes[n].1, h: self.sizes[n].2 },
+            Item::Block(c) => NodeSpec { w: children[&c].w + 2.0 * FRAME_SIDE, h: children[&c].h + FRAME_TOP + FRAME_BOTTOM },
+        };
+        let specs: Vec<NodeSpec> = items.iter().map(size).collect();
+        let position: HashMap<Item, usize> = items.iter().enumerate().map(|(i, it)| (*it, i)).collect();
+        let (mut edges, mut edge_ids) = (Vec::new(), Vec::new());
+        for (k, &(a, b)) in self.edges.iter().enumerate() {
+            if let (Some(ia), Some(ib)) = (self.item_of(a, g), self.item_of(b, g))
+                && ia != ib
+            {
+                edges.push((position[&ia], position[&ib]));
+                edge_ids.push(k);
+            }
+        }
+        let lay = layered(&specs, &edges, dir);
+        let (mut lo, mut hi) = (Pt::new(f64::INFINITY, f64::INFINITY), Pt::new(f64::NEG_INFINITY, f64::NEG_INFINITY));
+        for (c, sp) in lay.centers.iter().zip(&specs) {
+            lo = Pt::new(lo.x.min(c.x - sp.w / 2.0), lo.y.min(c.y - sp.h / 2.0));
+            hi = Pt::new(hi.x.max(c.x + sp.w / 2.0), hi.y.max(c.y + sp.h / 2.0));
+        }
+        let shift = Pt::new(-lo.x, -lo.y);
+        let mut out = Group { w: hi.x - lo.x, h: hi.y - lo.y, ..Group::default() };
+        for (i, it) in items.iter().enumerate() {
+            let c = lay.centers[i] + shift;
+            match *it {
+                Item::Node(n) => out.centers.push((n, c)),
+                Item::Block(b) => {
+                    let origin = c - Pt::new(specs[i].w / 2.0 - FRAME_SIDE, specs[i].h / 2.0 - FRAME_TOP);
+                    let child = &children[&b];
+                    out.centers.extend(child.centers.iter().map(|&(n, p)| (n, p + origin)));
+                    out.routes.extend(child.routes.iter().map(|(k, r)| (*k, r.iter().map(|&p| p + origin).collect())));
+                }
+            }
+        }
+        out.routes.extend(edge_ids.iter().zip(&lay.routes).map(|(&k, r)| (k, r.iter().map(|&p| p + shift).collect())));
+        out
+    }
+}
+
+/// Positions of the nodes (centers) and routes of the edges of a flow.
+fn layout_flow(flow: &Flow, sizes: &[(BoxGeom, f64, f64)], edges: &[(usize, usize)]) -> Layout {
+    let mut node_sub = vec![None; flow.nodes.len()];
+    for (i, s) in flow.subs.iter().enumerate() {
+        for id in &s.members {
+            if let Some(&k) = flow.index.get(id) {
+                node_sub[k] = Some(i);
+            }
+        }
+    }
+    let g = LayoutCtx { flow, sizes, edges, node_sub }.group(None, flow.dir);
+    let mut lay = Layout { centers: vec![Pt::ZERO; flow.nodes.len()], routes: vec![Vec::new(); edges.len()] };
+    for (n, c) in g.centers {
+        lay.centers[n] = c;
+    }
+    for (k, r) in g.routes {
+        lay.routes[k] = r;
+    }
+    lay
+}
+
 fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
     let sizes: Vec<(BoxGeom, f64, f64)> = flow.nodes.iter().map(|n| node_size(n, measurer)).collect();
-    let specs: Vec<NodeSpec> = sizes.iter().map(|s| NodeSpec { w: s.1, h: s.2 }).collect();
     let Resolved { edges, link_idx, frame_ends } = resolve_links(flow);
-    let lay = layered(&specs, &edges, flow.dir);
+    let lay = layout_flow(flow, &sizes, &edges);
     let mut nodes: Vec<Object> = Vec::new();
     let mut rects: Vec<Rect> = Vec::new();
     for (i, n) in flow.nodes.iter().enumerate() {
@@ -1101,6 +1238,57 @@ mod tests {
         let bound_to = |end: &End, id: &Id| end.target() == Some(id);
         assert!(c.iter().any(|k| frames.iter().any(|f| bound_to(&k.end, &f.id))), "a link ends on a frame");
         assert!(c.iter().any(|k| frames.iter().any(|f| bound_to(&k.start, &f.id))), "a link starts on a frame");
+    }
+
+    fn frames(o: &[Object]) -> Vec<Rect> {
+        boxes(o).into_iter().filter(|(x, _)| x.style.dash == Dash::Dashed).map(|(x, _)| x.frame().unwrap().rect()).collect()
+    }
+
+    fn center_of(o: &[Object], text: &str) -> Pt {
+        let (x, _) = boxes(o).into_iter().find(|(_, b)| b.label.text.to_plain() == text).unwrap_or_else(|| panic!("no node {text}"));
+        x.frame().unwrap().center()
+    }
+
+    #[test]
+    fn frames_of_sibling_subgraphs_do_not_overlap_and_hold_their_nodes() {
+        let o = objs(
+            "flowchart TD\n subgraph F [Views]\n  A[A] --> B[B]\n  A --> B2[B2]\n end\n subgraph P [Plugins]\n  C[C] --> D[D]\n  C --> D2[D2]\n end\n B --> C\n B2 --> D2\n A --> D",
+        );
+        let f = frames(&o);
+        assert_eq!(f.len(), 2);
+        assert!(!f[0].intersects(&f[1]), "{f:?}");
+        for (names, frame) in [(["A", "B", "B2"], &f[0]), (["C", "D", "D2"], &f[1])] {
+            for n in names {
+                assert!(frame.contains(center_of(&o, n)), "{n} is outside its frame");
+            }
+        }
+    }
+
+    #[test]
+    fn a_nested_subgraph_stays_inside_its_parent() {
+        let o = objs("flowchart LR\n subgraph Outer\n  subgraph Inner\n   A --> B\n  end\n  B --> C\n end\n C --> D");
+        let f = frames(&o);
+        assert_eq!(f.len(), 2);
+        let (outer, inner) = if f[0].w > f[1].w { (f[0], f[1]) } else { (f[1], f[0]) };
+        assert!(outer.contains(Pt::new(inner.x, inner.y)) && outer.contains(Pt::new(inner.right(), inner.bottom())), "{outer:?} {inner:?}");
+        assert!(!inner.contains(center_of(&o, "C")) && outer.contains(center_of(&o, "C")));
+        assert!(!outer.contains(center_of(&o, "D")));
+    }
+
+    #[test]
+    fn the_direction_of_a_subgraph_applies_when_nothing_links_it_to_the_outside() {
+        let o = objs("flowchart TD\n subgraph S\n  direction LR\n  A --> B\n end\n C --> D");
+        let (a, b) = (center_of(&o, "A"), center_of(&o, "B"));
+        assert!((a.y - b.y).abs() < 1.0 && (a.x - b.x).abs() > 20.0, "A and B side by side: {a:?} {b:?}");
+        let (c, d) = (center_of(&o, "C"), center_of(&o, "D"));
+        assert!((c.x - d.x).abs() < 1.0 && (c.y - d.y).abs() > 20.0, "the rest keeps the diagram direction: {c:?} {d:?}");
+    }
+
+    #[test]
+    fn the_direction_of_a_subgraph_is_ignored_when_a_link_crosses_its_frame() {
+        let o = objs("flowchart TD\n subgraph S\n  direction LR\n  A --> B\n end\n C --> A");
+        let (a, b) = (center_of(&o, "A"), center_of(&o, "B"));
+        assert!((a.x - b.x).abs() < 1.0 && (a.y - b.y).abs() > 20.0, "inherits the direction of the diagram: {a:?} {b:?}");
     }
 
     #[test]
