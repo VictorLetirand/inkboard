@@ -1,0 +1,8 @@
+# Keeps the build context small (the Dockerfile compiles the workspace from source).
+.git
+.claude
+target
+out
+**/dist
+**/dist-e2e
+**/node_modules
