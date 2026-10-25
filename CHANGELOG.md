@@ -16,6 +16,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 - **Mermaid import:** `classDiagram` and `erDiagram`. A class or an entity becomes a table (name, attributes, methods; or type, name, keys and comment) and links become bound connectors: inheritance and realization end in a triangle, composition and aggregation in a dot (named on the link, as the model has no diamond head), and an entity link spells out its cardinalities. `direction` is honoured.
 - **MCP `export`:** creates the missing folders of `output` (under the allowed root, as `render` does), and a `.png` can be given a `width` in pixels or a `scale`, so that diagrams come out at the same width.
 
+### Changed
+
+- **Automatic layout** (Mermaid import, MCP `import_mermaid`, the *Auto layout* command): large and cyclic graphs are drawn much more compactly. Cycles are broken by reversing fewer edges, a node that only points far down is no longer left on the first rank, the crossing reduction tries three starting orders and swaps neighbours, and the lines of long edges run closer together. On a random graph of 40 modules with cycles, the drawing is about half as high with about half the edge length; on layered dependency graphs, crossings drop by 45 to 50 %. Only the positions computed by the layout change: files and the sharing protocol are untouched, and boards already saved keep their positions until the layout is run again.
+
 ## [0.2.0-beta.1] - Unreleased
 
 **Pre-release.** The headline feature, live sharing, is new: it is covered by automated tests (including simulated crowds and hostile inputs) and
