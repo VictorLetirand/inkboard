@@ -182,10 +182,17 @@ Have an idea or found a bug? [Open an issue](../../issues/new/choose) — see al
 
 ## License
 
-Licensed under either of
+Inkboard is free software and is **dual-licensed**: you may use it under **either** of the two licenses below. **You choose one**; you do not have to follow both.
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
+| | [MIT](LICENSE-MIT) | [Apache-2.0](LICENSE-APACHE) |
+|---|---|---|
+| Use it, including in a commercial product | ✔ | ✔ |
+| Modify it and redistribute it | ✔ | ✔ |
+| Keep the copyright and license notice | ✔ | ✔ |
+| Explicit patent license from the contributors | – | ✔ |
+| Length of the text | very short | longer |
 
-at your option. Third-party components keep their own (permissive) licenses: see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+*Which one should I pick?* Either is fine. MIT is the shortest and simplest; Apache-2.0 adds the explicit patent grant. This table is a plain-language summary, not legal advice: the two license files are the reference.
+
+Third-party components keep their own (permissive) licenses: see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Inkboard shall be dual-licensed as above, without any additional terms or conditions.
