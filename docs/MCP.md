@@ -55,6 +55,17 @@ The installers put `inkboard-mcp` next to the application (Windows, per-user ins
 
 *Not tested.* The same command and arguments in the client's MCP configuration (for Claude Desktop, `mcpServers` in `claude_desktop_config.json`): `{"mcpServers": {"inkboard": {"command": "<path>\\inkboard-mcp.exe", "args": ["--root", "<folder>"]}}}`.
 
+### In a container (file mode)
+
+[`packaging/docker/mcp.Dockerfile`](../packaging/docker/mcp.Dockerfile) builds the server as a container image, for clients that start MCP servers through Docker and for server directories that build from a Dockerfile. There is no window and no running application in a container, so the server starts with `--no-live` and works on the `.inkboard` files of the mounted folder (`--root /data`):
+
+```bash
+docker build -f packaging/docker/mcp.Dockerfile -t inkboard-mcp .
+docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
+```
+
+The server speaks MCP over standard input and output (hence `-i`). The image runs as a non-root user (uid 10001): the mounted folder must be writable by it. It was checked with a real MCP session (`initialize`, `tools/list` returning the 27 tools, then `create_board`, `add_shape` and `describe_board` on a file of the mounted folder, and a path outside `/data` refused). Live mode (editing the board that is open on screen) needs the desktop application and is not available in a container.
+
 ## How live mode works
 
 The application opens a local server on `127.0.0.1` (ephemeral port, never exposed to the network) and publishes its port and a random **secret token** in

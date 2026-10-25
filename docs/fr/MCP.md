@@ -54,6 +54,17 @@ Les installeurs placent `inkboard-mcp` à côté de l'application (Windows, inst
 
 *Non testé.* Même commande et mêmes arguments dans la configuration MCP du client (pour Claude Desktop, `mcpServers` dans `claude_desktop_config.json`) : `{"mcpServers": {"inkboard": {"command": "<chemin>\\inkboard-mcp.exe", "args": ["--root", "<dossier>"]}}}`.
 
+### Dans un conteneur (mode fichier)
+
+[`packaging/docker/mcp.Dockerfile`](../../packaging/docker/mcp.Dockerfile) construit le serveur sous forme d'image de conteneur, pour les clients qui démarrent leurs serveurs MCP par Docker et pour les annuaires qui construisent à partir d'un Dockerfile. Dans un conteneur, il n'y a ni fenêtre ni application ouverte : le serveur démarre donc avec `--no-live` et travaille sur les fichiers `.inkboard` du dossier monté (`--root /data`) :
+
+```bash
+docker build -f packaging/docker/mcp.Dockerfile -t inkboard-mcp .
+docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
+```
+
+Le serveur parle MCP sur l'entrée et la sortie standard (d'où `-i`). L'image tourne sous un utilisateur sans droits (uid 10001) : le dossier monté doit être modifiable par lui. Elle a été vérifiée avec une vraie session MCP (`initialize`, `tools/list` renvoyant les 27 outils, puis `create_board`, `add_shape` et `describe_board` sur un fichier du dossier monté, et un chemin hors de `/data` refusé). Le mode direct (modifier le tableau ouvert à l'écran) demande l'application de bureau et n'existe pas dans un conteneur.
+
 ## Comment le mode direct fonctionne
 
 L'application ouvre un serveur local sur `127.0.0.1` (port éphémère, jamais exposé au réseau) et publie son port et un **jeton secret** aléatoire dans
