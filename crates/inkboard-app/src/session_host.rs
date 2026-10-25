@@ -526,6 +526,9 @@ struct Conn {
     state: ConnState,
     opened: u64,
     last_rx: u64,
+    /// The connection was found closed by an earlier `housekeeping`: it goes at the next one, after a whole `poll` read what it had
+    /// received before closing (the final `Bye` of a guest who leaves; otherwise a departure would be taken for a network cut).
+    closed_seen: bool,
     /// Image chunks waiting to be sent (a few per `poll`, so that one big image does not block everything).
     out: VecDeque<Piece>,
     /// Frames (already encoded, shared between guests) that must arrive in order: the board being sent and everything said after it.
@@ -1078,6 +1081,7 @@ impl SessionHost {
                 state: ConnState::New,
                 opened: self.now,
                 last_rx: self.now,
+                closed_seen: false,
                 out: VecDeque::new(),
                 ordered: VecDeque::new(),
                 backlog: 0,
@@ -1227,6 +1231,18 @@ impl SessionHost {
         let b = Built { seq, assets, at, parts: Arc::new(encode_parts(snap)) };
         self.snap = SnapState::Ready(b.clone());
         self.fulfil(&b);
+    }
+
+    /// Tests drive the host with a virtual clock while a big board is encoded on a thread in real time: they wait here for the thread
+    /// before letting virtual time go on (on a loaded machine hundreds of virtual seconds would pass, the guests would be taken for
+    /// idle and dropped, and the encoding would start again, for ever).
+    #[cfg(test)]
+    pub fn wait_for_build(&mut self) {
+        let began = std::time::Instant::now();
+        while matches!(self.snap, SnapState::Building(_)) && began.elapsed() < std::time::Duration::from_secs(600) {
+            self.poll_build();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     /// Gives the board that was being encoded to the guests that waited for it.
@@ -2068,11 +2084,18 @@ impl SessionHost {
         let excess = silent.len().saturating_sub(MAX_UNAUTHENTICATED);
         let evict: HashSet<u64> = silent.iter().take(excess).filter(|e| now.saturating_sub(e.0) >= SILENT_GRACE_MS).map(|e| e.1).collect();
         let mut gone: Vec<usize> = Vec::new();
-        for (i, c) in self.conns.iter().enumerate() {
+        for (i, c) in self.conns.iter_mut().enumerate() {
+            // a closed connection goes at the housekeeping after the one that first saw it closed: a whole `poll` has read in between
+            // what it had received before closing
+            let open = c.conn.is_open();
+            let closed = !open && c.closed_seen;
+            if !open {
+                c.closed_seen = true;
+            }
             let dead = match c.state {
                 ConnState::Closing { until } => now >= until,
-                ConnState::New => !c.conn.is_open() || now.saturating_sub(c.opened) > HANDSHAKE_MS || evict.contains(&c.id),
-                ConnState::Pending(_) | ConnState::Member(_) => !c.conn.is_open() || now.saturating_sub(c.last_rx) > idle,
+                ConnState::New => closed || now.saturating_sub(c.opened) > HANDSHAKE_MS || evict.contains(&c.id),
+                ConnState::Pending(_) | ConnState::Member(_) => closed || now.saturating_sub(c.last_rx) > idle,
             };
             if dead {
                 gone.push(i);

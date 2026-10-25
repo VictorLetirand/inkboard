@@ -3,7 +3,7 @@
 # Inkboard
 
 **A fast, free, fully offline infinite whiteboard — written in Rust.**
-Draw, diagram and present on a native desktop app, import and export the formats you already use, and let an AI agent draw on your board.
+Draw, diagram and present on a native desktop app, import and export the formats you already use, **share a board live with people on other networks (even from a web page, with nothing to install)**, and let an AI agent draw on your board.
 
 [![CI](https://github.com/VictorLetirand/inkboard/actions/workflows/ci.yml/badge.svg)](https://github.com/VictorLetirand/inkboard/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
@@ -14,7 +14,7 @@ Draw, diagram and present on a native desktop app, import and export the formats
 
 ![Inkboard](docs/img/interface.png)
 
-> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (265 automated tests), but it has so far been **used by hand on Windows only**.
+> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (over 850 automated tests), but it has so far been **used by hand on Windows only** (live sharing was also tried between several computers, an Android phone on 5G and a Linux server).
 > Linux and macOS builds compile and pass the automated tests in CI, yet nobody has used the app there yet — expect rough edges, and please [report them](../../issues).
 > The interface is available in **English and French**; it follows your system language and can be switched from the menu (*Language*).
 
@@ -27,6 +27,7 @@ We wanted a whiteboard that is:
 - **Fast on big boards.** Complaints about lag on large boards come up again and again for Miro, Excalidraw and Whiteboard. Inkboard stays smooth with 100 000 objects (≈ 4.5 ms per frame).
 - **Interoperable.** Open and export **draw.io**, **Excalidraw**, **JSON Canvas** (Obsidian) and **Mermaid**, plus SVG, PNG and PDF. Your work is never locked in.
 - **Solid where other tools are fragile.** Connectors that really stay attached (and route around shapes), real tables, layers, rich text with per-word colour and highlight, LaTeX formulas typeset like TeX, customizable shortcuts, pen pressure.
+- **Shareable without a server.** Click *Share*: your computer *is* the server. Guests join from the app or from a web page, see everyone's cursor (the AI agent's too), and everything is end-to-end encrypted. See [Live sharing](#live-sharing).
 - **Ready for AI agents.** A built-in [MCP server](#use-it-with-ai-agents-mcp) lets Claude (or any MCP client) create and edit boards — live, in the open app, with every step undoable.
 - **Free software.** Dual-licensed **MIT OR Apache-2.0**, built on a small, UI-independent Rust engine you can reuse.
 
@@ -98,7 +99,17 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 
 ## Live sharing
 
-Click **Share** to get a link; people who open it (after your approval) edit the same board live, with everybody's cursor and the AI agent's. End-to-end encrypted, nothing connects until you start sharing, you can run your own relay. Under development: [how to share and join](docs/SHARING.md) · [host your own relay](docs/RELAY.md).
+> **Beta.** Live sharing is new: it has been exercised by automated tests (including simulated crowds of up to 100 guests and hostile inputs) and by hand on a few devices and networks, but not yet widely.
+
+Click **Share** in the bottom-right corner to get a link; people who open it edit the same board live.
+
+- **No server to install.** Your computer hosts the session; nothing runs anywhere else, and nothing connects until you start sharing.
+- **Join from the app or from a web page.** A guest with the Inkboard app pastes the link; a guest with only a browser opens the **web link** (button *Copy web link*): nothing to install, no account. The web page is a static page, [victorletirand.github.io/inkboard](https://victorletirand.github.io/inkboard/) (Chrome, Edge and Firefox are tested; Safari and iOS are not). It only joins sessions, it cannot host one.
+- **Names and live cursors** for the host, every guest and the **AI agent** (its cursor and what it is doing are shown to everyone).
+- **You stay in control.** You approve each person, with an *edit* link or a *read-only* link; new links cut off the old ones; you can rename, restrict or remove anyone. Default cap: 10 participants (designed for 20, load-tested with 100 simulated ones).
+- **Private by design.** End-to-end encrypted: the relay that helps two computers find each other only sees encrypted bytes. A guest can undo only their own edits.
+- **Works across networks.** Connections are direct when possible and go through a relay otherwise (a public one by default, [you can run your own](docs/RELAY.md)). Tried on Wi-Fi, on 5G and between Windows and Linux; it survives network cuts of a minute and reconnects on its own.
+- **Honest limits.** Some company networks (TLS-inspecting gateways) block the public relay: the app then says so and offers a *Copy the diagnostic* button to hand to your IT department. Very large boards (20,000 objects and more) take a few seconds to reach a new guest; 100 guests work but are not a normal use. See [how to share and join](docs/SHARING.md) · [the web page](docs/WEB.md) · [host your own relay](docs/RELAY.md).
 
 ## Use it with AI agents (MCP)
 
@@ -119,7 +130,8 @@ Full reference, security notes and limits: [docs/MCP.md](docs/MCP.md).
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Builds and passes the 265 automated tests (CI) | ✔ | ✔ | ✔ |
+| Builds and passes the automated tests (CI) | ✔ | ✔ | ✔ |
+| Web guest page (browser, nothing to install) | Chrome, Edge, Firefox tested | not tried | not tried (Safari **not tested**) |
 | App launched and used by hand | ✔ | not yet | not yet |
 | Installers | built and tested | built in CI, untested | built in CI, untested |
 | Pen eraser end (Windows Pointer API) | ✔ implemented, **not yet validated on real pen hardware** | – | – |
@@ -144,7 +156,11 @@ Reproduce with `ink bench 100000 big.inkboard && inkboard --bench big.inkboard`.
 |---|---|
 | [`inkboard-core`](crates/inkboard-core) | The engine: document model, geometry, bound connectors, history, SVG export, auto-layout. No UI dependency. |
 | [`inkboard-formats`](crates/inkboard-formats) | draw.io, Excalidraw, JSON Canvas, Mermaid, PNG/PDF, LaTeX typesetting. |
-| [`inkboard-app`](crates/inkboard-app) | The desktop app (egui). |
+| [`inkboard-app`](crates/inkboard-app) | The desktop app (egui), also built for the web (guest page). |
+| [`inkboard-session`](crates/inkboard-session) | Live sharing: protocol, end-to-end encryption, host sequencer, guest client, network simulator. |
+| [`inkboard-net`](crates/inkboard-net) | Network transport of sessions (QUIC with relay fallback, native and browser) and relay diagnostics. |
+| [`inkboard-fonts`](crates/inkboard-fonts) | The fonts built into the app (identical text layout on every platform and in the browser). |
+| [`inkboard-crowd`](crates/inkboard-crowd) | Load-testing tool: a real host and simulated guests. |
 | [`inkboard-cli`](crates/inkboard-cli) | The `ink` command-line converter. |
 | [`inkboard-mcp`](crates/inkboard-mcp) | The MCP server. |
 | [`inkboard-pen`](crates/inkboard-pen) | Pen eraser detection on Windows (the only crate with `unsafe` code). |

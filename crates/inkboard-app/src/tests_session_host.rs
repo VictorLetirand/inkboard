@@ -148,6 +148,7 @@ impl World {
     }
 
     fn step(&mut self) {
+        self.host.wait_for_build();
         self.net.advance(10);
         let now = self.net.now();
         self.host.poll(&mut self.ed, now);

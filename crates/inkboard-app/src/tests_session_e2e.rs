@@ -330,7 +330,8 @@ fn a_cut_connection_comes_back_with_the_same_participant_and_keeps_the_pending_c
     assert_eq!(room.guests[g].app().guest.as_ref().unwrap().participant(), before, "the same place");
     assert_eq!(room.members(), ["Marc"], "no second participant");
     assert!(room.host.app().share.host.as_ref().unwrap().pending().is_empty(), "no new request to answer");
-    assert_eq!(room.guests[g].app().guest.as_ref().unwrap().pending_len(), 0);
+    // the host has the change; the guest knows it once the acknowledgement has come back (a few frames later on a slow machine)
+    room.until("the change to be acknowledged", |r| r.guests[g].app().guest.as_ref().unwrap().pending_len() == 0);
 
     // both directions work again
     let after_host = room.host.add_rect(0.0, 300.0, 50.0, 50.0);
