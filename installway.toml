@@ -1,0 +1,14 @@
+product = "Inkboard"
+product_id = "inkboard"
+publisher = "Inkboard"
+to_version = "0.0.0"
+input = "dist/installway"
+exe = "inkboard.exe"
+out = "dist/inkboard_x64-setup.exe"
+skip_license = true
+assoc = [".inkboard:Inkboard board"]
+
+[[shortcut]]
+dir = "%START_MENU%"
+name = "%PRODUCT%"
+target = "%EXE%"

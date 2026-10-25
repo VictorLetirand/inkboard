@@ -1,7 +1,42 @@
 //! Inkboard desktop application (egui).
-
+// Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::float_cmp,
+        clippy::many_single_char_names,
+        clippy::similar_names,
+        clippy::assert_is_empty,
+        clippy::default_trait_access,
+        clippy::format_collect,
+        clippy::format_push_string,
+        clippy::too_many_lines,
+        clippy::items_after_statements,
+        clippy::needless_raw_string_hashes,
+        clippy::needless_pass_by_value,
+        clippy::explicit_iter_loop,
+        clippy::needless_for_each,
+        clippy::collapsible_else_if,
+        clippy::single_match_else,
+        clippy::manual_assert,
+        clippy::redundant_closure_for_method_calls,
+        clippy::unnested_or_patterns,
+        clippy::range_plus_one,
+        clippy::clone_on_copy,
+        clippy::match_same_arms,
+        clippy::struct_excessive_bools,
+        clippy::unchecked_time_subtraction,
+        clippy::manual_assert_eq
+    )
+)]
 // release builds on Windows are GUI programs: no console window behind the application
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+// the web build does not start the desktop-only code (command line, bench modes, host side of the sessions): it is compiled, not used
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
 mod app;
 mod bench_icons;
@@ -12,17 +47,39 @@ mod i18n;
 mod i18n_fr;
 mod icons;
 mod insert;
+mod join_ui;
 mod keymap;
 mod library;
+#[cfg_attr(not(target_arch = "wasm32"), path = "live.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "live_web.rs")]
 mod live;
+mod names;
 mod panel;
 mod pen_test;
+mod platform;
+mod presence;
 mod render;
 mod rich_edit;
+mod session_guest;
+// the guest side uses a few checks of the host side: it stays compiled on the web, but nothing starts it there
+mod session_host;
+mod session_link;
+#[cfg_attr(not(target_arch = "wasm32"), path = "session_net.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "session_net_web.rs")]
+mod session_net;
+#[cfg_attr(not(target_arch = "wasm32"), path = "share_ui.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "share_ui_web.rs")]
+mod share_ui;
 mod theme;
 mod tools;
 mod ui;
+#[cfg_attr(not(target_arch = "wasm32"), path = "watch.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "watch_web.rs")]
 mod watch;
+#[cfg(target_arch = "wasm32")]
+mod web;
+#[cfg(all(target_arch = "wasm32", feature = "web-test"))]
+mod web_test;
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -32,6 +89,10 @@ use std::path::PathBuf;
 #[expect(clippy::struct_excessive_bools, reason = "independent command-line switches")]
 struct Launch {
     open: Option<PathBuf>,
+    /// `inkboard://join/…` link received from the system: opens the "Join a session" window.
+    join: Option<String>,
+    /// The first argument was an `inkboard://` link that is not acceptable (quotes, spaces, line breaks, too long): nothing else is read.
+    bad_link: bool,
     screenshot: Option<PathBuf>,
     bench: bool,
     bench_close: bool,
@@ -39,13 +100,37 @@ struct Launch {
     shortcuts_demo: bool,
     formula_demo: bool,
     pen_test: bool,
+    /// `--embedded-fonts`: uses the embedded font set for this run (screenshots, comparisons), without changing the setting.
+    embedded_fonts: bool,
     ui_demo: String,
     /// `--bench-icons COUNT[:DISTINCT]`
     bench_icons: Option<(usize, usize)>,
 }
 
+/// Longest `inkboard://` link accepted on the command line (a real ticket is under 3 000 characters).
+const MAX_LINK_ARG: usize = 4096;
+
+fn is_inkboard_link(a: &str) -> bool {
+    a.len() >= 11 && a.is_char_boundary(11) && a[..11].eq_ignore_ascii_case("inkboard://")
+}
+
+/// A link that is safe to hand to the join window: no quote, white space or control character (a `"` that slipped through a mail
+/// client would otherwise let the arguments after it be read as options), not too long.
+fn is_acceptable_link(a: &str) -> bool {
+    a.len() <= MAX_LINK_ARG && !a.chars().any(|c| c.is_control() || c.is_whitespace() || c == '"' || c == '\'')
+}
+
 fn parse_args(args: &[String]) -> Launch {
     let mut l = Launch::default();
+    // a link from the system (protocol handler) is the whole command line: no other argument is read as an option or a path
+    if let Some(first) = args.first().filter(|a| is_inkboard_link(a)) {
+        if is_acceptable_link(first) {
+            l.join = Some(first.clone());
+        } else {
+            l.bad_link = true;
+        }
+        return l;
+    }
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -59,6 +144,7 @@ fn parse_args(args: &[String]) -> Launch {
             "--shortcuts-demo" => l.shortcuts_demo = true,
             "--formula-demo" => l.formula_demo = true,
             "--pen-test" => l.pen_test = true,
+            "--embedded-fonts" => l.embedded_fonts = true,
             "--bench-icons" => {
                 let spec = it.next().cloned().unwrap_or_default();
                 let (n, d) = spec.split_once(':').unwrap_or((spec.as_str(), "0"));
@@ -66,6 +152,13 @@ fn parse_args(args: &[String]) -> Launch {
                 l.bench_icons = Some((n, d.parse().ok().filter(|d| *d > 0).unwrap_or(n.min(2000))));
             }
             "--ui-demo" => l.ui_demo = it.next().cloned().unwrap_or_default(),
+            other if is_inkboard_link(other) => {
+                if is_acceptable_link(other) {
+                    l.join = Some(other.to_owned());
+                } else {
+                    l.bad_link = true;
+                }
+            }
             other => l.open = Some(PathBuf::from(other)),
         }
     }
@@ -73,17 +166,19 @@ fn parse_args(args: &[String]) -> Launch {
 }
 
 /// Shows an error to the user (a message box: release builds have no console) and prints it.
+#[cfg(not(target_arch = "wasm32"))]
 fn report(title: &str, message: &str) {
     eprintln!("{title}: {message}");
     rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title(title).set_description(message).show();
 }
 
 /// Writes unexpected failures to `crash.log` in the data folder and tells the user, instead of vanishing silently.
+#[cfg(not(target_arch = "wasm32"))]
 fn install_panic_hook() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default(info);
-        let dir = inkboard_mcp::live::data_dir();
+        let dir = platform::data_dir();
         let _ = std::fs::create_dir_all(&dir);
         let log = dir.join("crash.log");
         let text = format!(
@@ -105,8 +200,17 @@ Your last saved file is intact.",
     }));
 }
 
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    web::start();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     let l = parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
+    if l.bad_link {
+        report("Inkboard", "The invitation link was refused: it contains quotes, spaces or line breaks, or it is too long. Copy it again from the invitation.");
+    }
     if l.screenshot.is_none() && !l.bench && l.bench_icons.is_none() {
         install_panic_hook();
     }
@@ -138,6 +242,7 @@ Updating your graphics driver usually fixes this."
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
     let options = eframe::NativeOptions {
         renderer,
@@ -168,17 +273,24 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
             if l.screenshot.is_none() && !l.bench && l.bench_icons.is_none() {
                 // live mode of inkboard-mcp: an agent can drive the displayed board
                 a.live = live::LiveServer::start(cc.egui_ctx.clone(), inkboard_mcp::live::discovery_path()).ok();
+                // shared sessions: only configurations, the network opens when the user clicks "Start sharing" or "Join"
+                a.share.net = Some(session_net::host_net());
+                a.join.factory = Some(session_net::guest_factory());
             }
             if let Some((n, d)) = l.bench_icons
-                && let Ok(lib) = inkboard_icons::Library::open(library::PACK)
+                && let Ok(lib) = inkboard_icons::Library::open(inkboard_icons::PACK)
             {
                 a.ed = inkboard_core::Editor::new(bench_icons::document(&lib, n, d));
                 a.icon_bench = Some(bench_icons::IconBench::new(n, d));
+            }
+            if let Some(link) = l.join.clone() {
+                a.open_join_window(Some(link));
             }
             a.bench = l.bench.then(|| app::Bench { close_up: l.bench_close, ..Default::default() });
             a.edit_demo = l.edit_demo;
             a.formula_demo = l.formula_demo;
             a.ui_demo.clone_from(&l.ui_demo);
+            a.fonts_pref |= l.embedded_fonts;
             a.pen_test = l.pen_test.then(pen_test::PenReport::default);
             if l.shortcuts_demo {
                 a.dialog = Some(app::Dialog::Shortcuts { filter: String::new(), recording: Some(keymap::Action::ToolPen) });
@@ -192,6 +304,20 @@ fn launch(l: &Launch, renderer: eframe::Renderer) -> eframe::Result {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_crowd;
+#[cfg(test)]
+mod tests_crowd_ui;
+#[cfg(test)]
+mod tests_hostile_host;
+#[cfg(test)]
+mod tests_session_e2e;
+#[cfg(test)]
+mod tests_session_guest;
+#[cfg(test)]
+mod tests_session_host;
+#[cfg(test)]
 mod tests_ui;
 #[cfg(test)]
 mod tests_visual;
+#[cfg(test)]
+mod tests_web_host;

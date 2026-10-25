@@ -12,16 +12,20 @@ Un installeur par système, produit par [`cargo-packager`](https://github.com/cr
 
 | Système | Formats | État |
 |---|---|---|
-| Windows | `.exe` (NSIS) et `.msi` (WiX) | **construits et testés** : installation silencieuse, raccourci du menu Démarrer, entrée « Applications installées », lancement de l'application installée, désinstallation propre (voir ci-dessous) |
+| Windows | `.exe` (Installway) | construit par le workflow de publication, **pas encore testé** : installation silencieuse, raccourci du menu Démarrer, entrée « Applications installées », lancement de l'application installée, désinstallation propre (voir ci-dessous) |
 | Linux | `.deb`, `.AppImage` (et PKGBUILD) | configurés, **jamais construits ni lancés** |
 | macOS | `.dmg` (et `.app`), Intel et Apple Silicon | configurés, **jamais construits ni lancés** |
 
 L'installeur installe l'application, la CLI de conversion `ink` et le serveur MCP `inkboard-mcp` côte à côte, ainsi que README et licences. En local (Windows) :
 
 ```bash
-cargo install cargo-packager --locked
 cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp
-cargo packager --release -c Packager.toml --formats nsis     # ou wix
+```
+
+Le `.exe` Windows est construit par [Installway](https://github.com/Tooltip-Focus/Installway) depuis [`installway.toml`](../../installway.toml) et demande un hôte Docker Windows (conteneurs Windows) : copier `target/release/{inkboard,ink,inkboard-mcp}.exe`, `README.md`, `LICENSE-MIT`, `LICENSE-APACHE` et `THIRD_PARTY_LICENSES.md` dans `dist/installway/`, puis :
+
+```powershell
+docker run --rm -v "${PWD}:C:\work" ghcr.io/tooltip-focus/installway:latest --to-version 0.1.0 --out dist/inkboard_0.1.0_x64-setup.exe
 ```
 
 Les installeurs sont écrits dans `dist/`. La version vient de `Packager.toml` : elle doit rester égale à celle de `Cargo.toml` (un test le vérifie).
@@ -37,15 +41,16 @@ Release GitHub. Il peut aussi être lancé à la main (les installeurs restent a
 
 ## L'installation Windows en détail
 
-L'installeur `.exe` est celui à recommander :
+L'installeur `.exe` :
 
-- **Par utilisateur, sans demande d'administrateur.** Il s'installe dans `%LOCALAPPDATA%\Inkboard`, ajoute un raccourci au menu Démarrer et une entrée dans *Paramètres → Applications* (avec éditeur, version et icône) ; son désinstalleur retire tout ce qu'il a installé. Vos tableaux ne sont jamais touchés ; le désinstalleur propose (décoché par défaut) de supprimer le dossier de données `%APPDATA%\Inkboard` (raccourcis personnalisés, langue, sauvegardes automatiques).
-- **Association de fichier.** `Packager.toml` déclare l'extension `.inkboard` (`[[file-associations]]`, type MIME `application/x-inkboard`) : les installeurs l'enregistrent pour qu'un double-clic lance `inkboard <fichier>` ; le `.deb` installe aussi une définition shared-mime-info et le paquet macOS la déclare dans `CFBundleDocumentTypes`. **Pas encore vérifié** : aucun installeur n'a été lancé depuis l'ajout. Les fichiers enregistrés par les versions précédentes (`.inkboard.json`, `.tableau.json`) ne sont pas associés (`.json` appartient à d'autres programmes) mais s'ouvrent toujours depuis l'application. Limite connue de cargo-packager 0.11.8 : son modèle WiX lit `association.ext` alors que le champ s'appelle `extensions`, donc le `.msi` risque de ne pas enregistrer l'association (le `.exe` le fait). `inkboard_*_x64-setup.exe /S` (et `uninstall.exe /S` dans le dossier d'installation).
+- **Par utilisateur, sans demande d'administrateur.** Il s'installe dans `%LOCALAPPDATA%\Programs\Inkboard` (ou un dossier choisi dans l'assistant), ajoute un raccourci au menu Démarrer et une entrée dans *Paramètres → Applications* (avec éditeur, version et icône) ; son désinstalleur retire tout ce qu'il a installé. Vos tableaux et le dossier de données `%APPDATA%\Inkboard` (raccourcis personnalisés, langue, sauvegardes automatiques) ne sont jamais touchés.
+- **Association de fichier.** `Packager.toml` déclare l'extension `.inkboard` (`[[file-associations]]`, type MIME `application/x-inkboard`) : les installeurs l'enregistrent pour qu'un double-clic lance `inkboard <fichier>` ; le `.deb` installe aussi une définition shared-mime-info et le paquet macOS la déclare dans `CFBundleDocumentTypes`. **Pas encore vérifié** : aucun installeur n'a été lancé depuis l'ajout. Les fichiers enregistrés par les versions précédentes (`.inkboard.json`, `.tableau.json`) ne sont pas associés (`.json` appartient à d'autres programmes) mais s'ouvrent toujours depuis l'application. Le `.exe` Installway la déclare dans `installway.toml` (`assoc`, ProgID `inkboard.inkboard`) ; son désinstalleur ne la retire que si `.inkboard` pointe encore sur Inkboard.
+- **Installation silencieuse :** `inkboard_*_x64-setup.exe --silent` (désinstallation : `QuietUninstallString` de l'entrée *Paramètres → Applications*, `uninstall.exe --silent` dans `%LOCALAPPDATA%\Inkboard\Uninstall\inkboard`).
+- **Liens `inkboard://`.** Les paquets Linux et macOS enregistrent le schéma (`[[deep-link-protocols]]` dans `Packager.toml`). L'installeur Windows (Installway) n'enregistre que le type de fichier `.inkboard` : sous Windows, un lien `inkboard://` partagé n'ouvre donc pas l'application au clic ; il faut le coller dans *Fichier → Rejoindre une session…*, ou partager le lien web (bouton *Copier le lien web*), qui marche partout.
+- **Depuis une pré-version 0.1.0** (installeur NSIS) : la désinstaller d'abord, sinon ses fichiers restent sur le disque.
 - **En anglais ou en français**, selon la langue de Windows.
 - **Autonome.** Les exécutables lient statiquement la bibliothèque C et n'importent que des bibliothèques système de Windows : rien à installer au préalable (pas de Visual C++ redistribuable). Ils portent une icône, des informations de version et un manifeste d'application (pas d'élévation, UTF-8, chemins longs, DPI par écran), et l'application est un programme graphique : aucune fenêtre de console ne s'ouvre derrière elle.
 - **Fonctionne sans bonne carte graphique.** L'application utilise OpenGL et bascule sur Direct3D 12 / Vulkan (avec un repli logiciel) quand OpenGL manque ou est trop ancien (bureau à distance, machines virtuelles). `INKBOARD_RENDERER=wgpu` (ou `glow`) en force un. Si la fenêtre ne peut pas s'ouvrir, un message explique pourquoi ; si l'application plante, elle écrit `%APPDATA%\Inkboard\crash.log` et le dit.
-
-Le `.msi` est le paquet Windows Installer classique (pour toute la machine, droits d'administrateur requis), pour les environnements gérés. Il a été moins éprouvé que le `.exe`.
 
 ### winget
 
@@ -80,7 +85,7 @@ sont définis, et produit des installeurs non signés sinon.**
 2. Créer un **profil de certificat** (type *Public Trust*).
 3. Créer une **inscription d'application** (un principal de service) et lui donner le rôle *Artifact Signing Certificate Profile Signer* sur le compte.
 4. Dans les paramètres du dépôt GitHub, ajouter les **secrets** `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` et les **variables** `SIGNING_ENDPOINT` (le point d'accès régional du compte, par exemple `https://weu.codesigning.azure.net`), `SIGNING_ACCOUNT` et `SIGNING_PROFILE`.
-5. Pousser une étiquette : les exécutables (`inkboard.exe`, `ink.exe`, `inkboard-mcp.exe`) sont signés et horodatés avant l'empaquetage, puis les installeurs `.exe` et `.msi` sont signés.
+5. Pousser une étiquette : les exécutables (`inkboard.exe`, `ink.exe`, `inkboard-mcp.exe`) sont signés et horodatés avant l'empaquetage, puis l'installeur `.exe` est signé.
 
 Une application tout juste signée peut encore déclencher SmartScreen un moment : sa réputation se construit avec le nombre de téléchargements, et la signature est ce qui lui permet de la construire au lieu de repartir de zéro à chaque version.
 

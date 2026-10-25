@@ -12,17 +12,17 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 
 ## Installer
 
-Des installeurs (Windows `.exe` / `.msi`, Linux `.deb` / `.AppImage`, macOS `.dmg`) sont publiés sur la page *Releases* du dépôt à chaque version (voir [docs/DISTRIBUTION.md](docs/fr/DISTRIBUTION.md)) ;
+Des installeurs (Windows `.exe`, Linux `.deb` / `.AppImage`, macOS `.dmg`) sont publiés sur la page *Releases* du dépôt à chaque version (voir [docs/DISTRIBUTION.md](docs/fr/DISTRIBUTION.md)) ;
 ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premier lancement). Seuls les installeurs Windows ont été construits et testés à ce jour.
 
-**Sous Windows**, téléchargez `inkboard_*_x64-setup.exe` et double-cliquez : l'installation se fait pour votre utilisateur en quelques secondes (sans droits d'administrateur, rien à installer avant), ajoute un raccourci au menu Démarrer et se désinstalle proprement depuis *Paramètres → Applications*. Ajoutez `/S` pour une installation silencieuse. Un paquet `winget` est en préparation (`winget install Inkboard.Inkboard`). Si la fenêtre ne s'ouvre pas : Inkboard bascule tout seul d'OpenGL à Direct3D / Vulkan ; la variable d'environnement `INKBOARD_RENDERER=wgpu` (ou `glow`) en force un ; en cas de plantage, il écrit `%APPDATA%\Inkboard\crash.log` et l'indique. La signature de code est prête à être activée dans le workflow de publication dès qu'un certificat existe ([comment](docs/fr/DISTRIBUTION.md)).
+**Sous Windows**, téléchargez `inkboard_*_x64-setup.exe` et double-cliquez : l'installation se fait pour votre utilisateur en quelques secondes (sans droits d'administrateur, rien à installer avant), ajoute un raccourci au menu Démarrer et se désinstalle proprement depuis *Paramètres → Applications*. Ajoutez `--silent` pour une installation silencieuse. Un paquet `winget` est en préparation (`winget install Inkboard.Inkboard`). Si la fenêtre ne s'ouvre pas : Inkboard bascule tout seul d'OpenGL à Direct3D / Vulkan ; la variable d'environnement `INKBOARD_RENDERER=wgpu` (ou `glow`) en force un ; en cas de plantage, il écrit `%APPDATA%\Inkboard\crash.log` et l'indique. La signature de code est prête à être activée dans le workflow de publication dès qu'un certificat existe ([comment](docs/fr/DISTRIBUTION.md)).
 
 ## Démarrer
 
 ```bash
 cargo run --release -p inkboard-app                 # l'application
 cargo run --release -p inkboard-app -- schema.drawio # ouvrir un fichier (draw.io, Excalidraw, JSON Canvas, Mermaid, ancien format)
-cargo test --workspace                        # 265 tests
+cargo test --workspace                        # plus de 850 tests
 cargo packager --release -c Packager.toml    # installeurs (voir docs/fr/DISTRIBUTION.md)
 ```
 
@@ -38,8 +38,9 @@ cargo run --release -p inkboard-cli -- info schema.drawio
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Compilation et tests automatiques (265 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
+| Compilation et tests automatiques (plus de 850 tests, sans fenêtre réelle) | ✔ | ✔ passent en intégration continue | ✔ passent en intégration continue |
 | Application lancée et utilisée à la main | ✔ | **jamais** | **jamais** |
+| Page web d'invité (navigateur, rien à installer) | Chrome, Edge, Firefox testés | pas essayée | pas essayée (Safari **non testé**) |
 | Gomme du stylet (`inkboard-pen`) | ✔ (non validée sur matériel) | – (sans effet) | – (sans effet) |
 | Icône de l'exécutable, archive portable, installation par utilisateur | ✔ (`scripts/*.ps1`) | – | – |
 | Dossier des données (autosave, raccourcis, mode direct MCP) | `%APPDATA%\Inkboard` | `$XDG_DATA_HOME` ou `~/.local/share/Inkboard` | `~/Library/Application Support/Inkboard` |
@@ -57,7 +58,11 @@ Le code est portable (Rust + egui, pas d'API propre à un système en dehors de 
 | [`inkboard-mcp`](crates/inkboard-mcp) | Serveur MCP (stdio) : un agent crée/modifie des tableaux, importe du Mermaid, exporte. Voir [docs/MCP.md](docs/fr/MCP.md). |
 | [`inkboard-pen`](crates/inkboard-pen) | Seul crate contenant du `unsafe` : lecture de l'état de la gomme du stylet (messages `WM_POINTER*` de Windows). |
 | [`inkboard-cli`](crates/inkboard-cli) | `ink convert`, `ink info`, `ink bench`. |
-| [`inkboard-app`](crates/inkboard-app) | Application de bureau (egui) : canvas, outils, panneau de style, pages, calques, texte riche, raccourcis personnalisables, dialogues. |
+| [`inkboard-app`](crates/inkboard-app) | Application de bureau (egui) : canvas, outils, panneau de style, pages, calques, texte riche, raccourcis personnalisables, dialogues. Aussi compilée pour le web (page d'invité). |
+| [`inkboard-session`](crates/inkboard-session) | Partage en direct : protocole, chiffrement de bout en bout, séquenceur de l'hôte, client invité, simulateur de réseau. |
+| [`inkboard-net`](crates/inkboard-net) | Transport réseau des sessions (QUIC avec repli par relais, natif et navigateur) et diagnostic du relais. |
+| [`inkboard-fonts`](crates/inkboard-fonts) | Les polices intégrées à l'application (mise en page du texte identique partout, navigateur compris). |
+| [`inkboard-crowd`](crates/inkboard-crowd) | Outil de test de charge : un vrai hôte et des invités simulés. |
 
 ## Interface
 
@@ -125,6 +130,20 @@ continus (build release). Plateau synthétique `ink bench N` : 60 % formes avec 
 Moyens : table des identifiants et **index spatial en grille** reconstruits une fois par modification (28 ms pour 100 000 objets),
 niveau de détail (objets de moins de 3 px dessinés comme des points), sélection et survol par l'index (< 0,01 ms).
 L'index n'est utilisé qu'à partir de 400 objets et suspendu pendant les gestes qui déplacent des objets.
+
+## Partage en direct
+
+> **Bêta.** Le partage en direct est récent : il a été éprouvé par des tests automatiques (dont des foules simulées jusqu'à 100 invités et des entrées hostiles) et à la main sur quelques appareils et réseaux, mais pas encore largement.
+
+Cliquez sur **Partager** (en bas à droite) pour obtenir un lien ; les personnes qui l'ouvrent modifient le même tableau en direct.
+
+- **Aucun serveur à installer.** Votre ordinateur héberge la session ; rien ne tourne ailleurs et rien ne se connecte avant que vous démarriez le partage.
+- **Rejoindre depuis l'application ou depuis une page web.** Un invité qui a Inkboard colle le lien ; un invité qui n'a qu'un navigateur ouvre le **lien web** (bouton *Copier le lien web*) : rien à installer, pas de compte. La page web est une page statique, [victorletirand.github.io/inkboard](https://victorletirand.github.io/inkboard/) (Chrome, Edge et Firefox testés ; Safari et iOS non testés). Elle sert seulement à rejoindre, pas à héberger.
+- **Noms et curseurs en direct** pour l'hôte, chaque invité et **l'agent d'IA** (son curseur et ce qu'il fait sont montrés à tous).
+- **Vous gardez la main.** Vous acceptez chaque personne, avec un lien de *modification* ou de *lecture seule* ; de nouveaux liens coupent les anciens ; vous pouvez renommer, restreindre ou retirer n'importe qui. Plafond par défaut : 10 participants (conçu pour 20, testé en charge avec 100 simulés).
+- **Privé par conception.** Chiffré de bout en bout : le relais qui aide deux ordinateurs à se trouver ne voit que des octets chiffrés. Chaque invité n'annule que ses propres modifications.
+- **Fonctionne entre réseaux.** Connexion directe quand c'est possible, par un relais sinon (public par défaut, [vous pouvez héberger le vôtre](docs/fr/RELAY.md)). Essayé en Wi-Fi, en 5G et entre Windows et Linux ; il supporte des coupures d'une minute et se reconnecte seul.
+- **Limites assumées.** Certains réseaux d'entreprise (passerelles qui inspectent le TLS) bloquent le relais public : l'application le dit et propose un bouton *Copier le diagnostic* à remettre à votre service informatique. Les très gros tableaux (20 000 objets et plus) mettent quelques secondes à arriver chez un nouvel invité ; 100 invités fonctionnent mais ce n'est pas un usage normal. Voir [partager et rejoindre](docs/fr/SHARING.md) · [la page web](docs/fr/WEB.md) · [héberger son relais](docs/fr/RELAY.md).
 
 ## Documentation
 

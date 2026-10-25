@@ -1,15 +1,14 @@
 <#
 .SYNOPSIS
-  Installs a Windows installer silently, launches the installed application, then uninstalls it (CI check, release.yml).
+  Installs the Windows (Installway) installer silently, launches the installed application, then uninstalls it (CI check, release.yml).
 .DESCRIPTION
-  Usage: pwsh scripts/check_installer_windows.ps1 -Kind nsis|msi -Installer <file> -Png <out.png> [-LogDir installer-check]
-         pwsh scripts/check_installer_windows.ps1 -Kind nsis -FindOnly     (read-only: prints the install folder found in the registry)
-  Steps: install (/S or msiexec /qn /l*v) -> find the install folder (registry "Uninstall" key, else the MSI log; never assumed)
+  Usage: pwsh scripts/check_installer_windows.ps1 -Installer <file> -Png <out.png> [-LogDir installer-check]
+         pwsh scripts/check_installer_windows.ps1 -FindOnly     (read-only: prints the install folder found in the registry)
+  Steps: install (--silent) -> find the install folder (registry "Uninstall" key; never assumed)
          -> inkboard.exe --screenshot + scripts/check_png.py -> silent uninstall -> the folder and the registry entry must be gone.
   Every launch is bounded to 120 s. Installs on the machine it runs on: CI runners only, never on a developer machine.
 #>
 param(
-    [Parameter(Mandatory)][ValidateSet('nsis', 'msi')][string]$Kind,
     [string]$Installer,
     [string]$Png = 'installer-check/screenshot.png',
     [string]$LogDir = 'installer-check',
@@ -20,7 +19,7 @@ $timeoutMs = 120000
 
 function Unquote([string]$s) { if ($s) { $s.Trim().Trim('"') } }
 
-# Uninstall entries named "Inkboard" (per-user NSIS: HKCU; machine-wide MSI: HKLM, 64 or 32-bit view).
+# Uninstall entries named "Inkboard" (per-user install: HKCU; machine-wide install to Program Files: HKLM, 64 or 32-bit view).
 function Get-Entries {
     $roots = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
@@ -32,17 +31,12 @@ function Get-Entries {
     }
 }
 
-function Find-InstallDir([string]$log) {
+function Find-InstallDir {
     $dir = $null
     $e = @(Get-Entries) | Select-Object -First 1
     if ($e) {
         $dir = Unquote $e.InstallLocation
         if (-not $dir -and $e.DisplayIcon) { $dir = Split-Path (Unquote ($e.DisplayIcon -replace ',\d+$', '')) }
-        if (-not $dir -and $e.UninstallString -and $Kind -eq 'nsis') { $dir = Split-Path (Unquote $e.UninstallString) }
-    }
-    if (-not $dir -and $log -and (Test-Path $log)) {
-        $m = Select-String -Path $log -Pattern 'Property\(S\): (INSTALLDIR|APPLICATIONFOLDER) = (.+)$' | Select-Object -Last 1
-        if ($m) { $dir = $m.Matches[0].Groups[2].Value.Trim() }
     }
     if ($dir) { $dir.TrimEnd('\') }
 }
@@ -65,7 +59,7 @@ function Wait-Gone([string]$path, [int]$seconds) {
 }
 
 if ($FindOnly) {
-    Write-Host "Install folder: $(Find-InstallDir $null)"
+    Write-Host "Install folder: $(Find-InstallDir)"
     exit 0
 }
 
@@ -73,9 +67,6 @@ if (-not $Installer) { Write-Host '::error::-Installer is required'; exit 1 }
 $Installer = (Resolve-Path $Installer).Path
 $Png = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Png)
 New-Item -ItemType Directory -Force -Path $LogDir, (Split-Path $Png) | Out-Null
-$LogDir = (Resolve-Path $LogDir).Path
-$installLog = Join-Path $LogDir "$Kind-install.log"
-$uninstallLog = Join-Path $LogDir "$Kind-uninstall.log"
 
 if (@(Get-Entries).Count -gt 0) { Write-Host '::error::Inkboard is already installed on this machine, refusing to continue'; exit 1 }
 
@@ -83,16 +74,12 @@ $dir = $null
 $err = $null
 try {
     # --- install ---
-    if ($Kind -eq 'nsis') {
-        $code = Invoke-Bounded $Installer '/S' 'NSIS install'
-    } else {
-        $code = Invoke-Bounded 'msiexec.exe' "/i `"$Installer`" /qn /l*v `"$installLog`"" 'MSI install'
-    }
+    $code = Invoke-Bounded $Installer '--silent' 'install'
     if ($code -ne 0) { throw "install exited with code $code" }
 
     # --- where did it go? ---
-    $dir = Find-InstallDir $installLog
-    if (-not $dir) { throw 'install folder not found (neither in the registry nor in the install log)' }
+    $dir = Find-InstallDir
+    if (-not $dir) { throw 'install folder not found in the registry' }
     Write-Host "Install folder: $dir"
     if (-not (Test-Path $dir)) { throw "install folder does not exist: $dir" }
     foreach ($name in 'inkboard.exe', 'ink.exe', 'inkboard-mcp.exe') {
@@ -115,19 +102,13 @@ catch {
 
 # --- uninstall (always attempted, even after a failure above) ---
 try {
-    if ($Kind -eq 'nsis') {
-        $entry = @(Get-Entries) | Select-Object -First 1
-        $un = if ($entry) { Unquote $entry.UninstallString } else { $null }
-        if (-not $un -and $dir) { $un = Join-Path $dir 'uninstall.exe' }
-        if (-not $un) { throw 'no uninstaller found' }
-        # the NSIS uninstaller copies itself to %TEMP% and returns at once: do not wait for the process, wait for the folder
-        Start-Process -FilePath $un -ArgumentList '/S' -WindowStyle Hidden
-        if ($dir -and -not (Wait-Gone $dir 120)) { throw "install folder still present 120 s after the uninstall: $dir" }
-    } else {
-        $code = Invoke-Bounded 'msiexec.exe' "/x `"$Installer`" /qn /l*v `"$uninstallLog`"" 'MSI uninstall'
-        if ($code -ne 0 -and $code -ne 3010) { throw "uninstall exited with code $code" }
-        if ($dir -and -not (Wait-Gone $dir 30)) { throw "install folder still present after the uninstall: $dir" }
-    }
+    # uninstall.exe lives outside the install folder (%LOCALAPPDATA%\<publisher>\Uninstall\<product-id>): only the registry knows it
+    $entry = @(Get-Entries) | Select-Object -First 1
+    $un = if ($entry) { Unquote $entry.UninstallString } else { $null }
+    if (-not $un) { throw 'no uninstaller found' }
+    # the uninstaller finishes from a copy of itself in %TEMP% and returns at once: do not wait for the process, wait for the folder
+    Start-Process -FilePath $un -ArgumentList '--silent' -WindowStyle Hidden
+    if ($dir -and -not (Wait-Gone $dir 120)) { throw "install folder still present 120 s after the uninstall: $dir" }
     if (@(Get-Entries).Count -gt 0) { throw 'the "Inkboard" entry is still in the registry after the uninstall' }
     Write-Host 'Uninstalled: folder and registry entry are gone'
 }
@@ -138,5 +119,5 @@ catch {
 }
 
 if ($err) { exit 1 }
-Write-Host "OK ($Kind)"
+Write-Host 'OK'
 exit 0

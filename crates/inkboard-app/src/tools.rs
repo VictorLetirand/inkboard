@@ -675,16 +675,21 @@ impl App {
 
     /// Inserts images chosen in a dialog, at the center of the view.
     pub fn insert_images_dialog(&mut self) {
-        let files = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg"]).pick_files().unwrap_or_default();
+        // in a browser the picked images arrive later (see `App::poll_platform`)
+        let files = crate::platform::pick_images();
         let c = self.view_center();
         self.insert_image_files(&files, c);
     }
 
     pub fn insert_image_files(&mut self, files: &[std::path::PathBuf], at: Pt) {
+        let items = files.iter().filter_map(|f| Some((f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase), std::fs::read(f).ok()?))).collect();
+        self.insert_image_bytes(items, at);
+    }
+
+    /// Inserts images given as (lowercase extension, content): a browser hands over bytes, never a path.
+    pub fn insert_image_bytes(&mut self, items: Vec<(Option<String>, Vec<u8>)>, at: Pt) {
         let mut ids = Vec::new();
-        for (i, f) in files.iter().enumerate() {
-            let Ok(bytes) = std::fs::read(f) else { continue };
-            let ext = f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+        for (i, (ext, bytes)) in items.into_iter().enumerate() {
             // a vector image stays sharp at any size: it may be shown larger than its natural size (an icon-sized SVG is enlarged)
             let (w, h, mime, max_k) = if ext.as_deref() == Some("svg") {
                 if let Some((w, h)) = std::str::from_utf8(&bytes).ok().and_then(inkboard_icons::svg_dimensions).filter(|(w, h)| *w > 0.0 && *h > 0.0) {
@@ -744,6 +749,9 @@ fn canvas_pointer(app: &mut App, ctx: &egui::Context, resp: &egui::Response, rec
     });
     let inside = resp.contains_pointer();
     let editing_now = app.editing.is_some();
+    if (pressed || middle) && inside {
+        crate::presence::follow(app, None); // acting on the board ends the following of somebody's view
+    }
     if let Some(sp) = pos {
         let w = cam.w(sp);
         if (pressed || middle) && inside && !editing_now && app.drag.is_none() {
@@ -876,10 +884,12 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
     // ---- drawing
     let dark = app.ed.doc.background.preset.is_dark();
     let (r, g, b) = app.ed.doc.background.preset.rgb();
-    let ghost: Vec<Id> = match &app.drag {
+    let mut ghost: Vec<Id> = match &app.drag {
         Some(Drag::Erase { hit, .. }) => hit.clone(),
         _ => Vec::new(),
     };
+    // objects somebody else is moving: the board's version fades, theirs is drawn over it below
+    ghost.extend(app.agent.remote.ghosts.keys().cloned());
     let editing_id = app.editing.as_ref().map(|e| e.id.clone());
     {
         let page = app.ed.page();
@@ -897,10 +907,13 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
             index: if fresh { app.caches.spatial.as_ref() } else { None },
         };
         rd.background(rect);
-        rd.page(rect, editing_id.as_ref(), &ghost);
+        let moving: Vec<&inkboard_core::Object> =
+            app.agent.remote.ghosts.values().filter(|g| page.index_of(&g.object.id).is_some()).map(|g| &g.object).collect();
+        rd.page(rect, editing_id.as_ref(), &ghost, &moving);
     }
     draw_overlay(app, &painter, &cam, dark);
     laser_trail(app, &painter, &ctx, if resp.contains_pointer() { ptr } else { None });
+    app.agent.paint(&painter, &cam, &ctx, app.ed.page());
     crate::rich_edit::draw_text_editor(app, ui, &cam);
     let _ = rect;
 
@@ -1058,7 +1071,7 @@ const LASER_LIFE: std::time::Duration = std::time::Duration::from_millis(900);
 
 /// Records the pointer position (laser tool) and draws the fading trail.
 fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, hover: Option<Pos2>) {
-    let now = std::time::Instant::now();
+    let now = crate::platform::Instant::now();
     app.laser.retain(|(_, t)| now.duration_since(*t) < LASER_LIFE);
     if app.tool == Tool::Laser
         && let Some(p) = hover
@@ -1070,7 +1083,7 @@ fn laser_trail(app: &mut App, painter: &egui::Painter, ctx: &egui::Context, hove
         return;
     }
     let red = Color32::from_rgb(0xff, 0x2d, 0x2d);
-    let alpha = |t: std::time::Instant| 1.0 - now.duration_since(t).as_secs_f32() / LASER_LIFE.as_secs_f32();
+    let alpha = |t: crate::platform::Instant| 1.0 - now.duration_since(t).as_secs_f32() / LASER_LIFE.as_secs_f32();
     for w in app.laser.windows(2) {
         let a = alpha(w[1].1).clamp(0.0, 1.0);
         painter.line_segment([w[0].0, w[1].0], Stroke::new(3.0 + 5.0 * a, red.gamma_multiply(a * 0.45)));

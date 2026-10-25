@@ -120,7 +120,7 @@ pub(crate) use tr;
 /* ---------------------------------------------------------------- preference file */
 
 fn pref_path() -> std::path::PathBuf {
-    inkboard_mcp::live::data_dir().join("language")
+    crate::platform::data_dir().join("language")
 }
 
 pub fn load_pref() -> Pref {

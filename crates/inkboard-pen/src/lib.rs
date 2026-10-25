@@ -93,6 +93,7 @@ pub use win::install;
 
 /// Installs the detection on window `hwnd`. No effect outside Windows.
 #[cfg(not(windows))]
+#[allow(clippy::must_use_candidate, reason = "same signature as the Windows build, whose caller ignores the result")]
 pub fn install(_hwnd: std::num::NonZeroIsize) -> bool {
     false
 }

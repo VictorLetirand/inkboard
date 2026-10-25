@@ -35,7 +35,7 @@ impl App {
 
     /// The "Paste" of the menus: like Ctrl+V (objects of the board, a system image, then the text of the clipboard).
     pub fn paste_from_menu(&mut self) {
-        let text = system_text().unwrap_or_default();
+        let text = crate::platform::system_text().unwrap_or_default();
         self.paste_event(&text);
     }
 
@@ -92,21 +92,10 @@ impl App {
         };
         let Ok(img) = image::load_from_memory(&png) else { return self.toast(&t("Cannot copy")) };
         let rgba = img.to_rgba8();
-        let data = arboard::ImageData { width: rgba.width() as usize, height: rgba.height() as usize, bytes: rgba.into_raw().into() };
-        match arboard::Clipboard::new().and_then(|mut c| c.set_image(data)) {
+        let (width, height) = (rgba.width() as usize, rgba.height() as usize);
+        match crate::platform::copy_image(width, height, rgba.into_raw()) {
             Ok(()) => self.toast(&t("Image copied")),
             Err(e) => self.toast(&tr!("Clipboard unavailable: {}", e)),
         }
     }
-}
-
-/// Text from the system clipboard, if any.
-pub fn system_text() -> Option<String> {
-    arboard::Clipboard::new().ok()?.get_text().ok()
-}
-
-/// Image from the system clipboard, if any (width, height, RGBA).
-pub fn system_image() -> Option<(usize, usize, Vec<u8>)> {
-    let img = arboard::Clipboard::new().ok()?.get_image().ok()?;
-    Some((img.width, img.height, img.bytes.into_owned()))
 }

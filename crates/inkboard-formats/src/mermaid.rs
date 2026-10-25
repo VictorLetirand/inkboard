@@ -751,6 +751,22 @@ fn build_sequence(lines: &[String], measurer: &dyn Measurer) -> Result<Vec<Objec
     Ok(out)
 }
 
+/// Largest flowchart imported. The automatic layout costs more than linear time (seconds for a thousand nodes), so a bigger diagram
+/// would freeze the application, or the server of the agent that asked for it.
+const MAX_FLOW_NODES: usize = 1_000;
+const MAX_FLOW_LINKS: usize = 2_500;
+
+fn check_flow_size(f: &Flow) -> Result<(), FormatError> {
+    if f.nodes.len() > MAX_FLOW_NODES || f.links.len() > MAX_FLOW_LINKS {
+        return Err(FormatError::Unsupported(format!(
+            "diagram too large ({} nodes, {} links; at most {MAX_FLOW_NODES} nodes and {MAX_FLOW_LINKS} links)",
+            f.nodes.len(),
+            f.links.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Converts Mermaid text to objects ready to be placed on a page.
 ///
 /// # Errors
@@ -772,6 +788,7 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
         if f.nodes.is_empty() {
             return Err(FormatError::Invalid("no node found".into()));
         }
+        check_flow_size(&f)?;
         return Ok(build_flow(&f, m));
     }
     if head.starts_with("stateDiagram") {
@@ -780,6 +797,7 @@ pub fn to_objects(src: &str, m: &dyn Measurer) -> Result<Vec<Object>, FormatErro
         if f.nodes.is_empty() {
             return Err(FormatError::Invalid("no state found".into()));
         }
+        check_flow_size(&f)?;
         return Ok(build_flow(&f, m));
     }
     if head.starts_with("sequenceDiagram") {
