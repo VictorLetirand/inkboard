@@ -14,6 +14,10 @@ Draw, diagram and present on a native desktop app, import and export the formats
 
 ![Inkboard](docs/img/interface.png)
 
+**Live sharing, from a web page:** two guests in a browser and the AI agent edit the same board, in real time (recorded with real browser guests and a real host: [`demo.mjs`](crates/inkboard-app/web/test/demo.mjs)).
+
+![Two browser guests and an AI agent editing the same board](docs/img/live-sharing.gif)
+
 > **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (over 850 automated tests), but it has so far been **used by hand on Windows only** (live sharing was also tried between several computers, an Android phone on 5G and a Linux server).
 > Linux and macOS builds compile and pass the automated tests in CI, yet nobody has used the app there yet — expect rough edges, and please [report them](../../issues).
 > The interface is available in **English and French**; it follows your system language and can be switched from the menu (*Language*).

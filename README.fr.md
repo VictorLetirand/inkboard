@@ -72,6 +72,10 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
 
 ![Interface](docs/img/fr/interface.png)
 
+**Le partage en direct, depuis une page web :** deux invités dans un navigateur et l'agent d'IA modifient le même tableau, en temps réel (enregistré avec de vrais invités navigateur et un vrai hôte : [`demo.mjs`](crates/inkboard-app/web/test/demo.mjs)).
+
+![Deux invités dans un navigateur et un agent d'IA modifient le même tableau](docs/img/live-sharing.gif)
+
 | Menu principal | Thème sombre et réglages de style |
 |---|---|
 | ![Menu](docs/img/fr/menu.png) | ![Thème sombre](docs/img/fr/theme-sombre.png) |

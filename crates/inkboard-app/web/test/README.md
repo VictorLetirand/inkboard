@@ -10,6 +10,7 @@ point `PUPPETEER_DIR` (`e2e.mjs`) or `NODE_PATH` (`page.mjs`) at it.
 | `page.mjs` | the built page (`../dist`): start, shape, text, icon library, download/open, paste/drop, ids, no-WebGL message (Chrome only) |
 | `e2e.mjs` | **a real native host and browser guests**, through the public n0 relay (Internet needed): the whole guest experience (see below) |
 | `smoke-public.mjs` | a PUBLISHED page (default `https://victorletirand.github.io/inkboard/`) in one engine: starts, WebGL 2, a shape can be drawn |
+| `demo.mjs` | records the frames of the README demo (`docs/img/live-sharing.gif`): two browser guests and the MCP agent on the board of a real host (Chrome only; encode with ffmpeg) |
 | `drivers.mjs` | the engine drivers used by the two scripts above (not run alone) |
 | `sizes.mjs` | raw / gzip / brotli sizes of `../dist` |
 

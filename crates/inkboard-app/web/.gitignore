@@ -3,3 +3,4 @@ node_modules/
 test/results/
 dist-e2e/
 test/results-e2e/
+test/demo-frames/
