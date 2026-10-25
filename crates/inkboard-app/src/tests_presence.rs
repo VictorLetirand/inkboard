@@ -232,6 +232,68 @@ fn a_move_in_progress_is_visible_to_the_host_and_the_other_guest() {
 }
 
 #[test]
+fn a_container_and_what_it_holds_moved_together_by_a_guest_end_up_identical_everywhere() {
+    let mut r = Room::new();
+    // a big frame holding a smaller box, as in the "module" boxes of a diagram
+    let outer = r.host.add_rect(-160.0, -100.0, 320.0, 200.0);
+    let inner = r.host.add_rect(-120.0, -40.0, 140.0, 60.0);
+    let a = r.join("Anna", Role::Edit);
+    let (ox, ix) = (r.host.frame(&outer).x, r.host.frame(&inner).x);
+    r.guests[a].tool(Tool::Select);
+    r.guests[a].app().sel = vec![outer.clone(), inner.clone()];
+    r.button(a, (-100.0, -20.0), true);
+    for k in 1..=30 {
+        r.move_to(a, (-100.0 + 6.0 * f64::from(k), -20.0 + 3.0 * f64::from(k)));
+    }
+    r.pump(3);
+    // in progress: the host's board is untouched and it shows both objects being moved, not an empty frame
+    assert_eq!(r.host.frame(&outer).x, ox);
+    let ghosts: Vec<Id> = r.host.app().agent.remote.ghosts.keys().cloned().collect();
+    assert!(ghosts.contains(&outer) && ghosts.contains(&inner), "the host shows both objects moving: {ghosts:?}");
+    r.button(a, (80.0, 70.0), false);
+    r.pump(10);
+    assert!(r.host.app().agent.remote.ghosts.is_empty(), "no ghost is left once the gesture is validated");
+    for (who, id, before) in [("outer", &outer, ox), ("inner", &inner, ix)] {
+        let (h, g) = (r.host.frame(id).x, r.guests[a].frame(id).x);
+        assert!(h > before + 20.0, "{who} moved on the host: {h} vs {before}");
+        assert!((h - g).abs() < 0.01, "{who}: host {h}, guest {g}");
+    }
+}
+
+#[test]
+fn a_group_dragged_by_clicking_one_member_ends_up_identical_everywhere() {
+    let mut r = Room::new();
+    let outer = r.host.add_rect(-160.0, -100.0, 320.0, 200.0);
+    let inner = r.host.add_rect(-120.0, -40.0, 140.0, 60.0);
+    let gid = Id::new();
+    for p in &mut r.host.app().ed.doc.pages {
+        for o in &mut p.objects {
+            o.group = Some(gid.clone());
+        }
+    }
+    r.pump(2);
+    let a = r.join("Anna", Role::Edit);
+    let (ox, ix) = (r.host.frame(&outer).x, r.host.frame(&inner).x);
+    r.guests[a].tool(Tool::Select);
+    // grab the frame by its border, away from the inner box
+    r.button(a, (-150.0, 60.0), true);
+    for k in 1..=30 {
+        r.move_to(a, (-150.0 + 6.0 * f64::from(k), 60.0 + 3.0 * f64::from(k)));
+    }
+    r.pump(3);
+    let ghosts: Vec<Id> = r.host.app().agent.remote.ghosts.keys().cloned().collect();
+    assert!(ghosts.contains(&outer) && ghosts.contains(&inner), "the host shows the whole group moving: {ghosts:?}");
+    r.button(a, (30.0, 150.0), false);
+    r.pump(10);
+    assert!(r.host.app().agent.remote.ghosts.is_empty(), "no ghost is left once the gesture is validated");
+    for (who, id, before) in [("outer", &outer, ox), ("inner", &inner, ix)] {
+        let (h, g) = (r.host.frame(id).x, r.guests[a].frame(id).x);
+        assert!(h > before + 20.0, "{who} moved on the host: {h} vs {before}");
+        assert!((h - g).abs() < 0.01, "{who}: host {h}, guest {g}");
+    }
+}
+
+#[test]
 fn a_stroke_of_the_host_in_progress_is_seen_by_the_guests_then_replaced_by_the_object() {
     let mut r = Room::new();
     let a = r.join("Anna", Role::Edit);

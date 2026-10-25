@@ -393,7 +393,9 @@ impl Renderer<'_> {
     }
 
     /// Draws the visible objects; `skip`: ids not to draw (text being edited…).
-    pub fn page(&mut self, clip: egui::Rect, skip_text: Option<&Id>, ghost: &[Id]) {
+    /// Draws the page. `ghost` ids are drawn faded; `moving` holds the versions of some of them that somebody else is moving: each is drawn
+    /// at the place of its object in the stacking order (what lies above it stays above it), the ones the loop did not reach after.
+    pub fn page(&mut self, clip: egui::Rect, skip_text: Option<&Id>, ghost: &[Id], moving: &[&Object]) {
         let clip = clip.expand(60.0);
         let page: &Page = self.page;
         let owned;
@@ -411,6 +413,7 @@ impl Renderer<'_> {
             Some(v) => Box::new(v.iter().copied()),
             None => Box::new(0..page.objects.len()),
         };
+        let mut shown: Vec<&Id> = Vec::new();
         for i in order {
             let o = &page.objects[i];
             if !page.is_visible(o) {
@@ -425,8 +428,15 @@ impl Renderer<'_> {
                 self.speck(o, b);
                 continue;
             }
-            let opacity_mul = if ghost.contains(&o.id) { 0.3 } else { 1.0 };
-            self.object(o, skip_text == Some(&o.id), opacity_mul, &get);
+            let faded = ghost.contains(&o.id);
+            self.object(o, skip_text == Some(&o.id), if faded { 0.3 } else { 1.0 }, &get);
+            if faded && let Some(m) = moving.iter().find(|m| m.id == o.id) {
+                self.object(m, false, 1.0, &get);
+                shown.push(&m.id);
+            }
+        }
+        for m in moving.iter().filter(|m| !shown.contains(&&m.id)) {
+            self.object(m, false, 1.0, &get);
         }
     }
 

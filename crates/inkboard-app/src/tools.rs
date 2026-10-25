@@ -895,10 +895,9 @@ pub fn canvas(app: &mut App, ui: &mut egui::Ui) {
             index: if fresh { app.caches.spatial.as_ref() } else { None },
         };
         rd.background(rect);
-        rd.page(rect, editing_id.as_ref(), &ghost);
-        for g in app.agent.remote.ghosts.values().filter(|g| page.index_of(&g.object.id).is_some()) {
-            rd.draw_one(&g.object);
-        }
+        let moving: Vec<&inkboard_core::Object> =
+            app.agent.remote.ghosts.values().filter(|g| page.index_of(&g.object.id).is_some()).map(|g| &g.object).collect();
+        rd.page(rect, editing_id.as_ref(), &ghost, &moving);
     }
     draw_overlay(app, &painter, &cam, dark);
     laser_trail(app, &painter, &ctx, if resp.contains_pointer() { ptr } else { None });
