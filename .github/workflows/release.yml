@@ -151,6 +151,17 @@ jobs:
           done
           ls -l
 
+      # Manual runs publish nothing: the Windows installer is kept for 3 days so that it can be tried by hand (`gh run download <id>`).
+      - name: Keep the Windows installer (manual runs)
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            dist/*-setup.exe
+            dist/SHA256SUMS-*.txt
+          retention-days: 3
+
       - name: Attach the installers to the Release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
