@@ -31,7 +31,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, name: windows-x64 }
+          # the Installway image is an ltsc2022 Windows container
+          - { os: windows-2022, name: windows-x64 }
           - { os: ubuntu-22.04, name: linux-x64 }
           - { os: macos-15-intel, name: macos-x64 }
           - { os: macos-14, name: macos-arm64 }
@@ -64,6 +65,7 @@ jobs:
         run: cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp
 
       - name: Packaging tool
+        if: runner.os != 'Windows'
         run: cargo install cargo-packager --locked
 
       # --- Signing (optional) ---------------------------------------------------------------
@@ -86,15 +88,25 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Package
-        if: runner.os != 'macOS'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        if: runner.os == 'Linux'
         run: cargo packager --release -c Packager.toml --formats all
+
+      - name: Package with Installway (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Packager.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $payload = 'dist/installway'
+          New-Item -ItemType Directory -Force -Path $payload | Out-Null
+          Copy-Item target/release/inkboard.exe, target/release/ink.exe, target/release/inkboard-mcp.exe -Destination $payload
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE, THIRD_PARTY_LICENSES.md -Destination $payload
+          $out = "dist/inkboard_${v}_x64-setup.exe"
+          docker run --rm -v "${PWD}:C:\work" ghcr.io/tooltip-focus/installway:latest --to-version $v --out $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # GUI-subsystem exe: `&` would not wait for it
+          $p = Start-Process -FilePath $out -ArgumentList '--verify' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Write-Host "::error::$out --verify exited with code $($p.ExitCode)"; exit 1 }
+          Remove-Item -Recurse -Force $payload
 
       # `hdiutil: ... Resource busy` happens now and then on the macOS runners (create-dmg): the packaging is tried up to 3 times
       - name: Package (macOS)
@@ -125,7 +137,7 @@ jobs:
           signing-account-name: ${{ env.SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ env.SIGNING_PROFILE }}
           files-folder: ${{ github.workspace }}\dist
-          files-folder-filter: exe,msi
+          files-folder-filter: exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -134,7 +146,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          for f in *.exe *.msi *.dmg *.deb *.AppImage; do
+          for f in *.exe *.dmg *.deb *.AppImage; do
             [ -f "$f" ] && (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") >> "SHA256SUMS-${{ matrix.name }}.txt"
           done
           ls -l
@@ -148,7 +160,7 @@ jobs:
         run: |
           cd dist
           shopt -s nullglob
-          files=(*.exe *.msi *.dmg *.deb *.AppImage SHA256SUMS-*.txt)
+          files=(*.exe *.dmg *.deb *.AppImage SHA256SUMS-*.txt)
           [ ${#files[@]} -gt 0 ] || { echo "no installer produced"; exit 1; }
           gh release upload "$TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
@@ -156,25 +168,16 @@ jobs:
       # Install each installer for real, launch the INSTALLED application (--screenshot + scripts/check_png.py), uninstall, check the
       # uninstall. They run only for workflow_dispatch and come after every build / sign / publish step, so a real tag publication
       # (installers already attached to the Release) can never be blocked or changed by them. Here a failure is meant to be red.
-      # File names in dist/ come from cargo-packager: each step expects exactly one match of its glob and lists dist/ otherwise.
+      # Each step expects exactly one match of its glob and lists dist/ otherwise.
       # Every launch is bounded to 120 s; logs and screenshots are uploaded only on failure (3 days).
-      - name: Check the NSIS installer (Windows)
+      - name: Check the Installway installer (Windows)
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
         shell: pwsh
         timeout-minutes: 15
         run: |
           $f = @(Get-ChildItem dist -Filter '*-setup.exe')
           if ($f.Count -ne 1) { Get-ChildItem dist | Out-Host; throw "expected one *-setup.exe in dist/, found $($f.Count)" }
-          ./scripts/check_installer_windows.ps1 -Kind nsis -Installer $f[0].FullName -Png installer-check/nsis.png
-
-      - name: Check the MSI installer (Windows)
-        if: github.event_name == 'workflow_dispatch' && runner.os == 'Windows'
-        shell: pwsh
-        timeout-minutes: 15
-        run: |
-          $f = @(Get-ChildItem dist -Filter '*.msi')
-          if ($f.Count -ne 1) { Get-ChildItem dist | Out-Host; throw "expected one *.msi in dist/, found $($f.Count)" }
-          ./scripts/check_installer_windows.ps1 -Kind msi -Installer $f[0].FullName -Png installer-check/msi.png
+          ./scripts/check_installer_windows.ps1 -Installer $f[0].FullName -Png installer-check/installway.png
 
       - name: Check the .deb and the AppImage (Linux)
         if: github.event_name == 'workflow_dispatch' && runner.os == 'Linux'

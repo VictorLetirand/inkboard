@@ -2,7 +2,7 @@
 
 | System | Download |
 |---|---|
-| **Windows 10 / 11** | `inkboard_*_x64-setup.exe` (per-user install, no administrator rights) or `inkboard_*_x64_en-US.msi` |
+| **Windows 10 / 11** | `inkboard_*_x64-setup.exe` (per-user install, no administrator rights) |
 | **macOS** | `Inkboard_*_aarch64.dmg` (Apple Silicon) or `Inkboard_*_x64.dmg` (Intel) |
 | **Linux** | `inkboard_*_amd64.deb` or `inkboard_*_x86_64.AppImage` |
 
