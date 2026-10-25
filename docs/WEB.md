@@ -52,9 +52,10 @@ relative); to try it locally run `trunk serve` in `crates/inkboard-app/web/` and
 **The link** is the address of the page followed by `#` and the ticket: `https://<page address>/#<ticket>`. `<ticket>` is exactly the part
 after `inkboard://join#` (or `inkboard://join/`) of the link that the host's application gives. The page also reads `#join=<ticket>`. The ticket is in
 the fragment (after `#`): a browser never sends it to a server, so the web host of the page never sees it. As soon as the page has read it, it
-**removes it from the address bar** (`history.replaceState`), so it stays neither in the address nor in the history entry. Which address to give
-depends on where the page is published (decision D3, still open); nothing in the application builds a web link yet: put the page address and
-the ticket together by hand, or give the guest the page address and the native link.
+**removes it from the address bar** (`history.replaceState`), so it stays neither in the address nor in the history entry. The page is published at
+`https://victorletirand.github.io/inkboard/`, and the application builds the web link for you: in the Share window, **Copy web link** (set the
+`INKBOARD_WEB_URL` environment variable to point it at another address, for example a page served on a local network). You can also give the guest
+the page address and the native link.
 
 **What the guest sees:**
 

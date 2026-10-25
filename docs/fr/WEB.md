@@ -52,9 +52,10 @@ dossier (les liens sont relatifs) ; pour l'essayer en local, lancez `trunk serve
 **Le lien** est l'adresse de la page suivie de `#` et du ticket : `https://<adresse de la page>/#<ticket>`. `<ticket>` est exactement la partie située après
 `inkboard://join#` (ou `inkboard://join/`) du lien que donne l'application de l'hôte. La page lit aussi `#join=<ticket>`. Le ticket est dans le fragment (après
 `#`) : un navigateur ne l'envoie jamais à un serveur, donc l'hébergeur web de la page ne le voit jamais. Dès que la page l'a lu, elle **l'efface de la barre
-d'adresse** (`history.replaceState`) : il ne reste ni dans l'adresse ni dans l'entrée d'historique. L'adresse à donner dépend de l'endroit où la page est
-publiée (décision D3, encore ouverte) ; l'application ne fabrique pas encore de lien web : on compose à la main l'adresse de la page et le ticket, ou l'on donne à
-l'invité l'adresse de la page et le lien natif.
+d'adresse** (`history.replaceState`) : il ne reste ni dans l'adresse ni dans l'entrée d'historique. La page est publiée sur
+`https://victorletirand.github.io/inkboard/`, et l'application fabrique le lien web pour vous : dans la fenêtre Partager, **Copier le lien web** (la variable
+d'environnement `INKBOARD_WEB_URL` permet de viser une autre adresse, par exemple une page servie sur un réseau local). On peut aussi donner à l'invité
+l'adresse de la page et le lien natif.
 
 **Ce que voit l'invité :**
 
