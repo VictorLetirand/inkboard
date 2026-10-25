@@ -24,7 +24,7 @@ Draw, diagram and present on a native desktop app, import and export the formats
 
 ## Why Inkboard?
 
-Microsoft has announced it is retiring the desktop version of **Microsoft Whiteboard**, and the web alternatives all want an account, an internet connection, or a subscription.
+Microsoft retired the standalone **Microsoft Whiteboard** apps for Windows, iOS and Android on October 16, 2026 ([announcement](https://support.microsoft.com/en-us/whiteboard/retirement-standalone-microsoft-whiteboard-apps)), and the web alternatives all want an account, an internet connection, or a subscription.
 We wanted a whiteboard that is:
 
 - **Offline and private.** No account, no cloud, no telemetry. Your boards are plain files on your disk.
