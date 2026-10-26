@@ -2,7 +2,8 @@
 
 use crate::connector::Connector;
 use crate::geom::{Frame, Pt, Rect};
-use crate::style::{Align, FontFamily, Style};
+use crate::style::{Align, Color, FontFamily, Style};
+use crate::svgcolor::Rgb;
 use crate::text::{Measurer, RichText, TextLayout, layout_rich};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -231,24 +232,44 @@ pub struct ImageObj {
     /// The image is a white SVG (formula or monochrome icon) that is tinted with the object's stroke color.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mono: bool,
+    /// Color replacements applied to a (non tinted) SVG: ordered pairs (original color, new color).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recolor: Vec<(Color, Color)>,
 }
 
 impl ImageObj {
+    /// The replacements as plain RGB pairs for [`crate::svgcolor::apply_recolor`]; `Ink` resolves to `ink` and cannot be an original.
+    #[must_use]
+    pub fn recolor_map(&self, ink: Rgb) -> Vec<(Rgb, Rgb)> {
+        let rgb = |c: Color| match c {
+            Color::Ink => ink,
+            Color::Rgb(r, g, b) => (r, g, b),
+        };
+        self.recolor.iter().filter(|(from, _)| *from != Color::Ink).map(|&(from, to)| (rgb(from), rgb(to))).collect()
+    }
+
     /// Is the image tinted with the stroke color (formula or monochrome icon)?
     #[must_use]
     pub fn is_tinted(&self) -> bool {
         self.mono || self.latex.is_some()
     }
 
-    /// Bytes of the image as exported to other formats: a tinted SVG (white) gets the `stroke` color, anything else is unchanged.
+    /// Bytes of the image as exported to other formats: a tinted SVG (white) gets the `stroke` color, then the `recolor`
+    /// replacements apply (`Ink` as a new color is the `stroke` color); anything else is unchanged.
     #[must_use]
     pub fn export_bytes<'a>(&self, mime: &str, data: &'a [u8], stroke: (u8, u8, u8)) -> std::borrow::Cow<'a, [u8]> {
-        if self.is_tinted() && mime == "image/svg+xml" {
-            let hex = format!("#{:02x}{:02x}{:02x}", stroke.0, stroke.1, stroke.2);
-            std::borrow::Cow::Owned(String::from_utf8_lossy(data).replace("#ffffff", &hex).into_bytes())
-        } else {
-            std::borrow::Cow::Borrowed(data)
+        if mime != "image/svg+xml" || (!self.is_tinted() && self.recolor.is_empty()) {
+            return std::borrow::Cow::Borrowed(data);
         }
+        let mut bytes = data.to_vec();
+        if self.is_tinted() {
+            let hex = format!("#{:02x}{:02x}{:02x}", stroke.0, stroke.1, stroke.2);
+            bytes = String::from_utf8_lossy(&bytes).replace("#ffffff", &hex).into_bytes();
+        }
+        if !self.recolor.is_empty() {
+            bytes = crate::svgcolor::apply_recolor(&bytes, &self.recolor_map(stroke));
+        }
+        std::borrow::Cow::Owned(bytes)
     }
 }
 
@@ -747,13 +768,40 @@ mod tests {
     #[test]
     fn tinted_svgs_take_the_stroke_color_on_export_and_others_are_untouched() {
         let svg = br##"<svg><path fill="#ffffff" stroke="#ffffff"/></svg>"##;
-        let img =
-            |mono, latex: Option<&str>| ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: AssetId::default(), latex: latex.map(str::to_owned), mono };
+        let img = |mono, latex: Option<&str>| ImageObj {
+            frame: Frame::new(0.0, 0.0, 10.0, 10.0),
+            asset: AssetId::default(),
+            latex: latex.map(str::to_owned),
+            mono,
+            recolor: Vec::new(),
+        };
         let out = img(true, None).export_bytes("image/svg+xml", svg, (255, 0, 16));
         assert_eq!(String::from_utf8_lossy(&out), r##"<svg><path fill="#ff0010" stroke="#ff0010"/></svg>"##);
         assert!(img(false, Some("x")).is_tinted(), "formulas are tinted too");
         assert_eq!(&*img(false, None).export_bytes("image/svg+xml", svg, (1, 2, 3)), svg.as_slice(), "colored icons keep their colors");
         assert_eq!(&*img(true, None).export_bytes("image/png", svg, (1, 2, 3)), svg.as_slice(), "only SVG is recolored");
+    }
+
+    #[test]
+    fn recolor_applies_on_export_and_round_trips_through_serde() {
+        let svg = br##"<svg><path fill="#ff0000" stroke="#00ff00"/></svg>"##;
+        let mut img = ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: AssetId::default(), latex: None, mono: false, recolor: Vec::new() };
+        assert!(matches!(img.export_bytes("image/svg+xml", svg, (0, 0, 0)), std::borrow::Cow::Borrowed(_)), "no recolor: untouched");
+        img.recolor = vec![(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)), (Color::rgb(0, 255, 0), Color::Ink)];
+        let out = img.export_bytes("image/svg+xml", svg, (1, 2, 3));
+        assert_eq!(String::from_utf8_lossy(&out), r##"<svg><path fill="#0000ff" stroke="#010203"/></svg>"##);
+        assert_eq!(&*img.export_bytes("image/png", svg, (1, 2, 3)), svg.as_slice());
+        let json = serde_json::to_string(&img).unwrap();
+        assert!(json.contains(r##""recolor":[["#ff0000","#0000ff"],["#00ff00","ink"]]"##), "{json}");
+        assert_eq!(serde_json::from_str::<ImageObj>(&json).unwrap(), img);
+    }
+
+    #[test]
+    fn image_without_recolor_serializes_and_loads_as_before() {
+        let old = r#"{"frame":{"x":0.0,"y":0.0,"w":1.0,"h":1.0,"angle":0.0},"asset":"ab"}"#;
+        let img: ImageObj = serde_json::from_str(old).unwrap();
+        assert!(img.recolor.is_empty());
+        assert!(!serde_json::to_string(&img).unwrap().contains("recolor"));
     }
 
     #[test]

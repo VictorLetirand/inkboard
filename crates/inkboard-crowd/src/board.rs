@@ -275,7 +275,7 @@ fn fill_page(
             let (aid, mono) = rng.pick(icons).clone();
             let s = 40.0 + rng.f64() * 60.0;
             Object::new(
-                Kind::Image(ImageObj { frame: Frame::new(at.x, at.y, s, s), asset: aid, latex: None, mono }),
+                Kind::Image(ImageObj { frame: Frame::new(at.x, at.y, s, s), asset: aid, latex: None, mono, recolor: Vec::new() }),
                 Style { width: 0.0, fill: None, ..style(rng) },
             )
         } else if roll < 0.93 {
@@ -286,6 +286,7 @@ fn fill_page(
                 asset: formulas[k].clone(),
                 latex: Some(FORMULAS[k % FORMULAS.len()].to_owned()),
                 mono: true,
+                recolor: Vec::new(),
             };
             Object::new(Kind::Image(o), Style { width: 0.0, fill: None, ..style(rng) })
         } else {
@@ -296,7 +297,7 @@ fn fill_page(
             }
             let (aid, w, h) = photos[k].clone();
             Object::new(
-                Kind::Image(ImageObj { frame: Frame::new(at.x, at.y, w, h), asset: aid, latex: None, mono: false }),
+                Kind::Image(ImageObj { frame: Frame::new(at.x, at.y, w, h), asset: aid, latex: None, mono: false, recolor: Vec::new() }),
                 Style { width: 0.0, fill: None, ..style(rng) },
             )
         };

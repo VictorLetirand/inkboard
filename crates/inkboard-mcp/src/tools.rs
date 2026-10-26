@@ -60,7 +60,7 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
         json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
             "inputSchema": obj(json!({}), &[])}),
-        json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files. `detail: \"full\"` adds each object's style, font, stacking order `z`, group, lock, rotation and (connectors) route and arrow; tables also list their `cells`.",
+        json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files. `detail: \"full\"` adds each object's style, font, stacking order `z`, group, lock, rotation and (connectors) route and arrow; tables also list their `cells`, and SVG images the `colors` found in the file (see `recolor` of update_object).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(),
                 "detail": {"type": "string", "enum": ["brief", "full"], "description": "Default brief (id, type, text, position). full: also style {stroke, fill, width, dash, opacity, roundness}, font {family, size, align}, z, group, locked, rotation (degrees), route, arrow."}}), &[])}),
         json!({"name": "board_changes", "description": "Reports what the USER changed on the board since your last look (describe_board or board_changes): objects added, modified, deleted. Your own changes are not reported. The first call records a baseline.",
@@ -104,7 +104,9 @@ pub fn list() -> Vec<Value> {
                 "head_start": head_prop("start"), "head_end": head_prop("end"),
                 "from": {"type": "string", "description": "Connector only: id of the object to connect the start to (shape, table or image)."},
                 "to": {"type": "string", "description": "Connector only: id of the object to connect the end to."},
-                "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."}}), &["id"])}),
+                "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."},
+                "recolor": {"type": ["object", "array"], "description": "Imported SVG image only (not formulas or monochrome icons): replaces colors of the image. The `colors` of the object (describe_board with detail \"full\") lists the colors found in the file. Give an object {\"#original\": \"#new\"} (e.g. {\"#ff0000\": \"#0000ff\"}) or an array of [\"#original\", \"#new\"] pairs; originals are always the colors of the file, so a swap {\"#ff0000\": \"#0000ff\", \"#0000ff\": \"#ff0000\"} works. This replaces the whole previous recoloration: `{}` restores the original colors. To make an image single-colored, map every color of `colors` to the same one. Max 256 pairs; an invalid color is an error and changes nothing.",
+                    "additionalProperties": {"type": "string"}, "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}}}), &["id"])}),
         json!({"name": "delete_object", "description": "Deletes an object, or several with `ids` (connectors that were bound to them remain, detached). Give `id` or `ids`.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"},
                 "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Several objects to delete at once (result: `deleted` is then a list)."}}), &[])}),
@@ -559,17 +561,34 @@ pub fn summary(o: &Object) -> Value {
             if let Some(l) = &i.latex {
                 m.insert("latex".into(), json!(l));
             }
+            if !i.recolor.is_empty() {
+                m.insert("recolor".into(), Value::Object(i.recolor.iter().map(|(f, t)| (f.to_hex(), json!(t.to_hex()))).collect()));
+            }
         }
         Kind::Pen(_) => {}
     }
     Value::Object(m)
 }
 
+/// `summary` of an object, plus `colors` (the colors found in the file) for an SVG image that can be recolored.
+#[must_use]
+pub fn summary_in(doc: &Document, o: &Object) -> Value {
+    let mut v = summary(o);
+    if let Kind::Image(i) = &o.kind
+        && !i.is_tinted()
+        && let Some(a) = doc.assets.get(&i.asset).filter(|a| a.mime == "image/svg+xml")
+    {
+        let colors: Vec<String> = inkboard_core::svgcolor::svg_colors(&a.data).into_iter().map(|(r, g, b)| Color::rgb(r, g, b).to_hex()).collect();
+        v["colors"] = json!(colors);
+    }
+    v
+}
+
 fn describe(ed: &mut Editor, a: &Value) -> Res<Value> {
     let page = ed.page();
     let objects: Vec<Value> = match os(a, "detail").unwrap_or("brief") {
         "brief" => page.objects.iter().map(summary).collect(),
-        "full" => page.objects.iter().enumerate().map(|(z, o)| edit::full(z, o)).collect(),
+        "full" => page.objects.iter().enumerate().map(|(z, o)| edit::full(&ed.doc, z, o)).collect(),
         d => return Err(format!("unknown detail \"{d}\" (brief, full)")),
     };
     let pages: Vec<Value> = ed.doc.pages.iter().enumerate().map(|(i, p)| json!({"number": i + 1, "name": p.name, "objects": p.objects.len()})).collect();
@@ -738,7 +757,7 @@ fn add_image(ed: &mut Editor, a: &Value) -> Res<Value> {
     }
     let aid = ed.doc.add_asset(mime, data);
     let at = origin(ed, a);
-    let img = ImageObj { frame: Frame::new(at.x, at.y, w, h), asset: aid, latex: None, mono: false };
+    let img = ImageObj { frame: Frame::new(at.x, at.y, w, h), asset: aid, latex: None, mono: false, recolor: Vec::new() };
     let id = ed.insert(Object::new(Kind::Image(img), Style { width: 0.0, fill: None, ..Style::default() }));
     Ok(json!({"id": id.0, "w": w.round(), "h": h.round(), "type": mime}))
 }
@@ -905,7 +924,7 @@ fn add_formula(ed: &mut Editor, a: &Value) -> Res<Value> {
     let aid = ed.doc.add_asset("image/svg+xml", f.svg.into_bytes());
     let at = origin(ed, a);
     let style = Style { stroke: ocolor(a, "color")?.unwrap_or(Color::Ink), width: 0.0, fill: None, ..Style::default() };
-    let img = ImageObj { frame: Frame::new(at.x, at.y, f.w, f.h), asset: aid, latex: Some(latex.to_owned()), mono: false };
+    let img = ImageObj { frame: Frame::new(at.x, at.y, f.w, f.h), asset: aid, latex: Some(latex.to_owned()), mono: false, recolor: Vec::new() };
     let id = ed.insert(Object::new(Kind::Image(img), style));
     Ok(json!({"id": id.0, "w": f.w.round(), "h": f.h.round()}))
 }

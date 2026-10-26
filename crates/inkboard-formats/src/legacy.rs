@@ -157,7 +157,7 @@ fn convert(raw: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> 
             if !assets.contains_key(&asset) {
                 return None;
             }
-            Object::new(Kind::Image(ImageObj { frame, asset, latex: None, mono: false }), Style { width: 0.0, fill: None, ..style })
+            Object::new(Kind::Image(ImageObj { frame, asset, latex: None, mono: false, recolor: Vec::new() }), Style { width: 0.0, fill: None, ..style })
         }
         _ => return None,
     };
