@@ -32,6 +32,8 @@ struct Ctx<'a> {
     doc: &'a Document,
     page: &'a Page,
     m: &'a dyn Measurer,
+    /// Shadow filters emitted so far (gives each its own id).
+    shadows: std::cell::Cell<usize>,
 }
 
 impl Ctx<'_> {
@@ -353,10 +355,25 @@ impl Ctx<'_> {
         format!("<g{op}>{out}</g>")
     }
 
-    /// The object, in a group that references the shared shadow filter when it has a drop shadow.
+    /// The object, in a group that references its own drop shadow filter when it has a shadow. The filter region is the object's box:
+    /// a region as big as the drawing, repeated for every shadowed object, makes the PNG and PDF export grow with objects x page area.
     fn object(&self, o: &Object) -> String {
         let inner = self.plain_object(o);
-        if casts_shadow(o) && !inner.is_empty() { format!(r#"<g filter="url(#{SHADOW_FILTER})">{inner}</g>"#) } else { inner }
+        if !casts_shadow(o) || inner.is_empty() {
+            return inner;
+        }
+        let k = self.shadows.get();
+        self.shadows.set(k + 1);
+        // given in user space (a straight line has no box to size a relative region on), with room for the offset, the blur and the stroke
+        let r = self.page.bounds(o).expand(SHADOW_ROOM + o.style.width);
+        format!(
+            r##"<filter id="{SHADOW_FILTER}-{k}" filterUnits="userSpaceOnUse" x="{}" y="{}" width="{}" height="{}"><feDropShadow dx="4" dy="4" stdDeviation="2" flood-color="#000000" flood-opacity="{}"/></filter><g filter="url(#{SHADOW_FILTER}-{k})">{inner}</g>"##,
+            n(r.x),
+            n(r.y),
+            n(r.w),
+            n(r.h),
+            if self.dark { "0.5" } else { "0.25" }
+        )
     }
 
     fn plain_object(&self, o: &Object) -> String {
@@ -392,8 +409,10 @@ impl Ctx<'_> {
     }
 }
 
-/// Id of the drop shadow filter, defined once in `<defs>`.
+/// Prefix of the ids of the drop shadow filters.
 const SHADOW_FILTER: &str = "ink-shadow";
+/// Room around an object for its shadow (offset 4 and blur), on top of its stroke width.
+const SHADOW_ROOM: f64 = 12.0;
 
 /// Whether the object is drawn with a drop shadow: not a pen stroke, and not a sticky note (which has its own).
 fn casts_shadow(o: &Object) -> bool {
@@ -409,7 +428,7 @@ pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer,
         bounds = bounds.expand(10.0);
     }
     let b = bounds.expand(opts.padding);
-    let ctx = Ctx { dark: doc.background.preset.is_dark(), doc, page, m };
+    let ctx = Ctx { dark: doc.background.preset.is_dark(), doc, page, m, shadows: std::cell::Cell::new(0) };
     let mut s = String::new();
     let _ = write!(
         s,
@@ -422,18 +441,6 @@ pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer,
         n(b.w),
         n(b.h)
     );
-    if shadows {
-        // defined once; the region is the whole drawing (a straight line has no box to size the default one on)
-        let _ = write!(
-            s,
-            r##"<defs><filter id="{SHADOW_FILTER}" filterUnits="userSpaceOnUse" x="{}" y="{}" width="{}" height="{}"><feDropShadow dx="4" dy="4" stdDeviation="2" flood-color="#000000" flood-opacity="{}"/></filter></defs>"##,
-            n(b.x),
-            n(b.y),
-            n(b.w),
-            n(b.h),
-            if ctx.dark { "0.5" } else { "0.25" }
-        );
-    }
     if !opts.transparent {
         let _ = write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}"/>"#, n(b.x), n(b.y), n(b.w), n(b.h), doc.background.preset.hex());
     }
@@ -555,14 +562,19 @@ mod tests {
         let line = Object::new(Kind::Connector(Connector::straight(Pt::new(0.0, 200.0), Pt::new(100.0, 200.0))), shadowed.clone());
         let d = doc_with(vec![boxed(0.0, &shadowed), boxed(100.0, &shadowed), boxed(200.0, &Style::default()), sticky, pen, line]);
         let svg = export_approx(&d, &d.pages[0]).unwrap();
-        assert_eq!(svg.matches("<filter").count(), 1, "defined once");
-        assert!(svg.contains("<defs>") && svg.contains("feDropShadow"));
-        assert_eq!(svg.matches("filter=\"url(#ink-shadow)\"").count(), 3, "two boxes and the connector; not the plain box, the sticky note or the pen");
+        assert_eq!(svg.matches("<filter").count(), 3, "one filter per shadowed object, sized to it");
+        assert!(svg.contains("feDropShadow"));
+        // the region is the object's, not the drawing's (the drawing is more than 350 wide)
+        for f in svg.split("<filter ").skip(1) {
+            let w: f64 = f.split("width=\"").nth(1).and_then(|s| s.split('"').next()).and_then(|s| s.parse().ok()).unwrap();
+            assert!(w < 150.0, "filter region {w} wide");
+        }
+        assert_eq!(svg.matches("filter=\"url(#ink-shadow-").count(), 3, "two boxes and the connector; not the plain box, the sticky note or the pen");
         assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
         // nothing shadowed: no filter at all, and the exported size is the one it always was
         let plain = doc_with(vec![boxed(0.0, &Style::default())]);
         let plain_svg = export_approx(&plain, &plain.pages[0]).unwrap();
-        assert!(!plain_svg.contains("filter") && !plain_svg.contains("<defs>"));
+        assert!(!plain_svg.contains("filter"));
         let shadow_only = doc_with(vec![boxed(0.0, &shadowed)]);
         let width_of = |svg: &str| svg.split("width=\"").nth(1).and_then(|s| s.split('"').next()).and_then(|w| w.parse::<f64>().ok()).unwrap();
         let (with, without) = (width_of(&export_approx(&shadow_only, &shadow_only.pages[0]).unwrap()), width_of(&plain_svg));

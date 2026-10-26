@@ -489,8 +489,8 @@ mod tests {
     #[test]
     fn a_drop_shadow_is_drawn_by_the_png_and_the_pdf_export_and_only_when_asked() {
         let svg = rect_svg(true);
-        assert_eq!(svg.matches("<filter").count(), 1, "the filter is defined once");
-        assert!(svg.contains("feDropShadow") && svg.contains("filter=\"url(#ink-shadow)\""), "{svg}");
+        assert_eq!(svg.matches("<filter").count(), 1, "one filter for the one shadowed object");
+        assert!(svg.contains("feDropShadow") && svg.contains("filter=\"url(#ink-shadow-0)\""), "{svg}");
         assert!(shadow_pixels(&svg) > 200, "a translucent black band shows right of and under the rectangle");
         assert_eq!(shadow_pixels(&rect_svg(false)), 0);
         assert!(!rect_svg(false).contains("filter"));
