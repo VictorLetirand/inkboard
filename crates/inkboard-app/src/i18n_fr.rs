@@ -102,6 +102,7 @@ pub const FR: &[(&str, &str)] = &[
         "Cliquez sur « + » puis appuyez sur la combinaison voulue (Échap pour annuler). Cliquer sur un raccourci le retire.",
     ),
     ("Clipboard image unreadable", "Image du presse-papiers illisible"),
+    ("Table truncated to fit the limits", "Tableau tronqué pour respecter les limites"),
     ("Clipboard unavailable: {}", "Presse-papiers indisponible : {}"),
     ("Close", "Fermer"),
     ("Code block", "Bloc de code"),
