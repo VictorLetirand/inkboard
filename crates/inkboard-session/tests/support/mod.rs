@@ -315,17 +315,27 @@ impl World {
 
     pub fn is_idle(&self) -> bool {
         self.net.pending_frames() == 0
-            && self
-                .guests
-                .iter()
-                .all(|g| g.conn.is_some() && g.client.phase() == Phase::Live && g.client.pending_len() == 0 && g.client.last_seq() == self.host.seqr.seq())
+            && self.guests.iter().all(|g| {
+                g.conn.is_some()
+                    && g.client.phase() == Phase::Live
+                    && g.client.has_snapshot()
+                    && g.client.pending_len() == 0
+                    && g.client.last_seq() == self.host.seqr.seq()
+            })
     }
 
     /// State of everybody, for failure messages.
     pub fn describe(&self) -> String {
         let mut s = format!("host seq {}, frames pending {}", self.host.seqr.seq(), self.net.pending_frames());
         for (i, g) in self.guests.iter().enumerate() {
-            s += &format!("\n guest {i}: {:?} pending {} last_seq {} conn {}", g.client.phase(), g.client.pending_len(), g.client.last_seq(), g.conn.is_some());
+            s += &format!(
+                "\n guest {i}: {:?} snapshot {} pending {} last_seq {} conn {}",
+                g.client.phase(),
+                g.client.has_snapshot(),
+                g.client.pending_len(),
+                g.client.last_seq(),
+                g.conn.is_some()
+            );
         }
         s
     }

@@ -178,6 +178,12 @@ impl Client {
     pub fn color(&self) -> (u8, u8, u8) {
         self.color
     }
+    /// Whether the guest holds the host's document (the snapshot of the join arrived). Until then it asks again by itself, and `last_seq` says
+    /// nothing: it is 0 whether the guest is up to date on a document that was never changed or has received nothing.
+    #[must_use]
+    pub fn has_snapshot(&self) -> bool {
+        self.have_snapshot
+    }
     /// `seq` of the last host modification applied.
     #[must_use]
     pub fn last_seq(&self) -> Seq {
