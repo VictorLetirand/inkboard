@@ -501,7 +501,7 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
     row(ui, "Path", |ui| {
         for (r, name) in [(Route::Straight, "Straight"), (Route::Elbow, "Elbow"), (Route::Curve, "Curve")] {
             let on = cur.as_ref().map_or(app.route == r, |c| c.route == r);
-            if ui.selectable_label(on, name).clicked() {
+            if ui.selectable_label(on, t(name)).clicked() {
                 app.route = r;
                 app.ed.update_many(&target.ids, |o| {
                     if let Kind::Connector(c) = &mut o.kind {
