@@ -65,6 +65,12 @@ docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
 
 Le serveur parle MCP sur l'entrée et la sortie standard (d'où `-i`). L'image tourne sous un utilisateur sans droits (uid 10001) : le dossier monté doit être modifiable par lui. Elle a été vérifiée avec une vraie session MCP (`initialize`, `tools/list` renvoyant les 27 outils, puis `create_board`, `add_shape` et `describe_board` sur un fichier du dossier monté, et un chemin hors de `/data` refusé). Le mode direct (modifier le tableau ouvert à l'écran) demande l'application de bureau et n'existe pas dans un conteneur.
 
+### Pointes de flèche
+
+`add_connector` et `update_object` acceptent `head_start` et `head_end` pour choisir par son nom la pointe de chaque extrémité (`arrow` règle toujours les deux d'un coup ; une pointe nommée l'emporte pour son extrémité). Pointes d'origine : `none`, `arrow`, `triangle`, `dot`, `bar`. Pointes ajoutées, pour les diagrammes UML et entité-relation : `diamond` (composition), `diamond_open` (agrégation), `triangle_open` (héritage, réalisation), `crow_foot` (plusieurs), `crow_foot_one` (un ou plusieurs), `crow_foot_zero` (zéro ou plusieurs), `one_only` (exactement un), `zero_or_one`. `describe_board` avec `detail: "full"` les indique dans `heads`.
+
+Les pointes ajoutées sont stockées dans des champs optionnels séparés du connecteur (`head_start_ext`, `head_end_ext`), à côté de `head_start` / `head_end` d'origine, qui gardent la pointe d'origine la plus proche (un losange est un `dot`, un triangle creux un `triangle`, une patte d'oie une `arrow`, `one_only` une `bar`). Une version qui ne connaît pas ces pointes ignore les nouveaux champs et dessine celle-là : un tableau qui les utilise s'ouvre donc toujours, et un tableau qui ne les utilise pas est écrit exactement comme avant. Dans une session en direct, un invité sur une ancienne version qui modifie un tel connecteur le renvoie sans les pointes ajoutées, qui s'affichent alors avec leur pointe d'origine pour tout le monde. Les fichiers draw.io et Excalidraw utilisent leurs propres symboles (draw.io : `diamond`, `ERmany`, `ERoneToMany`, `ERzeroToMany`, `ERmandOne`, `ERzeroToOne`, avec `endFill=0` pour les creux).
+
 ## Comment le mode direct fonctionne
 
 L'application ouvre un serveur local sur `127.0.0.1` (port éphémère, jamais exposé au réseau) et publie son port et un **jeton secret** aléatoire dans
@@ -91,7 +97,7 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 | `search_icons` | Cherche dans la bibliothèque d'icônes intégrée (environ 28 800 icônes : AWS, Azure, Google Cloud, Cisco, Kubernetes, logos de marques, symboles d'interface…) par mots-clés (`query`, noms en anglais, sans distinction de casse, chaque mot doit correspondre) ; `group`, `set`, `limit` facultatifs (20 par défaut, 100 au plus). Renvoie `{count, truncated, icons: [{id, name, set, group, mono}]}`. Lecture seule. |
 | `list_icon_groups` | Les groupes de la bibliothèque d'icônes avec leurs jeux et leur nombre d'icônes (`{total, groups: [{group, sets: [{set, icons}]}]}`), pour savoir quoi chercher. Lecture seule. |
 | `add_icon` | Place une icône (`icon` = un `id` issu de `search_icons`) comme objet image auquel `add_connector` peut s'attacher. `size` (plus grand côté, 64 par défaut, de 8 à 2000) ou `w`/`h` (proportions conservées quand un seul est donné) ; `stroke` teinte les icônes monochromes ; `label` ajoute un texte centré sous l'icône, groupé avec elle (`markdown: true` pour du [texte enrichi](#texte-enrichi)). Renvoie `{id, x, y, w, h, icon, label_id?, warnings?}`. |
-| `import_mermaid` | Diagramme Mermaid (flowchart, état, séquence, classes, entité-relation) avec mise en page automatique ; page dédiée possible. Un `subgraph` devient un cadre en pointillés avec son titre ; son contenu est disposé à part, donc les cadres ne se chevauchent jamais, et sa `direction` s'applique quand aucun lien ne le relie à l'extérieur. Un lien écrit vers un sous-graphe (`B --> Back`) s'attache à ce cadre. Un `;` dans un libellé entre guillemets (`A["a; b"]`) reste dans le libellé. Une classe ou une entité devient un tableau (nom, attributs, méthodes ; ou type, nom, clés) ; héritage et réalisation se terminent par un triangle, composition et agrégation par un point (nommées sur le lien), et un lien d'entités écrit ses cardinalités. Non pris en charge : pie, mindmap, gantt (une erreur explicite le dit). |
+| `import_mermaid` | Diagramme Mermaid (flowchart, état, séquence, classes, entité-relation) avec mise en page automatique ; page dédiée possible. Un `subgraph` devient un cadre en pointillés avec son titre ; son contenu est disposé à part, donc les cadres ne se chevauchent jamais, et sa `direction` s'applique quand aucun lien ne le relie à l'extérieur. Un lien écrit vers un sous-graphe (`B --> Back`) s'attache à ce cadre. Un `;` dans un libellé entre guillemets (`A["a; b"]`) reste dans le libellé. Une classe ou une entité devient un tableau (nom, attributs, méthodes ; ou type, nom, clés) ; héritage et réalisation se terminent par un triangle creux, composition et agrégation par un losange, et un lien d'entités se termine par des symboles de patte d'oie et écrit ses cardinalités. Non pris en charge : pie, mindmap, gantt (une erreur explicite le dit). |
 | `update_object` | Modifier le texte ([texte enrichi](#texte-enrichi) facultatif), la position, la taille, les couleurs, le [style de trait, la police, le verrou, la rotation](#update_object), le tracé / les pointes / les extrémités d'un connecteur, ou une cellule de tableau. |
 | `delete_object` | Supprime un objet (`id`) ou plusieurs (`ids`). |
 | `move_objects` | Déplace des objets ensemble (en relatif ou vers une position) ; les connecteurs liés suivent. |
@@ -161,7 +167,7 @@ Un résultat d'outil est une valeur JSON, transportée telle quelle par le proto
 | `group` | Id du groupe, quand l'objet est groupé. |
 | `locked` | `true`, seulement quand l'objet est verrouillé. |
 | `rotation` | Degrés, seulement pour une forme ou une image pivotée. |
-| connecteurs | `route` (`straight`, `elbow`, `curve`), `arrow` (`end`, `start`, `both`, `none`), `stroke` ; `heads` seulement pour les pointes autres que la flèche simple (`triangle`, `dot`, `bar`). |
+| connecteurs | `route` (`straight`, `elbow`, `curve`), `arrow` (`end`, `start`, `both`, `none`), `stroke` ; `heads` seulement pour les pointes autres que la flèche simple (`triangle`, `dot`, `bar` et les [pointes ajoutées](#pointes-de-flèche)). |
 | tableaux | `cells` : le texte brut de chaque cellule, ligne par ligne. |
 
 `selection` est inchangé.
@@ -197,6 +203,7 @@ Les paramètres existants (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stro
 | `rotation` | -360 à 360, angle **absolu** en degrés (0 remet à zéro), autour du centre | formes, images |
 | `route` | `straight`, `elbow`, `curve` | connecteurs |
 | `arrow` | `end`, `start`, `both`, `none` | connecteurs |
+| `head_start`, `head_end` | nom d'une [pointe](#pointes-de-flèche) ; remplace ce que `arrow` a donné à cette extrémité | connecteurs |
 | `from`, `to` | id d'une forme, d'un tableau ou d'une image : reconnecte cette extrémité (mêmes règles que `add_connector`) | connecteurs |
 | `cell` + `text` | `[ligne, colonne]` à partir de 0 : le nouveau texte de cette cellule de tableau (`markdown` fonctionne comme partout) ; la colonne s'élargit si nécessaire | tableaux |
 

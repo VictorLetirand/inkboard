@@ -11,8 +11,8 @@ use flate2::read::DeflateDecoder;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
 use inkboard_core::text::Measurer;
 use inkboard_core::{
-    Align, Anchor, Arrowhead, Asset, AssetId, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, Id, ImageObj, Kind, Label,
-    Object, Page, Pattern, Pt, Rect, RichText, Route, Span, SpanStyle, Style,
+    Align, Anchor, Arrowhead, Asset, AssetId, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, HeadExt, Id, ImageObj, Kind,
+    Label, Object, Page, Pattern, Pt, Rect, RichText, Route, Span, SpanStyle, Style,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
@@ -66,13 +66,27 @@ fn dash_style(d: Dash) -> &'static str {
     }
 }
 
-fn arrow_name(h: Arrowhead) -> &'static str {
-    match h {
-        Arrowhead::None => "none",
-        Arrowhead::Arrow => "open",
-        Arrowhead::Triangle => "block",
-        Arrowhead::Dot => "oval",
-        Arrowhead::Bar => "dash",
+/// draw.io name of an arrowhead and whether it is filled (`endFill` / `startFill`).
+fn arrow_name(h: Arrowhead, ext: Option<HeadExt>) -> (&'static str, u8) {
+    match ext {
+        Some(HeadExt::Diamond) => ("diamond", 1),
+        Some(HeadExt::DiamondOpen) => ("diamond", 0),
+        Some(HeadExt::TriangleOpen) => ("block", 0),
+        Some(HeadExt::CrowFoot) => ("ERmany", 1),
+        Some(HeadExt::CrowFootOne) => ("ERoneToMany", 1),
+        Some(HeadExt::CrowFootZero) => ("ERzeroToMany", 1),
+        Some(HeadExt::OneOnly) => ("ERmandOne", 1),
+        Some(HeadExt::ZeroOrOne) => ("ERzeroToOne", 1),
+        None => (
+            match h {
+                Arrowhead::None => "none",
+                Arrowhead::Arrow => "open",
+                Arrowhead::Triangle => "block",
+                Arrowhead::Dot => "oval",
+                Arrowhead::Bar => "dash",
+            },
+            1,
+        ),
     }
 }
 
@@ -144,11 +158,10 @@ fn connector_cell(page: &Page, c: &Connector, st: &Style, id: &str, (ox, oy): (f
         Route::Curve => style.push_str("curved=1;"),
         Route::Straight => {}
     }
+    let ((end_arrow, end_fill), (start_arrow, start_fill)) = (arrow_name(c.head_end, c.head_end_ext), arrow_name(c.head_start, c.head_start_ext));
     let _ = write!(
         style,
-        "endArrow={};startArrow={};endFill=1;startFill=1;strokeColor={};strokeWidth={};{}{}",
-        arrow_name(c.head_end),
-        arrow_name(c.head_start),
+        "endArrow={end_arrow};startArrow={start_arrow};endFill={end_fill};startFill={start_fill};strokeColor={};strokeWidth={};{}{}",
         hex(st.stroke),
         st.width,
         dash_style(st.dash),
@@ -809,17 +822,37 @@ impl Builder<'_> {
             self.report.skipped += 1;
             return;
         };
-        let head = |key: &str, default: &str| match s.get(key).map_or(default, String::as_str) {
-            "none" => Arrowhead::None,
-            "open" | "openThin" => Arrowhead::Arrow,
-            "oval" | "ovalThin" => Arrowhead::Dot,
-            "dash" => Arrowhead::Bar,
-            _ => Arrowhead::Triangle,
+        // an arrowhead: an original one, or an extended one when draw.io has the symbol (the fill key tells a hollow one from a filled one)
+        let head = |conn: &mut Connector, at_end: bool, key: &str, fill_key: &str, default: &str| {
+            let hollow = s.get(fill_key).is_some_and(|v| v == "0");
+            let ext = match s.get(key).map_or(default, String::as_str) {
+                "diamond" | "diamondThin" => Some(if hollow { HeadExt::DiamondOpen } else { HeadExt::Diamond }),
+                "block" | "blockThin" | "classic" | "classicThin" if hollow => Some(HeadExt::TriangleOpen),
+                "ERmany" => Some(HeadExt::CrowFoot),
+                "ERoneToMany" => Some(HeadExt::CrowFootOne),
+                "ERzeroToMany" => Some(HeadExt::CrowFootZero),
+                "ERmandOne" => Some(HeadExt::OneOnly),
+                "ERzeroToOne" => Some(HeadExt::ZeroOrOne),
+                _ => None,
+            };
+            let original = match s.get(key).map_or(default, String::as_str) {
+                "none" => Arrowhead::None,
+                "open" | "openThin" => Arrowhead::Arrow,
+                "oval" | "ovalThin" => Arrowhead::Dot,
+                "dash" => Arrowhead::Bar,
+                _ => Arrowhead::Triangle,
+            };
+            match (ext, at_end) {
+                (Some(e), true) => conn.set_ext_end(e),
+                (Some(e), false) => conn.set_ext_start(e),
+                (None, true) => conn.set_head_end(original),
+                (None, false) => conn.set_head_start(original),
+            }
         };
         let st = style_for(c, false);
         let mut conn = Connector::new(start, finish);
-        conn.head_end = head("endArrow", "classic");
-        conn.head_start = head("startArrow", "none");
+        head(&mut conn, true, "endArrow", "endFill", "classic");
+        head(&mut conn, false, "startArrow", "startFill", "none");
         conn.via = g.points.iter().map(|p| *p + *origin).collect();
         let es = s.get("edgeStyle").map_or("", String::as_str);
         conn.route = if es.contains("orthogonal") || es.contains("elbow") {
@@ -1112,5 +1145,59 @@ mod tests {
  </root></mxGraphModel>"#;
         let r = import(src, "x", &ApproxMeasurer).unwrap();
         assert_eq!((r.report.skipped, r.report.placeholders), (1, 0));
+    }
+
+    /// A page with two shapes and one connector per extended head, each at both ends.
+    fn doc_with_every_extended_head() -> (inkboard_core::Document, Vec<HeadExt>) {
+        let mut d = inkboard_core::Document::new("heads");
+        let boxes: Vec<Object> =
+            (0..2).map(|i| Object::new_box(BoxGeom::Rect, Frame::new(f64::from(i) * 300.0, 0.0, 80.0, 40.0), Style::default(), Label::default())).collect();
+        let ids: Vec<inkboard_core::Id> = boxes.iter().map(|b| b.id.clone()).collect();
+        d.pages[0].objects.extend(boxes);
+        for ext in HeadExt::ALL {
+            let mut c = Connector::new(End::bound(ids[0].clone()), End::bound(ids[1].clone()));
+            c.set_ext_start(ext);
+            c.set_ext_end(ext);
+            d.pages[0].objects.push(Object::new(Kind::Connector(c), Style::default()));
+        }
+        (d, HeadExt::ALL.to_vec())
+    }
+
+    #[test]
+    fn extended_heads_use_the_draw_io_symbols_and_come_back_as_extended_heads() {
+        let (d, heads) = doc_with_every_extended_head();
+        let xml = export(&d, &ApproxMeasurer);
+        for (name, fill) in
+            [("diamond", 1), ("diamond", 0), ("block", 0), ("ERmany", 1), ("ERoneToMany", 1), ("ERzeroToMany", 1), ("ERmandOne", 1), ("ERzeroToOne", 1)]
+        {
+            assert!(xml.contains(&format!("endArrow={name};")) && xml.contains(&format!("endFill={fill};")), "{name} {fill}");
+        }
+        let r = import(&xml, "x", &ApproxMeasurer).unwrap();
+        let back: Vec<(Option<HeadExt>, Option<HeadExt>)> = r.doc.pages[0]
+            .objects
+            .iter()
+            .filter_map(|o| if let Kind::Connector(c) = &o.kind { Some((c.head_start_ext, c.head_end_ext)) } else { None })
+            .collect();
+        assert_eq!(back, heads.iter().map(|h| (Some(*h), Some(*h))).collect::<Vec<_>>(), "every head is read back as it was written");
+    }
+
+    #[test]
+    fn foreign_draw_io_er_arrows_and_hollow_ones_are_read_as_extended_heads_and_the_others_as_before() {
+        let src = r##"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+ <mxCell id="a" value="A" style="rounded=0;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="80" height="40" as="geometry"/></mxCell>
+ <mxCell id="b" value="B" style="rounded=0;" vertex="1" parent="1"><mxGeometry x="300" y="0" width="80" height="40" as="geometry"/></mxCell>
+ <mxCell id="e1" style="endArrow=ERmany;startArrow=ERmandOne;html=1;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"/></mxCell>
+ <mxCell id="e2" style="endArrow=diamondThin;endFill=0;startArrow=block;startFill=0;html=1;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"/></mxCell>
+ <mxCell id="e3" style="endArrow=block;endFill=1;startArrow=oval;html=1;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"/></mxCell>
+ </root></mxGraphModel></diagram></mxfile>"##;
+        let r = import(src, "x", &ApproxMeasurer).unwrap();
+        let c: Vec<&Connector> = r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
+        assert_eq!((c[0].head_end_ext, c[0].head_start_ext), (Some(HeadExt::CrowFoot), Some(HeadExt::OneOnly)));
+        assert_eq!((c[1].head_end_ext, c[1].head_start_ext), (Some(HeadExt::DiamondOpen), Some(HeadExt::TriangleOpen)));
+        assert_eq!(
+            (c[2].head_end, c[2].head_end_ext, c[2].head_start, c[2].head_start_ext),
+            (Arrowhead::Triangle, None, Arrowhead::Dot, None),
+            "filled block and oval stay original heads"
+        );
     }
 }

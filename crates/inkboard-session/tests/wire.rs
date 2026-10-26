@@ -199,3 +199,36 @@ proptest! {
         prop_assert_eq!(&again, &model);
     }
 }
+
+#[test]
+fn a_connector_with_an_extended_head_travels_whole_and_a_message_from_an_older_version_still_reads() {
+    use inkboard_core::connector::{Connector, End, HeadExt};
+    use inkboard_core::model::Kind;
+    let mut c = Connector::new(End::free(Pt::new(0.0, 0.0)), End::free(Pt::new(90.0, 0.0)));
+    c.set_ext_end(HeadExt::CrowFootOne);
+    c.set_ext_start(HeadExt::DiamondOpen);
+    let object = Object::new(Kind::Connector(c), Style::default());
+    let op = WireOp::Put { page: Id("p".into()), object: Box::new(object.clone()) };
+    let json = serde_json::to_string(&op).unwrap();
+    let back: WireOp = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, op, "the whole object, extended heads included, makes the trip");
+    // a message written by a version that has no extended head has none of the keys: it reads, with no extended head
+    fn strip(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::Object(m) => {
+                m.remove("head_start_ext");
+                m.remove("head_end_ext");
+                m.values_mut().for_each(strip);
+            }
+            serde_json::Value::Array(l) => l.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    strip(&mut value);
+    assert!(!value.to_string().contains("_ext"));
+    let WireOp::Put { object: old, .. } = serde_json::from_value(value).unwrap() else { panic!("a put") };
+    let Kind::Connector(read) = &old.kind else { panic!("a connector") };
+    assert_eq!((read.head_start_ext, read.head_end_ext), (None, None));
+    assert_eq!((read.head_start, read.head_end), (HeadExt::DiamondOpen.fallback(), HeadExt::CrowFootOne.fallback()), "the original fields hold the fallback");
+}

@@ -57,7 +57,7 @@ pub mod svg;
 pub mod text;
 pub mod transform;
 
-pub use connector::{Anchor, Arrowhead, Connector, End, Route};
+pub use connector::{Anchor, Arrowhead, Connector, End, HeadExt, HeadPart, Route, head_glyph};
 pub use editor::Editor;
 pub use geom::{Frame, Pt, Rect};
 pub use model::{

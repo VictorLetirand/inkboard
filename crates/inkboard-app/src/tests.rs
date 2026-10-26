@@ -369,6 +369,35 @@ fn mermaid_import_adds_bound_objects_and_selects_them() {
 }
 
 #[test]
+fn connectors_with_every_added_head_are_drawn_selected_or_not_and_saved() {
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    let b = t.add_rect(400.0, 100.0, 80.0, 50.0);
+    let mut last = a.clone();
+    for ext in HeadExt::ALL {
+        let mut c = Connector::new(End::bound(a.clone()), End::bound(b.clone()));
+        c.set_ext_start(ext);
+        c.set_ext_end(ext);
+        last = t.app().ed.insert(Object::new(Kind::Connector(c), Style::default()));
+    }
+    // drawn on the page, then with the style panel open on a connector (its row of arrowhead buttons)
+    t.h.step();
+    t.app().sel = vec![last.clone()];
+    t.h.step();
+    t.h.step();
+    let heads: Vec<(Option<HeadExt>, Option<HeadExt>)> =
+        t.objects().iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some((c.head_start_ext, c.head_end_ext)) } else { None }).collect();
+    assert_eq!(heads, HeadExt::ALL.map(|e| (Some(e), Some(e))));
+    // the document keeps them through a save and a reload
+    let json = serial::to_json(&t.app().ed.doc, false);
+    let back = serial::from_json(&json).unwrap();
+    assert_eq!(json.matches("head_end_ext").count(), HeadExt::ALL.len());
+    assert_eq!(back.pages[0].objects.len(), 2 + HeadExt::ALL.len());
+    // the object under the panel is untouched by drawing it
+    assert!(t.app().ed.page().get(&last).is_some());
+}
+
+#[test]
 fn save_and_reopen_roundtrip_and_foreign_formats() {
     let mut t = T::new();
     t.add_rect(100.0, 100.0, 50.0, 50.0);

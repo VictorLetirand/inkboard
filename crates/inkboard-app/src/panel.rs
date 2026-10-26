@@ -14,7 +14,7 @@ use inkboard_core::layout::{Direction, auto_layout};
 use inkboard_core::num;
 use inkboard_core::style::{FILLS, PALETTE};
 use inkboard_core::text::Format;
-use inkboard_core::{Align, Arrowhead, BoxGeom, Color, Dash, FontFamily, Id, Kind, Label, Layer, Object, Pt, Route, Style};
+use inkboard_core::{Align, Arrowhead, BoxGeom, Color, Dash, FontFamily, HeadExt, Id, Kind, Label, Layer, Object, Pt, Route, Style, head_glyph};
 
 /// Panel width (the web prototype used 226 px; a little wider here for comfort).
 const WIDTH: f32 = 264.0;
@@ -388,14 +388,25 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
     });
     if let Some(c) = cur {
         for (title, is_start) in [("Arrowhead at the start", true), ("Arrowhead at the end", false)] {
-            let now = if is_start { c.head_start } else { c.head_end };
+            let (now, now_ext) = if is_start { (c.head_start, c.head_start_ext) } else { (c.head_end, c.head_end_ext) };
             row(ui, title, |ui| {
                 for (h, name) in [(Arrowhead::None, "—"), (Arrowhead::Arrow, "→"), (Arrowhead::Triangle, "▶"), (Arrowhead::Dot, "●"), (Arrowhead::Bar, "|")]
                 {
-                    if theme::seg_button(ui, now == h, "", |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0))).clicked() {
+                    if theme::seg_button(ui, now_ext.is_none() && now == h, "", |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0)))
+                        .clicked()
+                    {
                         app.ed.update_many(&target.ids, |o| {
                             if let Kind::Connector(c) = &mut o.kind {
-                                if is_start { c.head_start = h } else { c.head_end = h }
+                                if is_start { c.set_head_start(h) } else { c.set_head_end(h) }
+                            }
+                        });
+                    }
+                }
+                for e in HeadExt::ALL {
+                    if theme::seg_button(ui, now_ext == Some(e), head_ext_tip(e), |p, r, col| head_preview(p, r, col, e)).clicked() {
+                        app.ed.update_many(&target.ids, |o| {
+                            if let Kind::Connector(c) = &mut o.kind {
+                                if is_start { c.set_ext_start(e) } else { c.set_ext_end(e) }
                             }
                         });
                     }
@@ -403,6 +414,30 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
             });
         }
     }
+}
+
+/// Tooltip of the button of an extended arrowhead (translated by the button).
+fn head_ext_tip(e: HeadExt) -> &'static str {
+    match e {
+        HeadExt::Diamond => "Diamond (composition)",
+        HeadExt::DiamondOpen => "Hollow diamond (aggregation)",
+        HeadExt::TriangleOpen => "Hollow triangle (inheritance)",
+        HeadExt::CrowFoot => "Crow's foot (many)",
+        HeadExt::CrowFootOne => "One or many",
+        HeadExt::CrowFootZero => "Zero or many",
+        HeadExt::OneOnly => "Exactly one",
+        HeadExt::ZeroOrOne => "Zero or one",
+    }
+}
+
+/// Small drawing of an extended arrowhead at the end of a line, inside a button.
+fn head_preview(p: &egui::Painter, r: egui::Rect, col: egui::Color32, e: HeadExt) {
+    let tip = Pt::new(f64::from(r.right() - 6.0), f64::from(r.center().y));
+    let from = Pt::new(f64::from(r.left() + 5.0), f64::from(r.center().y));
+    let line = [egui::pos2(r.left() + 5.0, r.center().y), egui::pos2(r.right() - 6.0, r.center().y)];
+    p.line_segment(line, egui::Stroke::new(1.5_f32, col));
+    let hollow = theme::current(p.ctx()).ui;
+    crate::render::paint_head(p, &head_glyph(tip, from, 9.0, Arrowhead::None, Some(e)), &|q| egui::pos2(num::f32(q.x), num::f32(q.y)), 1.0, 1.5, col, hollow);
 }
 
 /// Font, size and alignment of the text.

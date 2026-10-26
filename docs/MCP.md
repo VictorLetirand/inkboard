@@ -66,6 +66,12 @@ docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
 
 The server speaks MCP over standard input and output (hence `-i`). The image runs as a non-root user (uid 10001): the mounted folder must be writable by it. It was checked with a real MCP session (`initialize`, `tools/list` returning the 27 tools, then `create_board`, `add_shape` and `describe_board` on a file of the mounted folder, and a path outside `/data` refused). Live mode (editing the board that is open on screen) needs the desktop application and is not available in a container.
 
+### Arrowheads
+
+`add_connector` and `update_object` take `head_start` and `head_end` to choose the head of each end by name (`arrow` still sets both at once; a named head wins for its end). Original heads: `none`, `arrow`, `triangle`, `dot`, `bar`. Added heads, for UML and entity-relationship diagrams: `diamond` (composition), `diamond_open` (aggregation), `triangle_open` (inheritance, realization), `crow_foot` (many), `crow_foot_one` (one or many), `crow_foot_zero` (zero or many), `one_only` (exactly one), `zero_or_one`. `describe_board` with `detail: "full"` reports them in `heads`.
+
+The added heads are stored in separate optional fields of the connector (`head_start_ext`, `head_end_ext`), next to the original `head_start` / `head_end`, which keep the closest original head (a diamond is a `dot`, a hollow triangle a `triangle`, a crow's foot an `arrow`, `one_only` a `bar`). A version that does not know the added heads ignores the new fields and draws that head, so a board that uses them still opens, and a board that does not is written exactly as before. In a live session, a guest on an older version who edits such a connector sends it back without the added heads, which then show their original head for everybody. draw.io and Excalidraw files use their own symbols (draw.io: `diamond`, `ERmany`, `ERoneToMany`, `ERzeroToMany`, `ERmandOne`, `ERzeroToOne`, with `endFill=0` for hollow ones).
+
 ## How live mode works
 
 The application opens a local server on `127.0.0.1` (ephemeral port, never exposed to the network) and publishes its port and a random **secret token** in
@@ -92,7 +98,7 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 | `search_icons` | Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI symbols…) by keywords (`query`, English names, case-insensitive, every word must match); optional `group`, `set`, `limit` (default 20, at most 100). Returns `{count, truncated, icons: [{id, name, set, group, mono}]}`. Read-only. |
 | `list_icon_groups` | The groups of the icon library with their sets and icon counts (`{total, groups: [{group, sets: [{set, icons}]}]}`), to know what to search for. Read-only. |
 | `add_icon` | Places an icon (`icon` = an `id` from `search_icons`) as an image object that `add_connector` can attach to. `size` (longest side, default 64, 8 to 2000) or `w`/`h` (ratio kept when only one is given); `stroke` tints monochrome icons; `label` adds a text centered under the icon, grouped with it (`markdown: true` for [rich text](#rich-text)). Returns `{id, x, y, w, h, icon, label_id?, warnings?}`. |
-| `import_mermaid` | Mermaid diagram (flowchart, state, sequence, class, entity-relationship) with automatic layout; optional dedicated page. A `subgraph` becomes a dashed frame with its title; its content is laid out on its own, so frames never overlap, and its `direction` applies when no link joins it to the outside. A link written to a subgraph (`B --> Back`) is attached to that frame. A `;` inside a quoted label (`A["a; b"]`) is kept in the label. A class or an entity becomes a table (name, attributes, methods; or type, name, keys); inheritance and realization end in a triangle, composition and aggregation in a dot (named on the link), and an entity link spells out its cardinalities. Not supported: pie, mindmap, gantt (an explicit error says so). |
+| `import_mermaid` | Mermaid diagram (flowchart, state, sequence, class, entity-relationship) with automatic layout; optional dedicated page. A `subgraph` becomes a dashed frame with its title; its content is laid out on its own, so frames never overlap, and its `direction` applies when no link joins it to the outside. A link written to a subgraph (`B --> Back`) is attached to that frame. A `;` inside a quoted label (`A["a; b"]`) is kept in the label. A class or an entity becomes a table (name, attributes, methods; or type, name, keys); inheritance and realization end in a hollow triangle, composition and aggregation in a diamond, and an entity link ends in crow's foot symbols and spells out its cardinalities. Not supported: pie, mindmap, gantt (an explicit error says so). |
 | `update_object` | Modify text ([rich text](#rich-text) optional), position, size, colors, [line style, font, lock, rotation](#update_object), a connector's route / arrowheads / ends, or one table cell. |
 | `delete_object` | Deletes one object (`id`) or several (`ids`). |
 | `move_objects` | Moves objects together (relative or to a position); bound connectors follow. |
@@ -162,7 +168,7 @@ A tool result is a JSON value, carried as is by the live protocol (one JSON line
 | `group` | Group id, when the object is grouped. |
 | `locked` | `true`, only when the object is locked. |
 | `rotation` | Degrees, only for a rotated shape or image. |
-| connectors | `route` (`straight`, `elbow`, `curve`), `arrow` (`end`, `start`, `both`, `none`), `stroke`; `heads` only for arrowheads other than the plain arrow (`triangle`, `dot`, `bar`). |
+| connectors | `route` (`straight`, `elbow`, `curve`), `arrow` (`end`, `start`, `both`, `none`), `stroke`; `heads` only for arrowheads other than the plain arrow (`triangle`, `dot`, `bar` and the [added heads](#arrowheads)). |
 | tables | `cells`: the plain text of each cell, row by row. |
 
 `selection` is unchanged.
@@ -198,6 +204,7 @@ The existing parameters (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stroke
 | `rotation` | -360 to 360, **absolute** angle in degrees (0 resets), around the center | shapes, images |
 | `route` | `straight`, `elbow`, `curve` | connectors |
 | `arrow` | `end`, `start`, `both`, `none` | connectors |
+| `head_start`, `head_end` | an [arrowhead](#arrowheads) name; replaces what `arrow` gave that end | connectors |
 | `from`, `to` | id of a shape, table or image: reconnects that end (same rules as `add_connector`) | connectors |
 | `cell` + `text` | `[row, column]` from 0: the new text of that table cell (`markdown` works as everywhere); the column widens if needed | tables |
 

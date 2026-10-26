@@ -8,8 +8,8 @@ use inkboard_core::geom::Rect;
 use inkboard_core::num;
 use inkboard_core::text::{Measurer, layout_rich};
 use inkboard_core::{
-    Align, Arrowhead, Asset, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, Id, ImageObj, Kind, Label, Object, Page,
-    PenObj, Pt, RichText, Route, Style, Table,
+    Align, Arrowhead, Asset, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, HeadExt, Id, ImageObj, Kind, Label, Object,
+    Page, PenObj, Pt, RichText, Route, Style, Table,
 };
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -40,7 +40,20 @@ fn xfont_back(n: i64) -> FontFamily {
     }
 }
 
-fn xhead(h: Arrowhead) -> Value {
+fn xhead(h: Arrowhead, ext: Option<HeadExt>) -> Value {
+    match (ext, h) {
+        (Some(HeadExt::Diamond), _) => json!("diamond"),
+        (Some(HeadExt::DiamondOpen), _) => json!("diamond_outline"),
+        (Some(HeadExt::TriangleOpen), _) => json!("triangle_outline"),
+        (Some(HeadExt::CrowFoot | HeadExt::CrowFootZero), _) => json!("crowfoot_many"),
+        (Some(HeadExt::CrowFootOne), _) => json!("crowfoot_one_or_many"),
+        (Some(HeadExt::OneOnly), _) => json!("crowfoot_one"),
+        (Some(HeadExt::ZeroOrOne), _) => json!("circle_outline"),
+        (None, h) => xhead_original(h),
+    }
+}
+
+fn xhead_original(h: Arrowhead) -> Value {
     match h {
         Arrowhead::None => Value::Null,
         Arrowhead::Arrow => json!("arrow"),
@@ -50,13 +63,29 @@ fn xhead(h: Arrowhead) -> Value {
     }
 }
 
-fn head_back(v: Option<&Value>) -> Arrowhead {
-    match v.and_then(Value::as_str) {
+/// An arrowhead read back: an original one, or an extended one (set on the connector by `set`) when Excalidraw has the symbol.
+fn head_back(v: Option<&Value>, c: &mut Connector, at_end: bool) {
+    let ext = match v.and_then(Value::as_str) {
+        Some("diamond") => Some(HeadExt::Diamond),
+        Some("diamond_outline") => Some(HeadExt::DiamondOpen),
+        Some("triangle_outline") => Some(HeadExt::TriangleOpen),
+        Some("crowfoot_many") => Some(HeadExt::CrowFoot),
+        Some("crowfoot_one_or_many") => Some(HeadExt::CrowFootOne),
+        Some("crowfoot_one") => Some(HeadExt::OneOnly),
+        _ => None,
+    };
+    let original = match v.and_then(Value::as_str) {
         None => Arrowhead::None,
         Some("arrow") => Arrowhead::Arrow,
         Some("dot" | "circle" | "circle_outline") => Arrowhead::Dot,
         Some("bar") => Arrowhead::Bar,
         Some(_) => Arrowhead::Triangle,
+    };
+    match (ext, at_end) {
+        (Some(e), true) => c.set_ext_end(e),
+        (Some(e), false) => c.set_ext_start(e),
+        (None, true) => c.set_head_end(original),
+        (None, false) => c.set_head_start(original),
     }
 }
 
@@ -288,12 +317,12 @@ impl Exporter<'_> {
         let Some(path) = self.page.connector_path(c) else { return };
         let (x0, y0) = (path[0].x, path[0].y);
         let bb = Rect::from_points(path.iter().copied()).unwrap_or_default();
-        let arrow = c.head_start != Arrowhead::None || c.head_end != Arrowhead::None || c.start.target().is_some() || c.end.target().is_some();
+        let arrow = c.has_head_start() || c.has_head_end() || c.start.target().is_some() || c.end.target().is_some();
         let mut e = self.base(o, if arrow { "arrow" } else { "line" }, Rect::new(x0, y0, bb.w, bb.h), 0.0);
         e.insert("points".into(), json!(path.iter().map(|q| [q.x - x0, q.y - y0]).collect::<Vec<_>>()));
         e.insert("lastCommittedPoint".into(), Value::Null);
-        e.insert("startArrowhead".into(), xhead(c.head_start));
-        e.insert("endArrowhead".into(), xhead(c.head_end));
+        e.insert("startArrowhead".into(), xhead(c.head_start, c.head_start_ext));
+        e.insert("endArrowhead".into(), xhead(c.head_end, c.head_end_ext));
         e.insert("elbowed".into(), json!(c.route == Route::Elbow));
         if c.route != Route::Straight {
             e.insert("roundness".into(), json!({"type": 2}));
@@ -469,8 +498,12 @@ impl Scene<'_> {
         c.via = pts[1..pts.len() - 1].to_vec();
         c.head_end = Arrowhead::None;
         if ty == "arrow" {
-            c.head_end = if e.get("endArrowhead").is_none() { Arrowhead::Arrow } else { head_back(e.get("endArrowhead")) };
-            c.head_start = head_back(e.get("startArrowhead"));
+            if e.get("endArrowhead").is_none() {
+                c.set_head_end(Arrowhead::Arrow);
+            } else {
+                head_back(e.get("endArrowhead"), &mut c, true);
+            }
+            head_back(e.get("startArrowhead"), &mut c, false);
         }
         let elbowed = e.get("elbowed").and_then(Value::as_bool).unwrap_or(false);
         c.route = if elbowed {
@@ -765,5 +798,33 @@ mod tests {
         let first = pens[0].pressures.as_ref().expect("pressure kept");
         assert!((first[1] - 0.9).abs() < 1e-6);
         assert!(pens[1].pressures.is_none());
+    }
+
+    #[test]
+    fn extended_heads_use_excalidraw_arrowheads_and_come_back() {
+        use inkboard_core::HeadExt;
+        let mut d = inkboard_core::Document::new("heads");
+        let boxes: Vec<Object> =
+            (0..2).map(|i| Object::new_box(BoxGeom::Rect, Frame::new(f64::from(i) * 300.0, 0.0, 80.0, 40.0), Style::default(), Label::default())).collect();
+        let ids: Vec<inkboard_core::Id> = boxes.iter().map(|b| b.id.clone()).collect();
+        d.pages[0].objects.extend(boxes);
+        for ext in [HeadExt::Diamond, HeadExt::DiamondOpen, HeadExt::TriangleOpen, HeadExt::CrowFoot, HeadExt::CrowFootOne, HeadExt::OneOnly] {
+            let mut c = Connector::new(End::bound(ids[0].clone()), End::bound(ids[1].clone()));
+            c.set_ext_end(ext);
+            d.pages[0].objects.push(Object::new(Kind::Connector(c), Style::default()));
+        }
+        let json = export(&d, &d.pages[0], &ApproxMeasurer);
+        for name in ["diamond", "diamond_outline", "triangle_outline", "crowfoot_many", "crowfoot_one_or_many", "crowfoot_one"] {
+            assert!(json.contains(&format!("\"endArrowhead\": \"{name}\"")) || json.contains(&format!("\"endArrowhead\":\"{name}\"")), "{name}");
+        }
+        let r = import(&json, "x", &ApproxMeasurer).unwrap();
+        let back: Vec<Option<HeadExt>> =
+            r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.head_end_ext) } else { None }).collect();
+        assert_eq!(back, [HeadExt::Diamond, HeadExt::DiamondOpen, HeadExt::TriangleOpen, HeadExt::CrowFoot, HeadExt::CrowFootOne, HeadExt::OneOnly].map(Some));
+        // the other half of the family has no Excalidraw symbol: it is exported as the closest one, and read back as that
+        let mut c = Connector::new(End::bound(ids[0].clone()), End::bound(ids[1].clone()));
+        c.set_ext_end(HeadExt::CrowFootZero);
+        d.pages[0].objects.push(Object::new(Kind::Connector(c), Style::default()));
+        assert!(export(&d, &d.pages[0], &ApproxMeasurer).contains("crowfoot_many"));
     }
 }

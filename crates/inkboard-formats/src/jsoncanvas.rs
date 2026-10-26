@@ -98,7 +98,7 @@ pub fn export(page: &Page) -> (String, usize) {
                     continue;
                 }
                 let mut e = json!({"id": o.id.as_str(), "fromNode": oa.id.as_str(), "toNode": oz.id.as_str(), "fromSide": side_of(&fa, a), "toSide": side_of(&fz, z),
-                    "fromEnd": if c.head_start == Arrowhead::None { "none" } else { "arrow" }, "toEnd": if c.head_end == Arrowhead::None { "none" } else { "arrow" }});
+                    "fromEnd": if c.has_head_start() { "arrow" } else { "none" }, "toEnd": if c.has_head_end() { "arrow" } else { "none" }});
                 if let Some(l) = c.label.as_ref().filter(|l| !l.text.is_empty()) {
                     e["label"] = json!(l.text.to_plain());
                 }
