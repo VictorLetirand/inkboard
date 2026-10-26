@@ -352,6 +352,13 @@ fn build(diagram: &Diagram, measurer: &dyn Measurer) -> Result<Vec<Object>, Form
             conn.label = Some(Label::new(&link.label, 14.0, Align::Center));
         }
         (conn.via, conn.route) = waypoints(index, (from, to), &lay, &rects, &mut seen, &counts);
+        if from != to && conn.route == Route::Straight {
+            // the straight lines of the layout must not cross a table that is not one of the two it links
+            let obstacles: Vec<Rect> = rects.iter().enumerate().filter(|(other, _)| *other != from && *other != to).map(|(_, rect)| *rect).collect();
+            let path: Vec<Pt> = std::iter::once(rects[from].center()).chain(conn.via.iter().copied()).chain(std::iter::once(rects[to].center())).collect();
+            let routed = inkboard_core::route::detour(&path, &obstacles, 14.0);
+            conn.via = routed[1..routed.len() - 1].to_vec();
+        }
         let style = Style { width: 2.5, dash: if link.dashed { Dash::Dashed } else { Dash::Solid }, ..Style::default() };
         out.push(Object::new(Kind::Connector(conn), style));
     }
@@ -492,6 +499,45 @@ mod tests {
         assert_eq!(optional.label.as_ref().unwrap().text.to_plain(), "is in\n0..1 \u{2014} 0..1");
         let styles: Vec<Dash> = o.iter().filter(|x| matches!(x.kind, Kind::Connector(_))).map(|x| x.style.dash).collect();
         assert_eq!(styles.iter().filter(|d| **d == Dash::Dashed).count(), 1, "a non-identifying relationship is dashed");
+    }
+
+    /// Links whose lines (through their waypoints) cross a table they do not link.
+    fn lines_through_tables(o: &[Object]) -> usize {
+        let rects: Vec<(&inkboard_core::Id, Rect)> = tables(o).into_iter().map(|(x, t)| (&x.id, t.rect())).collect();
+        let rect_of = |id: &inkboard_core::Id| rects.iter().find(|r| r.0 == id).map(|r| r.1);
+        conns(o)
+            .into_iter()
+            .filter(|c| {
+                let (Some(a), Some(b)) = (c.start.target().and_then(rect_of), c.end.target().and_then(rect_of)) else { return false };
+                let path: Vec<Pt> = std::iter::once(a.center()).chain(c.via.iter().copied()).chain(std::iter::once(b.center())).collect();
+                let others: Vec<Rect> = rects
+                    .iter()
+                    .filter(|r| Some(r.0) != c.start.target() && Some(r.0) != c.end.target())
+                    .map(|r| Rect::new(r.1.x + 2.0, r.1.y + 2.0, r.1.w - 4.0, r.1.h - 4.0))
+                    .collect();
+                inkboard_core::route::crosses(&path, &others)
+            })
+            .count()
+    }
+
+    #[test]
+    fn links_do_not_cross_the_tables_they_do_not_link() {
+        let dense = "classDiagram
+ A --> B
+ A --> C
+ A --> D
+ A --> E
+ B --> E
+ B --> F
+ C --> F
+ D --> F
+ E --> A
+ F --> A
+ C --> D
+ D --> B";
+        for src in [CLASSES, ER, dense] {
+            assert_eq!(lines_through_tables(&objs(src)), 0, "{src}");
+        }
     }
 
     #[test]
