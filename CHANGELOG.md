@@ -10,7 +10,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 - **Paste from a spreadsheet:** a range copied from Excel, LibreOffice or Google Sheets (tab-separated text, quoted cells included) becomes a table, sized to its content, in one undo step. Up to 200 rows × 50 columns (a message says when the paste was cut). Tab-indented text such as code is still pasted as text.
 - **Recolor an SVG image:** the style panel shows one swatch per color found in an imported SVG (multicolor logos included); each one can be replaced, all can be set to one color, and *Original colors* undoes it. The SVG / PNG / PDF, draw.io and Excalidraw exports use the new colors. MCP: `update_object` takes `recolor`.
 - **Arrowhead size:** S / M / L / XL in the style panel, for every kind of head; draw.io `startSize` / `endSize`. MCP: `head_scale` on `add_connector` and `update_object`.
-- **Drop shadow** on shapes, images, tables and connectors: a button in the style panel, in the SVG / PNG / PDF exports and draw.io (`shadow=1`). MCP: `shadow`.
+- **Drop shadow** on shapes, images, tables and connectors: a button in the style panel, in the SVG / PNG exports and draw.io (`shadow=1`). MCP: `shadow`. Not yet in the PDF export, whose converter ignores SVG filters.
 
 ### Changed
 

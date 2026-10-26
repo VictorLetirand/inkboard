@@ -61,8 +61,9 @@ fn parse_color(v: &str) -> Option<Rgb> {
         }
         let d = |i: usize, n: usize| u8::from_str_radix(&h[i..i + n], 16).ok();
         return match h.len() {
-            3 => Some((d(0, 1)? * 17, d(1, 1)? * 17, d(2, 1)? * 17)),
-            6 => Some((d(0, 2)?, d(2, 2)?, d(4, 2)?)),
+            // `#rgba` and `#rrggbbaa`: the alpha is kept by `apply_recolor`
+            3 | 4 => Some((d(0, 1)? * 17, d(1, 1)? * 17, d(2, 1)? * 17)).filter(|_| h.len() == 3 || d(3, 1).is_some()),
+            6 | 8 => Some((d(0, 2)?, d(2, 2)?, d(4, 2)?)).filter(|_| h.len() == 6 || d(6, 2).is_some()),
             _ => None,
         };
     }
@@ -161,6 +162,15 @@ fn hex((r, g, b): Rgb) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
+/// Alpha digits of an `#rgba` / `#rrggbbaa` value, as two digits (empty for any other value).
+fn alpha(v: &str) -> String {
+    match v.strip_prefix('#').filter(|h| h.is_ascii()) {
+        Some(h) if h.len() == 4 => h[3..].repeat(2),
+        Some(h) if h.len() == 8 => h[6..].to_owned(),
+        _ => String::new(),
+    }
+}
+
 /// Replaces colors in one pass: each occurrence is looked up in `map` (original, new) once, so `A -> B` and `B -> C`
 /// never chain. An empty map, or one matching nothing, returns the bytes unchanged.
 #[must_use]
@@ -177,6 +187,7 @@ pub fn apply_recolor(data: &[u8], map: &[(Rgb, Rgb)]) -> Vec<u8> {
         if let Some(to) = find(h.rgb) {
             out.push_str(&text[at..h.start]);
             out.push_str(&hex(to));
+            out.push_str(&alpha(&text[h.start..h.end]));
             at = h.end;
         }
     }
@@ -216,6 +227,15 @@ mod tests {
         let map = [((255, 0, 0), (0, 255, 0)), ((0, 255, 0), (0, 0, 255))];
         let out = String::from_utf8(apply_recolor(svg, &map)).unwrap();
         assert_eq!(out, r##"<svg><path fill="#00ff00" stroke="#0000ff"/><path fill="#0000ff" style="stroke:#00ff00"/></svg>"##);
+    }
+
+    #[test]
+    fn colors_with_alpha_are_found_and_keep_their_alpha() {
+        let svg = br##"<svg><path fill="#FF000080"/><path style="stroke:#0f0c"/><path fill="#ff00008"/></svg>"##;
+        assert_eq!(svg_colors(svg), vec![(255, 0, 0), (0, 255, 0)]);
+        let map = [((255, 0, 0), (0, 0, 255)), ((0, 255, 0), (1, 2, 3))];
+        let out = String::from_utf8(apply_recolor(svg, &map)).unwrap();
+        assert_eq!(out, r##"<svg><path fill="#0000ff80"/><path style="stroke:#010203cc"/><path fill="#ff00008"/></svg>"##);
     }
 
     #[test]
