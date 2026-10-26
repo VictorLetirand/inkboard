@@ -12,7 +12,7 @@ use inkboard_core::svg::{SvgOptions, export as export_svg};
 use inkboard_core::text::Measurer;
 use inkboard_core::{
     Align, Anchor, Arrowhead, Asset, AssetId, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, HeadExt, Id, ImageObj, Kind,
-    Label, Object, Page, Pattern, Pt, Rect, RichText, Route, Span, SpanStyle, Style,
+    Label, Object, Page, Pattern, Pt, Rect, RichText, Route, Span, SpanStyle, Style, num,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
@@ -65,6 +65,9 @@ fn dash_style(d: Dash) -> &'static str {
         Dash::Dotted => "dashed=1;dashPattern=1 4;",
     }
 }
+
+/// Size of an arrowhead in draw.io when `startSize` / `endSize` are absent.
+const DEFAULT_ARROW_SIZE: f64 = 6.0;
 
 /// draw.io name of an arrowhead and whether it is filled (`endFill` / `startFill`).
 fn arrow_name(h: Arrowhead, ext: Option<HeadExt>) -> (&'static str, u8) {
@@ -167,6 +170,10 @@ fn connector_cell(page: &Page, c: &Connector, st: &Style, id: &str, (ox, oy): (f
         dash_style(st.dash),
         opacity_style(st)
     );
+    if c.has_custom_head_scale() {
+        let size = (f64::from(c.head_scale) * DEFAULT_ARROW_SIZE).round();
+        let _ = write!(style, "startSize={size};endSize={size};");
+    }
     let mut attrs = String::new();
     let mut geom = String::from("<mxGeometry relative=\"1\" as=\"geometry\">");
     for (e, tag, name) in [(&c.start, "source", "sourcePoint"), (&c.end, "target", "targetPoint")] {
@@ -853,6 +860,10 @@ impl Builder<'_> {
         let mut conn = Connector::new(start, finish);
         head(&mut conn, true, "endArrow", "endFill", "classic");
         head(&mut conn, false, "startArrow", "startFill", "none");
+        // draw.io sizes each head on its own; one factor is kept for both (the end one first)
+        if let Some(size) = ["endSize", "startSize"].iter().find_map(|k| s.get(*k).and_then(|v| v.parse::<f64>().ok())).filter(|v| v.is_finite() && *v > 0.0) {
+            conn.set_head_scale(num::f32(size / DEFAULT_ARROW_SIZE));
+        }
         conn.via = g.points.iter().map(|p| *p + *origin).collect();
         let es = s.get("edgeStyle").map_or("", String::as_str);
         conn.route = if es.contains("orthogonal") || es.contains("elbow") {
@@ -1179,6 +1190,29 @@ mod tests {
             .filter_map(|o| if let Kind::Connector(c) = &o.kind { Some((c.head_start_ext, c.head_end_ext)) } else { None })
             .collect();
         assert_eq!(back, heads.iter().map(|h| (Some(*h), Some(*h))).collect::<Vec<_>>(), "every head is read back as it was written");
+    }
+
+    #[test]
+    fn arrowhead_size_goes_through_start_size_and_end_size_and_the_default_writes_nothing() {
+        let mut d = Document::default();
+        let mut big = Connector::straight(Pt::new(0.0, 0.0), Pt::new(200.0, 0.0));
+        big.set_head_scale(2.0);
+        let plain = Connector::straight(Pt::new(0.0, 50.0), Pt::new(200.0, 50.0));
+        d.pages[0].objects = vec![Object::new(Kind::Connector(big), Style::default()), Object::new(Kind::Connector(plain), Style::default())];
+        let xml = export(&d, &ApproxMeasurer);
+        assert_eq!(xml.matches("endSize=12;").count(), 1, "twice the draw.io default of 6, for the changed connector only");
+        assert_eq!(xml.matches("startSize=12;").count(), 1);
+        let r = import(&xml, "x", &ApproxMeasurer).unwrap();
+        let scales: Vec<f32> = r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.head_scale) } else { None }).collect();
+        assert_eq!(scales, [2.0, 1.0]);
+        // a foreign size is converted from the default of 6 and kept within the allowed range
+        let src = r##"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+ <mxCell id="e1" style="endArrow=block;endSize=3;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="sourcePoint"/><mxPoint x="90" y="0" as="targetPoint"/></mxGeometry></mxCell>
+ <mxCell id="e2" style="endArrow=block;endSize=300;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="9" as="sourcePoint"/><mxPoint x="90" y="9" as="targetPoint"/></mxGeometry></mxCell>
+ </root></mxGraphModel></diagram></mxfile>"##;
+        let r = import(src, "x", &ApproxMeasurer).unwrap();
+        let scales: Vec<f32> = r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.head_scale) } else { None }).collect();
+        assert_eq!(scales, [0.5, 4.0]);
     }
 
     #[test]

@@ -7,7 +7,7 @@ use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, su
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::num;
 use inkboard_core::{
-    Align, ApproxMeasurer, Arrowhead, Color, Dash, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route,
+    Align, ApproxMeasurer, Arrowhead, Color, Connector, Dash, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -131,6 +131,12 @@ pub(super) fn num_arg(a: &Value, k: &str, min: f64, max: f64) -> Res<Option<f64>
     }
 }
 
+/// The `head_scale` parameter: the size factor of the arrowheads, within the range the connector accepts.
+pub(super) fn head_scale_arg(a: &Value) -> Res<Option<f32>> {
+    let range = Connector::HEAD_SCALE_RANGE;
+    Ok(num_arg(a, "head_scale", f64::from(*range.start()), f64::from(*range.end()))?.map(num::f32))
+}
+
 fn enum_arg<T: Copy>(a: &Value, k: &str, table: &[(&str, T)]) -> Res<Option<T>> {
     let Some(v) = a.get(k).filter(|v| !v.is_null()) else { return Ok(None) };
     let name = v.as_str().ok_or_else(|| format!("\"{k}\" must be a string (one of: {})", names(table)))?;
@@ -229,6 +235,9 @@ pub(super) fn full(z: usize, o: &Object) -> Value {
             let plain = |h: Arrowhead, ext: Option<HeadExt>| ext.is_none() && [Arrowhead::None, Arrowhead::Arrow].contains(&h);
             if !plain(c.head_start, c.head_start_ext) || !plain(c.head_end, c.head_end_ext) {
                 map.insert("heads".into(), json!({"start": head(c.head_start, c.head_start_ext), "end": head(c.head_end, c.head_end_ext)}));
+            }
+            if c.has_custom_head_scale() {
+                map.insert("head_scale".into(), json!(r3(f64::from(c.head_scale))));
             }
             map.insert("stroke".into(), json!(st.stroke.to_hex()));
         }
@@ -333,6 +342,7 @@ pub(super) struct Patch {
     arrow: Option<(Arrowhead, Arrowhead)>,
     head_start: Option<HeadKind>,
     head_end: Option<HeadKind>,
+    head_scale: Option<f32>,
     from: Option<Id>,
     to: Option<Id>,
     cell: Option<Cell>,
@@ -361,6 +371,7 @@ impl Patch {
             arrow: enum_arg(a, "arrow", &ARROWS)?,
             head_start: head_arg(a, "head_start")?,
             head_end: head_arg(a, "head_end")?,
+            head_scale: head_scale_arg(a)?,
             from: attachable("from")?,
             to: attachable("to")?,
             cell: None,
@@ -443,6 +454,7 @@ impl Patch {
             ("arrow", self.arrow.is_some()),
             ("head_start", self.head_start.is_some()),
             ("head_end", self.head_end.is_some()),
+            ("head_scale", self.head_scale.is_some()),
             ("from", self.from.is_some()),
             ("to", self.to.is_some()),
         ];
@@ -490,6 +502,9 @@ impl Patch {
                     c.route = r;
                 }
                 self.apply_heads(c);
+                if let Some(v) = self.head_scale {
+                    c.set_head_scale(v);
+                }
                 if let Some(id) = &self.from {
                     c.start = inkboard_core::End::bound(id.clone());
                 }

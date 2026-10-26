@@ -35,6 +35,11 @@ pub const FR: &[(&str, &str)] = &[
     ("Zero or one", "Zéro ou un"),
     ("Arrowhead at the end", "Pointe à la fin"),
     ("Arrowhead at the start", "Pointe au début"),
+    ("Arrowhead size", "Taille des pointes"),
+    ("Small arrowheads", "Petites pointes"),
+    ("Medium arrowheads", "Pointes moyennes"),
+    ("Large arrowheads", "Grandes pointes"),
+    ("Extra large arrowheads", "Très grandes pointes"),
     (
         "Ask your IT department to allow WebSocket connections to {} (port 443).",
         "Demandez au service informatique d'autoriser les connexions WebSocket vers {} (port 443).",

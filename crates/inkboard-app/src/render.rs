@@ -671,7 +671,7 @@ impl Renderer<'_> {
         let color = col(st.stroke, self.dark, op);
         let pts: Vec<Pos2> = path.iter().map(|p| self.cam.s(*p)).collect();
         self.stroke_path(&pts, false, st.width, color, st.dash, true);
-        let size = (st.width * 4.5).max(12.0);
+        let size = c.head_size(st.width);
         let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
         for (head, ext, tip, from) in heads {
             paint_head(self.painter, &head_glyph(tip, from, size, head, ext), &|p| self.cam.s(p), self.cam.zoom, num::f32(st.width), color, self.bg);

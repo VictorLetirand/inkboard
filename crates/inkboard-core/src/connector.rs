@@ -208,9 +208,41 @@ pub struct Connector {
     pub head_end_ext: Option<HeadExt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<Label>,
+    /// Size factor of both heads (1.0 = the usual size), kept within [`Connector::HEAD_SCALE_RANGE`] by [`Connector::set_head_scale`].
+    #[serde(default = "default_head_scale", skip_serializing_if = "is_default_head_scale")]
+    pub head_scale: f32,
+}
+
+fn default_head_scale() -> f32 {
+    1.0
+}
+
+// Exact comparison on purpose: only the untouched default is left out of the file.
+#[allow(clippy::float_cmp, clippy::trivially_copy_pass_by_ref, reason = "the signature serde asks of `skip_serializing_if`")]
+fn is_default_head_scale(s: &f32) -> bool {
+    *s == 1.0
 }
 
 impl Connector {
+    /// Allowed range of the head size factor.
+    pub const HEAD_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
+    /// Sets the head size factor; a value out of range is brought back into it, a non-finite one is ignored.
+    pub fn set_head_scale(&mut self, scale: f32) {
+        if scale.is_finite() {
+            self.head_scale = scale.clamp(*Self::HEAD_SCALE_RANGE.start(), *Self::HEAD_SCALE_RANGE.end());
+        }
+    }
+    /// Whether the heads have a size other than the usual one.
+    #[must_use]
+    pub fn has_custom_head_scale(&self) -> bool {
+        !is_default_head_scale(&self.head_scale)
+    }
+    /// Size of the heads for a stroke of the given width.
+    #[must_use]
+    pub fn head_size(&self, width: f64) -> f64 {
+        let scale = if self.head_scale.is_finite() { self.head_scale } else { 1.0 };
+        (width * 4.5).max(12.0) * f64::from(scale.clamp(*Self::HEAD_SCALE_RANGE.start(), *Self::HEAD_SCALE_RANGE.end()))
+    }
     #[must_use]
     pub fn new(start: End, end: End) -> Self {
         Self {
@@ -223,6 +255,7 @@ impl Connector {
             head_start_ext: None,
             head_end_ext: None,
             label: None,
+            head_scale: 1.0,
         }
     }
     /// Sets an original head at the start (an extended head set before is dropped).

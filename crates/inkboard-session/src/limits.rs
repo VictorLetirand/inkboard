@@ -271,7 +271,11 @@ pub fn check_object(l: &Limits, o: &Object) -> Result<(), Violation> {
             }
             check_len("font size", t.size, l.max_font_size, false)?;
         }
-        Kind::Connector(_) => {}
+        Kind::Connector(c) => {
+            if !c.head_scale.is_finite() || !inkboard_core::Connector::HEAD_SCALE_RANGE.contains(&c.head_scale) {
+                return Err(Violation::OutOfBounds { field: "arrowhead size", max: 4 });
+            }
+        }
     }
     let v = serde_json::to_value(o).map_err(|_| Violation::Malformed("object cannot be serialized"))?;
     walk(l, &v, "", 0, &mut 0)?;

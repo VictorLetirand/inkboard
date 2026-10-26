@@ -38,6 +38,11 @@ fn head_prop(end: &str) -> Value {
         "description": format!("Arrowhead at the {end} of the connector, which takes precedence over `arrow` for that end. Original heads: none, arrow, triangle, dot, bar. Added heads, shown by older versions as the closest original one: diamond (UML composition), diamond_open (aggregation), triangle_open (inheritance), crow_foot (many), crow_foot_one (one or many), crow_foot_zero (zero or many), one_only (exactly one), zero_or_one.")})
 }
 
+/// Schema of `head_scale`: the size factor of the arrowheads.
+fn head_scale_prop() -> Value {
+    json!({"type": "number", "minimum": 0.5, "maximum": 4, "description": "Connector arrowhead size factor (1 = usual size, 0.5 to 4); applies to both ends."})
+}
+
 fn page_prop() -> Value {
     json!({"description": "Page: number (from 1) or name. Defaults to the first.", "oneOf": [{"type": "integer"}, {"type": "string"}]})
 }
@@ -77,6 +82,7 @@ pub fn list() -> Vec<Value> {
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"]},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Arrowheads (default: end)."},
                 "head_start": head_prop("start"), "head_end": head_prop("end"),
+                "head_scale": head_scale_prop(),
                 "label": {"type": "string"}, "markdown": richtext::markdown_prop("`label`"), "stroke": color.clone()}), &["from", "to"])}),
         json!({"name": "add_table", "description": "Adds a table of cells; `rows` is a list of rows (lists of texts). The first row is the header.",
             "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
@@ -102,6 +108,7 @@ pub fn list() -> Vec<Value> {
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"], "description": "Connector only."},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Connector only: arrowheads."},
                 "head_start": head_prop("start"), "head_end": head_prop("end"),
+                "head_scale": head_scale_prop(),
                 "from": {"type": "string", "description": "Connector only: id of the object to connect the start to (shape, table or image)."},
                 "to": {"type": "string", "description": "Connector only: id of the object to connect the end to."},
                 "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."}}), &["id"])}),
@@ -808,6 +815,9 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
     }
     if let Some(h) = edit::head_arg(a, "head_end")? {
         h.apply(&mut c, true);
+    }
+    if let Some(v) = edit::head_scale_arg(a)? {
+        c.set_head_scale(v);
     }
     let markdown = richtext::markdown_flag(a)?;
     let mut warnings = Vec::new();

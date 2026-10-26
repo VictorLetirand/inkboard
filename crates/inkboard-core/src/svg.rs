@@ -237,7 +237,7 @@ impl Ctx<'_> {
         let op = if st.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(st.opacity))) } else { String::new() };
         let d: Vec<String> = path.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
         let mut out = format!(r#"<path d="{}" fill="none" {}/>"#, d.join(""), self.stroke(st, false));
-        let size = (st.width * 4.5).max(12.0);
+        let size = c.head_size(st.width);
         let col = self.col(st.stroke);
         let background = if self.dark { "#262b38" } else { "#ffffff" };
         let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
@@ -501,6 +501,22 @@ mod tests {
         let mut d = doc_with(vec![a]);
         d.pages[0].layers[0].visible = false;
         assert!(export_approx(&d, &d.pages[0]).is_none());
+    }
+
+    #[test]
+    fn a_larger_head_scale_draws_a_larger_arrowhead_in_the_export() {
+        let head_width = |scale: f32| {
+            let mut c = Connector::straight(Pt::new(0.0, 0.0), Pt::new(300.0, 0.0));
+            c.set_head_end(Arrowhead::Triangle);
+            c.set_head_scale(scale);
+            let d = doc_with(vec![Object::new(Kind::Connector(c), Style::default())]);
+            let svg = export_approx(&d, &d.pages[0]).unwrap();
+            let pts = svg.split("<polygon points=\"").nth(1).and_then(|s| s.split('"').next()).expect("a head polygon").to_owned();
+            let xs: Vec<f64> = pts.split(' ').filter_map(|p| p.split(',').next()?.parse().ok()).collect();
+            xs.iter().copied().fold(f64::MIN, f64::max) - xs.iter().copied().fold(f64::MAX, f64::min)
+        };
+        let (normal, big) = (head_width(1.0), head_width(3.0));
+        assert!((big / normal - 3.0).abs() < 0.05, "{normal} {big}");
     }
 
     #[test]

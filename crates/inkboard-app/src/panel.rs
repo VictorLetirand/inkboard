@@ -413,8 +413,30 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
                 }
             });
         }
+        row(ui, "Arrowhead size", |ui| {
+            for (scale, name, tip) in HEAD_SIZES {
+                if theme::seg_button(ui, (c.head_scale - scale).abs() < 0.05, tip, |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(13.0)))
+                    .clicked()
+                {
+                    set_head_scale(app, &target.ids, scale);
+                }
+            }
+        });
     }
 }
+
+/// Sets the arrowhead size of the connectors among `ids`, as one undo step.
+pub(crate) fn set_head_scale(app: &mut App, ids: &[Id], scale: f32) {
+    app.ed.update_many(ids, |o| {
+        if let Kind::Connector(c) = &mut o.kind {
+            c.set_head_scale(scale);
+        }
+    });
+}
+
+/// Steps of the arrowhead size: size factor, label and tooltip.
+pub(crate) const HEAD_SIZES: [(f32, &str, &str); 4] =
+    [(0.6, "S", "Small arrowheads"), (1.0, "M", "Medium arrowheads"), (1.6, "L", "Large arrowheads"), (2.4, "XL", "Extra large arrowheads")];
 
 /// Tooltip of the button of an extended arrowhead (translated by the button).
 fn head_ext_tip(e: HeadExt) -> &'static str {

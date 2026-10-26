@@ -669,6 +669,39 @@ fn a_single_click_on_a_tool_does_not_lock_it_and_other_tools_have_no_lock() {
 }
 
 #[test]
+fn the_arrowhead_size_steps_resize_the_selected_connectors_in_one_undo_step() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    let b = t.add_rect(400.0, 100.0, 80.0, 50.0);
+    let id = t.app().ed.insert(Object::new(Kind::Connector(Connector::new(End::bound(a), End::bound(b))), Style::default()));
+    // the panel draws its size row for the selected connector
+    t.app().sel = vec![id.clone()];
+    t.h.step();
+    t.h.step();
+    let scale = |t: &mut T| match &t.app().ed.page().get(&id).expect("connector").kind {
+        Kind::Connector(c) => c.head_scale,
+        _ => panic!("connector"),
+    };
+    assert!((scale(&mut t) - 1.0).abs() < 1e-6);
+    assert!(crate::panel::HEAD_SIZES.iter().any(|s| (s.0 - 1.0).abs() < 1e-6), "the usual size is one of the steps");
+    crate::panel::set_head_scale(t.app(), std::slice::from_ref(&id), 1.6);
+    assert!((scale(&mut t) - 1.6).abs() < 1e-6);
+    crate::panel::set_head_scale(t.app(), std::slice::from_ref(&id), 0.6);
+    assert!((scale(&mut t) - 0.6).abs() < 1e-6);
+    t.h.step();
+    t.app().ed.undo();
+    assert!((scale(&mut t) - 1.6).abs() < 1e-6, "one step per change");
+    t.app().ed.undo();
+    assert!((scale(&mut t) - 1.0).abs() < 1e-6);
+    set_for_thread(Some(Lang::Fr));
+    for en in ["Arrowhead size", "Small arrowheads", "Medium arrowheads", "Large arrowheads", "Extra large arrowheads"] {
+        assert_ne!(crate::i18n::t(en), en, "{en} is not translated");
+    }
+    set_for_thread(None);
+}
+
+#[test]
 fn the_lock_button_toggles_and_the_tool_tips_are_translated() {
     set_for_thread(Some(Lang::En));
     let mut t = T::new();
