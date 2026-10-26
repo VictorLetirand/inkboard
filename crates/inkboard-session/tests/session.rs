@@ -417,3 +417,25 @@ fn fifty_and_a_hundred_guests_converge_under_heavy_faults() {
         println!("{n} guests converged ({total} objects on {} pages) in {:?}", w.host.seqr.doc().pages.len(), started.elapsed());
     }
 }
+
+/// A case that the property above found on a CI run (Windows, 2026-10-26): with 13 % of loss and 15 % of duplication, the snapshot of the join was
+/// lost for one guest, which stayed on the empty document while the harness reported the system as settled: on a document that was never changed
+/// (host `seq` 0) a guest that has received nothing has `last_seq` 0 too, so `last_seq` could not tell. The product was right (the guest asks
+/// again every `resend_after_ms`); the harness now also waits for the snapshot.
+#[test]
+fn regression_a_guest_that_lost_its_join_messages_still_converges() {
+    let cfg = NetConfig { latency_ms: (0, 29), loss_ppm: 133_723, dup_ppm: 147_276, reorder_ppm: 1, reorder_extra_ms: 300 };
+    let mut w = World::new(18_068_962_631_262_724_944, 3, cfg, 1000);
+    w.connect_all();
+    w.rounds(2, 20);
+    let doc = w.guests[0].client.doc().clone();
+    let ops = w.random_edit(&doc, 0, 0, 57);
+    let now = w.net.now();
+    w.guests[0].client.edit(ops, now);
+    w.rounds(0, 25);
+    w.net.set_config(NetConfig::ideal());
+    assert!(w.settle(3000), "the system did not settle: {}", w.describe());
+    for (i, g) in w.guests.iter().enumerate() {
+        assert_eq!(g.client.doc(), w.host.seqr.doc(), "guest {i} differs");
+    }
+}
