@@ -81,6 +81,11 @@ impl App {
         if text == MARKER && !self.clipboard.is_empty() {
             return self.paste();
         }
+        // Excel also puts a picture of the cells in the clipboard: the table wins over it
+        if let Some(grid) = parse_tsv(text) {
+            let at = self.view_center();
+            return self.paste_table(grid, at);
+        }
         if let Some((w, h, rgba)) = (self.system_image)() {
             let at = self.view_center();
             return self.insert_rgba(w, h, &rgba, at);

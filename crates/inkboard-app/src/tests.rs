@@ -2304,6 +2304,14 @@ fn pasted_table(t: &mut T, text: &str) -> inkboard_core::Table {
 }
 
 #[test]
+fn spreadsheet_data_wins_over_the_picture_excel_puts_in_the_clipboard() {
+    let mut t = T::new();
+    t.app().system_image = || Some((4, 2, vec![200; 4 * 2 * 4]));
+    let tb = pasted_table(&mut t, "a\tb\r\nc\td\r\n");
+    assert_eq!((tb.rows(), tb.cols()), (2, 2));
+}
+
+#[test]
 fn pasting_tab_separated_data_creates_a_table() {
     let mut t = T::new();
     let tb = pasted_table(&mut t, "a\tb\tc\r\nd\te\tf\r\n");

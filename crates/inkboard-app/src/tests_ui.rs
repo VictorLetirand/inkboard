@@ -736,6 +736,23 @@ fn the_shadow_toggle_applies_to_the_selection_in_one_undo_step_and_every_kind_is
 }
 
 #[test]
+fn the_connector_path_buttons_are_translated() {
+    set_for_thread(Some(Lang::Fr));
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    let b = t.add_rect(400.0, 100.0, 80.0, 50.0);
+    let c = t.app().ed.insert(Object::new(Kind::Connector(Connector::new(End::bound(a), End::bound(b))), Style::default()));
+    t.app().sel = vec![c];
+    t.h.step();
+    t.h.step();
+    for en in ["Straight", "Elbow", "Curve"] {
+        assert_ne!(crate::i18n::t(en), en, "{en} is not translated");
+        t.h.get_by_label(&crate::i18n::t(en));
+    }
+    set_for_thread(None);
+}
+
+#[test]
 fn the_lock_button_toggles_and_the_tool_tips_are_translated() {
     set_for_thread(Some(Lang::En));
     let mut t = T::new();
