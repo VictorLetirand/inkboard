@@ -5,6 +5,11 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+## [0.2.0-beta.2] - 2026-10-26
+
+**Pre-release.** Follow-up of 0.2.0-beta.1, mostly for what an AI agent draws through the MCP server and for the Mermaid import, after a first
+use on a documentation set of about 400 diagrams. The known limitations of 0.2.0-beta.1 below still apply.
+
 ### Fixed
 
 - **Mermaid import:** a link no longer runs straight through a node it does not link (it used to happen to links between subgraphs and to long links in dense diagrams): its waypoints now go around the nodes in its way. Class and entity-relationship diagrams too.
@@ -16,13 +21,14 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 - **UML and entity-relationship arrowheads:** diamond (filled and hollow), hollow triangle and the crow's foot family (many, one or many, zero or many, exactly one, zero or one), in the arrowhead buttons of the style panel, in the MCP tools (`head_start`, `head_end`), in the SVG / PNG / PDF exports, in draw.io (`diamond`, `ER…`, `endFill`) and Excalidraw (`diamond`, `crowfoot_…`). They are stored in separate optional fields of the connector, next to the original heads, which keep the closest one: an older version ignores the new fields and draws that head, and a board that does not use them is written exactly as before. Class and entity-relationship diagrams imported from Mermaid now use them (the «composition» / «aggregation» names on the links are gone).
 - **Mermaid import:** `classDiagram` and `erDiagram`. A class or an entity becomes a table (name, attributes, methods; or type, name, keys and comment) and links become bound connectors: inheritance and realization end in a hollow triangle, composition and aggregation in a diamond, and an entity link ends in crow's foot symbols and spells out its cardinalities. `direction` is honoured.
+- **MCP server in a container:** a `Dockerfile` (`packaging/docker/mcp.Dockerfile`) builds `inkboard-mcp` in file mode (`--no-live`, confined to a mounted folder), for MCP clients and directories that start servers through Docker. A `glama.json` declares the maintainer of the listing on Glama.
 - **MCP `export`:** creates the missing folders of `output` (under the allowed root, as `render` does), and a `.png` can be given a `width` in pixels or a `scale`, so that diagrams come out at the same width.
 
 ### Changed
 
 - **Automatic layout** (Mermaid import, MCP `import_mermaid`, the *Auto layout* command): large and cyclic graphs are drawn much more compactly. Cycles are broken by reversing fewer edges, a node that only points far down is no longer left on the first rank, the crossing reduction tries three starting orders and swaps neighbours, and the lines of long edges run closer together. On a random graph of 40 modules with cycles, the drawing is about half as high with about half the edge length; on layered dependency graphs, crossings drop by 45 to 50 %. Only the positions computed by the layout change: files and the sharing protocol are untouched, and boards already saved keep their positions until the layout is run again.
 
-## [0.2.0-beta.1] - Unreleased
+## [0.2.0-beta.1] - 2026-10-25
 
 **Pre-release.** The headline feature, live sharing, is new: it is covered by automated tests (including simulated crowds and hostile inputs) and
 has been tried by hand on a few devices and networks, but not widely. See the known limitations below.
@@ -62,4 +68,6 @@ has been tried by hand on a few devices and networks, but not widely. See the kn
   private address (S-06), and a single frame over 1 MiB from the host (S-04, recovered by a snapshot).
 - Linux and macOS builds pass CI but have not been used by hand yet.
 
+[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-beta.2...HEAD
+[0.2.0-beta.2]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.1
