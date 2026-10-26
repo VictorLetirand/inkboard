@@ -350,7 +350,16 @@ fn recolor_section(app: &mut App, ui: &mut Ui, target: &Target, dark: bool) {
         return;
     }
     let Some(asset) = app.ed.doc.assets.get(&img.asset).filter(|a| a.mime == "image/svg+xml") else { return };
-    let found: Vec<Color> = inkboard_core::svgcolor::svg_colors(&asset.data).into_iter().map(|(r, g, b)| Color::Rgb(r, g, b)).collect();
+    // the panel is drawn every frame: scan the file only when the selected asset changes
+    thread_local!(static FOUND: std::cell::RefCell<Option<(inkboard_core::AssetId, Vec<Color>)>> = const { std::cell::RefCell::new(None) });
+    let found = FOUND.with_borrow_mut(|memo| match memo {
+        Some((a, found)) if *a == img.asset => found.clone(),
+        _ => {
+            let found: Vec<Color> = inkboard_core::svgcolor::svg_colors(&asset.data).into_iter().map(|(r, g, b)| Color::Rgb(r, g, b)).collect();
+            *memo = Some((img.asset.clone(), found.clone()));
+            found
+        }
+    });
     if found.is_empty() {
         return;
     }
