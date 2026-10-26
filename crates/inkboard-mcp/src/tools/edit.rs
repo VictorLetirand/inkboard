@@ -477,22 +477,26 @@ impl Patch {
         }
     }
 
-    pub(super) fn apply(&self, o: &mut Object, warn: &mut Vec<String>) {
+    fn apply_style(&self, s: &mut inkboard_core::Style) {
         if let Some(w) = self.width {
-            o.style.width = w;
+            s.width = w;
         }
         if let Some(d) = self.dash {
-            o.style.dash = d;
+            s.dash = d;
         }
         if let Some(v) = self.opacity {
-            o.style.opacity = v;
+            s.opacity = v;
         }
         if let Some(v) = self.roundness {
-            o.style.roundness = v;
+            s.roundness = v;
         }
         if let Some(v) = self.shadow {
-            o.style.shadow = v;
+            s.shadow = v;
         }
+    }
+
+    pub(super) fn apply(&self, o: &mut Object, warn: &mut Vec<String>) {
+        self.apply_style(&mut o.style);
         if let Some(l) = self.locked {
             o.locked = l;
         }
