@@ -5,6 +5,17 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Added
+
+- **Paste from a spreadsheet:** a range copied from Excel, LibreOffice or Google Sheets (tab-separated text, quoted cells included) becomes a table, sized to its content, in one undo step. Up to 200 rows × 50 columns (a message says when the paste was cut). Tab-indented text such as code is still pasted as text.
+- **Recolor an SVG image:** the style panel shows one swatch per color found in an imported SVG (multicolor logos included); each one can be replaced, all can be set to one color, and *Original colors* undoes it. The SVG / PNG / PDF, draw.io and Excalidraw exports use the new colors. MCP: `update_object` takes `recolor`.
+- **Arrowhead size:** S / M / L / XL in the style panel, for every kind of head; draw.io `startSize` / `endSize`. MCP: `head_scale` on `add_connector` and `update_object`.
+- **Drop shadow** on shapes, images, tables and connectors: a button in the style panel, in the SVG / PNG / PDF exports and draw.io (`shadow=1`). MCP: `shadow`.
+
+### Changed
+
+- **Live sharing: protocol v4.** Objects carry the new fields above, which an older version would drop when it edits them, so an older app and this one no longer join each other: the guest is told to update. The web page speaks v4 once it is published, so a host on 0.2.0-beta.2 or older must update for browser guests to join.
+
 ## [0.2.0-beta.2] - 2026-10-26
 
 **Pre-release.** Follow-up of 0.2.0-beta.1, mostly for what an AI agent draws through the MCP server and for the Mermaid import, after a first

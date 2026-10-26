@@ -205,6 +205,9 @@ Les paramètres existants (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stro
 | `arrow` | `end`, `start`, `both`, `none` | connecteurs |
 | `head_start`, `head_end` | nom d'une [pointe](#pointes-de-flèche) ; remplace ce que `arrow` a donné à cette extrémité | connecteurs |
 | `from`, `to` | id d'une forme, d'un tableau ou d'une image : reconnecte cette extrémité (mêmes règles que `add_connector`) | connecteurs |
+| `head_scale` | 0,5 à 4, taille des pointes (1 : par défaut ; les crans S / M / L / XL du panneau valent 0,6 / 1 / 1,6 / 2,4) ; aussi dans `add_connector` | connecteurs |
+| `shadow` | `true` / `false` : ombre portée ; aussi dans `add_shape` | formes, images, tableaux, connecteurs |
+| `recolor` | remplace des couleurs d'une image SVG : `{"#e34f26": "#0055ff"}` ou `[["#e34f26", "#0055ff"]]` ; remplace la liste précédente, `{}` rend les couleurs d'origine (256 paires au plus). `describe_board` avec `detail: "full"` liste les couleurs trouvées dans le fichier | images SVG (pas les icônes monochromes ni les formules) |
 | `cell` + `text` | `[ligne, colonne]` à partir de 0 : le nouveau texte de cette cellule de tableau (`markdown` fonctionne comme partout) ; la colonne s'élargit si nécessaire | tableaux |
 
 - **Tout ou rien** : chaque paramètre est d'abord validé ; une valeur inconnue ou hors limites est une erreur qui nomme le paramètre et les valeurs permises, et rien n'est modifié.
