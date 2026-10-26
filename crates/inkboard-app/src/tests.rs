@@ -2378,6 +2378,22 @@ fn pasted_table_is_truncated_to_the_limits_and_fits_the_session() {
 }
 
 #[test]
+fn pasted_table_larger_than_the_view_is_framed_but_a_small_one_keeps_the_view() {
+    let mut t = T::new();
+    let before = t.app().ed.page().view;
+    pasted_table(&mut t, "a\tb\nc\td");
+    assert_eq!(t.app().ed.page().view.zoom, before.zoom, "a table that fits leaves the view alone");
+    let mut t = T::new();
+    let row = vec!["x"; 40].join("\t");
+    pasted_table(&mut t, &vec![row; 120].join("\n"));
+    let (view, size) = (t.app().ed.page().view, t.app().canvas_size);
+    let b = t.app().ed.page().content_bounds().expect("table bounds");
+    assert!(view.zoom < 1.0, "the view zooms out");
+    assert!(b.w * view.zoom <= f64::from(size.0) && b.h * view.zoom <= f64::from(size.1), "the table fits the canvas");
+    assert!(b.x * view.zoom + view.x >= 0.0 && b.y * view.zoom + view.y >= 0.0, "the table starts on screen");
+}
+
+#[test]
 fn undo_removes_a_pasted_table_in_one_step() {
     let mut t = T::new();
     pasted_table(&mut t, "a\tb\nc\td");

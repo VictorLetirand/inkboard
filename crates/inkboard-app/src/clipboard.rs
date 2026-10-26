@@ -155,6 +155,11 @@ impl App {
         let id = self.ed.insert(Object::new(Kind::Table(tb), Style { width: 2.0, fill: None, ..self.style.clone() }));
         self.sel = vec![id];
         self.tool = Tool::Select;
+        // a table larger than the view is framed, so that it does not spill off the screen
+        let zoom = self.ed.page().view.zoom;
+        if w * zoom > f64::from(self.canvas_size.0) || h * zoom > f64::from(self.canvas_size.1) {
+            self.fit_view(true);
+        }
         if truncated {
             self.toast(&t("Table truncated to fit the limits"));
         }
