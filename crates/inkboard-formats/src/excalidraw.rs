@@ -407,6 +407,7 @@ fn style_of(e: &Value, is_text: bool) -> Style {
         },
         opacity: num::f32((e.get("opacity").and_then(Value::as_f64).unwrap_or(100.0) / 100.0).clamp(0.05, 1.0)),
         roundness: 0.0,
+        shadow: false,
     }
 }
 

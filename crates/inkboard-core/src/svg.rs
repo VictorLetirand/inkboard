@@ -353,7 +353,13 @@ impl Ctx<'_> {
         format!("<g{op}>{out}</g>")
     }
 
+    /// The object, in a group that references the shared shadow filter when it has a drop shadow.
     fn object(&self, o: &Object) -> String {
+        let inner = self.plain_object(o);
+        if casts_shadow(o) && !inner.is_empty() { format!(r#"<g filter="url(#{SHADOW_FILTER})">{inner}</g>"#) } else { inner }
+    }
+
+    fn plain_object(&self, o: &Object) -> String {
         match &o.kind {
             Kind::Box(b) => self.boxed(o, b),
             Kind::Pen(p) => match &p.pressures {
@@ -386,11 +392,20 @@ impl Ctx<'_> {
     }
 }
 
+/// Id of the drop shadow filter, defined once in `<defs>`.
+const SHADOW_FILTER: &str = "ink-shadow";
+
+/// Whether the object is drawn with a drop shadow: not a pen stroke, and not a sticky note (which has its own).
+fn casts_shadow(o: &Object) -> bool {
+    o.style.shadow && !matches!(&o.kind, Kind::Pen(_)) && !matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)
+}
+
 /// Exports a page (or only `ids`) to SVG. `None` when there is nothing to export.
 pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer, opts: &SvgOptions) -> Option<String> {
     let objs: Vec<&Object> = page.objects.iter().filter(|o| page.is_visible(o) && ids.is_none_or(|ids| ids.contains(&o.id))).collect();
     let mut bounds = objs.iter().map(|o| page.bounds(o)).reduce(|a, b| a.union(&b))?;
-    if objs.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)) {
+    let shadows = objs.iter().any(|o| casts_shadow(o));
+    if shadows || objs.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)) {
         bounds = bounds.expand(10.0);
     }
     let b = bounds.expand(opts.padding);
@@ -407,6 +422,18 @@ pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer,
         n(b.w),
         n(b.h)
     );
+    if shadows {
+        // defined once; the region is the whole drawing (a straight line has no box to size the default one on)
+        let _ = write!(
+            s,
+            r##"<defs><filter id="{SHADOW_FILTER}" filterUnits="userSpaceOnUse" x="{}" y="{}" width="{}" height="{}"><feDropShadow dx="4" dy="4" stdDeviation="2" flood-color="#000000" flood-opacity="{}"/></filter></defs>"##,
+            n(b.x),
+            n(b.y),
+            n(b.w),
+            n(b.h),
+            if ctx.dark { "0.5" } else { "0.25" }
+        );
+    }
     if !opts.transparent {
         let _ = write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}"/>"#, n(b.x), n(b.y), n(b.w), n(b.h), doc.background.preset.hex());
     }
@@ -517,6 +544,29 @@ mod tests {
         };
         let (normal, big) = (head_width(1.0), head_width(3.0));
         assert!((big / normal - 3.0).abs() < 0.05, "{normal} {big}");
+    }
+
+    #[test]
+    fn the_shadow_filter_is_defined_once_and_used_by_the_objects_that_cast_one() {
+        let shadowed = Style { shadow: true, ..Style::default() };
+        let boxed = |x: f64, st: &Style| Object::new_box(BoxGeom::Rect, Frame::new(x, 0.0, 50.0, 50.0), st.clone(), Label::default());
+        let sticky = Object::new_box(BoxGeom::Sticky, Frame::new(300.0, 0.0, 50.0, 50.0), shadowed.clone(), Label::default());
+        let pen = Object::new_pen(vec![Pt::new(0.0, 100.0), Pt::new(40.0, 120.0)], false, shadowed.clone());
+        let line = Object::new(Kind::Connector(Connector::straight(Pt::new(0.0, 200.0), Pt::new(100.0, 200.0))), shadowed.clone());
+        let d = doc_with(vec![boxed(0.0, &shadowed), boxed(100.0, &shadowed), boxed(200.0, &Style::default()), sticky, pen, line]);
+        let svg = export_approx(&d, &d.pages[0]).unwrap();
+        assert_eq!(svg.matches("<filter").count(), 1, "defined once");
+        assert!(svg.contains("<defs>") && svg.contains("feDropShadow"));
+        assert_eq!(svg.matches("filter=\"url(#ink-shadow)\"").count(), 3, "two boxes and the connector; not the plain box, the sticky note or the pen");
+        assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
+        // nothing shadowed: no filter at all, and the exported size is the one it always was
+        let plain = doc_with(vec![boxed(0.0, &Style::default())]);
+        let plain_svg = export_approx(&plain, &plain.pages[0]).unwrap();
+        assert!(!plain_svg.contains("filter") && !plain_svg.contains("<defs>"));
+        let shadow_only = doc_with(vec![boxed(0.0, &shadowed)]);
+        let width_of = |svg: &str| svg.split("width=\"").nth(1).and_then(|s| s.split('"').next()).and_then(|w| w.parse::<f64>().ok()).unwrap();
+        let (with, without) = (width_of(&export_approx(&shadow_only, &shadow_only.pages[0]).unwrap()), width_of(&plain_svg));
+        assert!((with - without - 20.0).abs() < 1.5, "room left for the shadow: {with} {without}");
     }
 
     #[test]

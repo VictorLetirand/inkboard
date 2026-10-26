@@ -38,6 +38,11 @@ fn head_prop(end: &str) -> Value {
         "description": format!("Arrowhead at the {end} of the connector, which takes precedence over `arrow` for that end. Original heads: none, arrow, triangle, dot, bar. Added heads, shown by older versions as the closest original one: diamond (UML composition), diamond_open (aggregation), triangle_open (inheritance), crow_foot (many), crow_foot_one (one or many), crow_foot_zero (zero or many), one_only (exactly one), zero_or_one.")})
 }
 
+/// Schema of `shadow`: the drop shadow of an object.
+fn shadow_prop() -> Value {
+    json!({"type": "boolean", "description": "Soft drop shadow under the object (not drawn for pen strokes)."})
+}
+
 /// Schema of `head_scale`: the size factor of the arrowheads.
 fn head_scale_prop() -> Value {
     json!({"type": "number", "minimum": 0.5, "maximum": 4, "description": "Connector arrowhead size factor (1 = usual size, 0.5 to 4); applies to both ends."})
@@ -76,7 +81,7 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(pos_props(json!({
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
                 "text": {"type": "string"}, "markdown": richtext::markdown_prop("`text`"), "w": {"type": "number"}, "h": {"type": "number"},
-                "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "fill": color.clone(), "stroke": color.clone()})), &["geom"])}),
+                "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "fill": color.clone(), "stroke": color.clone(), "shadow": shadow_prop()})), &["geom"])}),
         json!({"name": "add_connector", "description": "Connects two objects with an arrow that follows them when they move (ids returned by add_shape or describe_board).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "from": {"type": "string"}, "to": {"type": "string"},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"]},
@@ -101,6 +106,7 @@ pub fn list() -> Vec<Value> {
                 "stroke_width": {"type": "number", "minimum": 0, "maximum": 100, "description": "Outline width (0: no outline)."},
                 "dash": {"type": "string", "enum": ["solid", "dashed", "dotted"]},
                 "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "roundness": {"type": "number", "minimum": 0, "maximum": 1, "description": "Corner rounding (0 sharp, 1 capsule)."},
+                "shadow": shadow_prop(),
                 "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "font_family": {"type": "string", "enum": ["sans", "hand", "serif", "mono"]},
                 "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (shapes and connector labels)."},
                 "locked": {"type": "boolean", "description": "Lock or unlock the object in the application."},
@@ -770,6 +776,7 @@ fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
         fill,
         width: if geom == BoxGeom::Text { 0.0 } else { 2.0 },
         roundness: if geom == BoxGeom::Rect { 0.15 } else { 0.0 },
+        shadow: edit::bool_arg(a, "shadow")?.unwrap_or(false),
         ..Style::default()
     };
     // as `update_object`: a size of 0 or a huge one would make the guests of a shared board refuse it

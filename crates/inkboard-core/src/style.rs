@@ -157,11 +157,14 @@ pub struct Style {
     /// Corner rounding, from 0.0 (sharp) to 1.0 (capsule).
     #[serde(default)]
     pub roundness: f32,
+    /// Soft drop shadow under the object.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shadow: bool,
 }
 
 impl Default for Style {
     fn default() -> Self {
-        Self { stroke: Color::Ink, fill: None, width: 3.0, dash: Dash::Solid, opacity: 1.0, roundness: 0.0 }
+        Self { stroke: Color::Ink, fill: None, width: 3.0, dash: Dash::Solid, opacity: 1.0, roundness: 0.0, shadow: false }
     }
 }
 
@@ -185,6 +188,18 @@ mod tests {
         assert_eq!(j, "\"#010203\"");
         assert_eq!(serde_json::from_str::<Color>(&j).unwrap(), Color::Rgb(1, 2, 3));
         assert_eq!(serde_json::from_str::<Color>("\"ink\"").unwrap(), Color::Ink);
+    }
+
+    #[test]
+    fn shadow_is_written_only_when_on_and_an_old_style_is_rewritten_identically() {
+        let old = r##"{"stroke":"ink","fill":null,"width":3.0,"dash":"solid","opacity":1.0,"roundness":0.0}"##;
+        let s: Style = serde_json::from_str(old).unwrap();
+        assert!(!s.shadow);
+        assert_eq!(serde_json::to_value(&s).unwrap(), serde_json::from_str::<serde_json::Value>(old).unwrap(), "no new key for a style without shadow");
+        let on = Style { shadow: true, ..s };
+        let json = serde_json::to_string(&on).unwrap();
+        assert!(json.contains(r#""shadow":true"#), "{json}");
+        assert_eq!(serde_json::from_str::<Style>(&json).unwrap(), on);
     }
 
     #[test]

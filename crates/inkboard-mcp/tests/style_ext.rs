@@ -50,6 +50,39 @@ fn head_scale_is_set_when_adding_and_when_updating_a_connector_and_reported() {
     assert!(r.to_string().contains("head_scale"), "{r}");
 }
 
+fn shadow_of(board: &Path, id: &str) -> bool {
+    let doc = serial::load(board).unwrap();
+    doc.pages[0].objects.iter().find(|o| o.id.0 == id).expect("object").style.shadow
+}
+
+#[test]
+fn shadow_is_set_when_adding_and_updating_and_reported_only_when_on() {
+    let (mut c, board, a, _) = setup("style-shadow");
+    let p = board.display().to_string();
+    let id = c.tool("add_shape", json!({"path": p, "geom": "ellipse", "text": "S", "shadow": true})).unwrap()["id"].as_str().unwrap().to_owned();
+    assert!(shadow_of(&board, &id) && !shadow_of(&board, &a));
+    let objects = |c: &mut Client| c.tool("describe_board", json!({"path": p, "detail": "full"})).unwrap()["page"]["objects"].as_array().unwrap().clone();
+    let style_of = |objs: &[Value], id: &str| objs.iter().find(|o| o["id"] == id).unwrap()["style"].clone();
+    let objs = objects(&mut c);
+    assert_eq!(style_of(&objs, &id)["shadow"], json!(true));
+    assert!(style_of(&objs, &a).get("shadow").is_none(), "the usual style is reported as before");
+    c.tool("update_object", json!({"path": p, "id": id, "shadow": false})).unwrap();
+    c.tool("update_object", json!({"path": p, "id": a, "shadow": true})).unwrap();
+    assert!(!shadow_of(&board, &id) && shadow_of(&board, &a));
+}
+
+#[test]
+fn a_shadow_that_is_not_a_boolean_is_refused_and_changes_nothing() {
+    let (mut c, board, a, _) = setup("style-shadow-bad");
+    let p = board.display().to_string();
+    let before = std::fs::read(&board).unwrap();
+    let e = c.tool("update_object", json!({"path": p, "id": a, "shadow": "yes", "stroke_width": 5})).unwrap_err();
+    assert!(e.contains("shadow") && e.contains("true or false"), "{e}");
+    let e = c.tool("add_shape", json!({"path": p, "geom": "rect", "shadow": 1})).unwrap_err();
+    assert!(e.contains("shadow"), "{e}");
+    assert_eq!(std::fs::read(&board).unwrap(), before);
+}
+
 #[test]
 fn an_out_of_range_head_scale_is_refused_with_the_range_and_changes_nothing() {
     let (mut c, board, a, b) = setup("style-head-scale-bad");

@@ -15,6 +15,10 @@ use inkboard_core::{
 use std::collections::HashMap;
 
 pub const GRID: f32 = 24.0;
+/// Offset of a drop shadow, in world units (right and down).
+const SHADOW_OFFSET: f32 = 4.0;
+/// Below this zoom the shadows are not drawn: they would only add shapes to look at a few pixels of grey.
+const SHADOW_MIN_ZOOM: f32 = 0.25;
 
 /// Camera: screen position of the world origin, and zoom.
 #[derive(Clone, Copy, Debug)]
@@ -502,6 +506,9 @@ impl Renderer<'_> {
 
     fn object<'x>(&mut self, o: &Object, skip_text: bool, mul: f32, get: &dyn Fn(&Id) -> Option<&'x Object>) {
         let op = o.style.opacity * mul;
+        if o.style.shadow && self.cam.zoom >= SHADOW_MIN_ZOOM {
+            self.shadow(o, op);
+        }
         match &o.kind {
             Kind::Box(b) => self.boxed(o, b, skip_text, op),
             Kind::Pen(p) => self.pen(o, p, op),
@@ -510,6 +517,48 @@ impl Renderer<'_> {
                 self.image(i, if i.is_tinted() { col(o.style.stroke, self.dark, op) } else { Color32::from_white_alpha(num::to_u8(f64::from(op * 255.0))) });
             }
             Kind::Table(t) => self.table(o, t, op),
+        }
+    }
+
+    /// Colour of the drop shadows: black, stronger on a dark background where it would hardly show.
+    fn shadow_color(&self, op: f32) -> Color32 {
+        Color32::from_black_alpha(num::to_u8(f64::from(255.0 * if self.dark { 0.5 } else { 0.25 } * op)))
+    }
+
+    /// Drop shadow of a box, an image or a table: the outline moved by [`SHADOW_OFFSET`], one translucent shape (no blur, so it stays cheap).
+    /// A shape that is not filled gets a shadow of its outline only, so that it stays see-through. Connectors draw theirs in [`Self::connector`].
+    fn shadow(&self, o: &Object, op: f32) {
+        let st = &o.style;
+        let off = vec2(SHADOW_OFFSET, SHADOW_OFFSET) * self.cam.zoom;
+        let color = self.shadow_color(op);
+        let (pts, filled): (Vec<Pos2>, bool) = match &o.kind {
+            // a sticky note has its own shadow
+            Kind::Box(b) if b.geom == BoxGeom::Sticky => return,
+            Kind::Box(b) => {
+                if st.fill.is_none() && st.width <= 0.0 {
+                    return;
+                }
+                (self.outline(b, st.roundness).iter().map(|p| self.cam.s(b.frame.to_world(*p))).collect(), st.fill.is_some())
+            }
+            Kind::Image(i) => (i.frame.corners().iter().map(|p| self.cam.s(*p)).collect(), true),
+            Kind::Table(t) => {
+                let r = t.rect();
+                (
+                    [Pt::new(r.x, r.y), Pt::new(r.right(), r.y), Pt::new(r.right(), r.bottom()), Pt::new(r.x, r.bottom())]
+                        .iter()
+                        .map(|p| self.cam.s(*p))
+                        .collect(),
+                    false,
+                )
+            }
+            Kind::Pen(_) | Kind::Connector(_) => return,
+        };
+        let moved: Vec<Pos2> = pts.iter().map(|p| *p + off).collect();
+        if filled {
+            self.painter.add(Shape::convex_polygon(moved, color, Stroke::NONE));
+        } else {
+            let dash = if matches!(o.kind, Kind::Table(_)) { Dash::Solid } else { st.dash };
+            self.stroke_path(&moved, true, st.width.max(1.0), color, dash, false);
         }
     }
 
@@ -670,8 +719,26 @@ impl Renderer<'_> {
         let st = &o.style;
         let color = col(st.stroke, self.dark, op);
         let pts: Vec<Pos2> = path.iter().map(|p| self.cam.s(*p)).collect();
-        self.stroke_path(&pts, false, st.width, color, st.dash, true);
         let size = c.head_size(st.width);
+        if st.shadow && self.cam.zoom >= SHADOW_MIN_ZOOM {
+            // the line and the heads once more, moved and translucent (the hollow parts of a head stay see-through)
+            let (off, shade) = (vec2(SHADOW_OFFSET, SHADOW_OFFSET) * self.cam.zoom, self.shadow_color(op));
+            let moved: Vec<Pos2> = pts.iter().map(|p| *p + off).collect();
+            self.stroke_path(&moved, false, st.width, shade, st.dash, true);
+            let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
+            for (head, ext, tip, from) in heads {
+                paint_head(
+                    self.painter,
+                    &head_glyph(tip, from, size, head, ext),
+                    &|p| self.cam.s(p) + off,
+                    self.cam.zoom,
+                    num::f32(st.width),
+                    shade,
+                    Color32::TRANSPARENT,
+                );
+            }
+        }
+        self.stroke_path(&pts, false, st.width, color, st.dash, true);
         let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
         for (head, ext, tip, from) in heads {
             paint_head(self.painter, &head_glyph(tip, from, size, head, ext), &|p| self.cam.s(p), self.cam.zoom, num::f32(st.width), color, self.bg);

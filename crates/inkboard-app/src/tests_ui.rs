@@ -702,6 +702,40 @@ fn the_arrowhead_size_steps_resize_the_selected_connectors_in_one_undo_step() {
 }
 
 #[test]
+fn the_shadow_toggle_applies_to_the_selection_in_one_undo_step_and_every_kind_is_drawn_with_it() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    let b = t.add_rect(400.0, 100.0, 80.0, 50.0);
+    let c = t.app().ed.insert(Object::new(Kind::Connector(Connector::new(End::bound(a.clone()), End::bound(b.clone()))), Style::default()));
+    let table = t.app().ed.insert(Object::new(Kind::Table(Table::new(Pt::new(100.0, 300.0), 2, 2)), Style::default()));
+    let ids = vec![a.clone(), b, c, table];
+    let shadows = |t: &mut T| t.objects().iter().filter(|o| o.style.shadow).count();
+    assert_eq!(shadows(&mut t), 0);
+    // the panel shows its row for the selection
+    t.app().sel = ids.clone();
+    t.h.step();
+    t.h.step();
+    crate::panel::set_shadow(t.app(), &ids, true);
+    assert_eq!(shadows(&mut t), 4);
+    assert!(t.app().style.shadow, "the next objects drawn get it too");
+    // drawn on screen, close up and far away (no shadow below the detail threshold)
+    for zoom in [1.0, 0.1] {
+        t.app().set_view(View { x: 0.0, y: 0.0, zoom });
+        t.h.step();
+    }
+    t.app().ed.undo();
+    assert_eq!(shadows(&mut t), 0, "one step for the whole selection");
+    t.app().ed.redo();
+    assert_eq!(shadows(&mut t), 4);
+    set_for_thread(Some(Lang::Fr));
+    for en in ["Shadow", "Drop shadow"] {
+        assert_ne!(crate::i18n::t(en), en, "{en} is not translated");
+    }
+    set_for_thread(None);
+}
+
+#[test]
 fn the_lock_button_toggles_and_the_tool_tips_are_translated() {
     set_for_thread(Some(Lang::En));
     let mut t = T::new();

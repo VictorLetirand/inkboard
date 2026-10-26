@@ -370,6 +370,28 @@ fn corners_section(app: &mut App, ui: &mut Ui, target: &Target) {
     });
 }
 
+/// Drop shadow on or off.
+fn shadow_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    row(ui, "Shadow", |ui| {
+        let on = target.style.shadow;
+        if theme::seg_button(ui, on, "Drop shadow", |p, r, c| {
+            let body = ERect::from_center_size(r.center() + vec2(-2.0, -2.0), vec2(14.0, 11.0));
+            p.rect_filled(body.translate(vec2(3.0, 3.0)), 2.0, c.gamma_multiply(0.35));
+            p.rect_stroke(body, 2.0, Stroke::new(1.8_f32, c), egui::StrokeKind::Middle);
+        })
+        .clicked()
+        {
+            set_shadow(app, &target.ids, !on);
+        }
+    });
+}
+
+/// Turns the drop shadow of the objects among `ids` on or off (and of the next ones drawn), as one undo step.
+pub(crate) fn set_shadow(app: &mut App, ids: &[Id], on: bool) {
+    app.style.shadow = on;
+    app.ed.update_many(ids, |o| o.style.shadow = on);
+}
+
 /// Path and arrowheads of the connectors.
 fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
     let cur = target.objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
@@ -520,6 +542,9 @@ fn props(app: &mut App, ui: &mut Ui) {
         }
         if target.shapes() || matches!(app.tool, Tool::Shape(BoxGeom::Rect) | Tool::Sticky) {
             corners_section(app, ui, &target);
+        }
+        if !target.only_pen() && !target.highlighter(app.tool) && !matches!(app.tool, Tool::Pen) {
+            shadow_section(app, ui, &target);
         }
     }
     if target.connectors() || matches!(app.tool, Tool::Line | Tool::Arrow) {

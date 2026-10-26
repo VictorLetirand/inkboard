@@ -113,7 +113,7 @@ fn opt_str<'a>(a: &'a Value, k: &str) -> Res<Option<&'a str>> {
     }
 }
 
-fn bool_arg(a: &Value, k: &str) -> Res<Option<bool>> {
+pub(super) fn bool_arg(a: &Value, k: &str) -> Res<Option<bool>> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(*b)),
@@ -203,6 +203,9 @@ pub(super) fn full(z: usize, o: &Object) -> Value {
         json!({"stroke": st.stroke.to_hex(), "fill": st.fill.map(Color::to_hex), "width": st.width, "dash": name_of(&DASHES, st.dash),
             "opacity": r3(f64::from(st.opacity)), "roundness": r3(f64::from(st.roundness))}),
     );
+    if st.shadow {
+        map.get_mut("style").and_then(Value::as_object_mut).expect("style").insert("shadow".into(), json!(true));
+    }
     let font = |l: &Label| json!({"family": name_of(&FAMILIES, l.family), "size": l.size, "align": name_of(&ALIGNS, l.align)});
     match &o.kind {
         Kind::Box(b) => {
@@ -332,6 +335,7 @@ pub(super) struct Patch {
     dash: Option<Dash>,
     opacity: Option<f32>,
     roundness: Option<f32>,
+    shadow: Option<bool>,
     size: Option<f64>,
     family: Option<FontFamily>,
     align: Option<Align>,
@@ -362,6 +366,7 @@ impl Patch {
             dash: enum_arg(a, "dash", &DASHES)?,
             opacity: num_arg(a, "opacity", 0.0, 1.0)?.map(num::f32),
             roundness: num_arg(a, "roundness", 0.0, 1.0)?.map(num::f32),
+            shadow: bool_arg(a, "shadow")?,
             size: num_arg(a, "font_size", 4.0, 400.0)?,
             family: enum_arg(a, "font_family", &FAMILIES)?,
             align: enum_arg(a, "align", &ALIGNS)?,
@@ -442,6 +447,9 @@ impl Patch {
         }
         if let Some(v) = self.roundness {
             o.style.roundness = v;
+        }
+        if let Some(v) = self.shadow {
+            o.style.shadow = v;
         }
         if let Some(l) = self.locked {
             o.locked = l;

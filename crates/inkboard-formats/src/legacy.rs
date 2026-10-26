@@ -85,6 +85,7 @@ fn convert(raw: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> 
         },
         opacity,
         roundness: if raw.get("round").and_then(Value::as_bool).unwrap_or(false) { 0.45 } else { 0.0 },
+        shadow: false,
     };
     let label = || Label {
         text: RichText::plain(s(raw, "text").unwrap_or("")),
