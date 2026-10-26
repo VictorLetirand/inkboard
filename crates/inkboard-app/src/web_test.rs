@@ -132,7 +132,7 @@ fn status(app: &App) -> serde_json::Value {
                 json!({ "class": format!("{:?}", i.class), "headline": i.headline(), "tips": i.tips(), "detail": i.detail, "diagnostic": i.diagnostic_text() }),
             ),
         ),
-        GuestState::Ended(r) => ("ended", Some(json!({ "reason": format!("{r:?}") }))),
+        GuestState::Ended(r) => ("ended", Some(json!({ "reason": format!("{r:?}"), "message": crate::join_ui::end_message(r) }))),
     };
     let mirror = app.guest_active();
     let mut ids: Vec<String> = if mirror { app.ed.doc.pages.iter().flat_map(|p| p.objects.iter().map(|o| o.id.to_string())).collect() } else { Vec::new() };
@@ -148,7 +148,33 @@ fn status(app: &App) -> serde_json::Value {
         .collect();
     let agent_now = crate::platform::Instant::now();
     let images = app.ed.doc.pages.iter().flat_map(|p| p.objects.iter()).filter(|o| matches!(o.kind, inkboard_core::model::Kind::Image(_))).count();
+    // the objects that carry a field added by protocol v4 (drop shadow, arrowhead size, recolored SVG), with their frame in world units
+    let fields: Vec<_> = app
+        .ed
+        .doc
+        .pages
+        .iter()
+        .flat_map(|p| p.objects.iter().map(move |o| (p, o)))
+        .filter_map(|(p, o)| {
+            let recolor = match &o.kind {
+                inkboard_core::model::Kind::Image(i) => i.recolor.len(),
+                _ => 0,
+            };
+            let head_scale = match &o.kind {
+                inkboard_core::model::Kind::Connector(c) => Some(c.head_scale),
+                _ => None,
+            };
+            (o.style.shadow || recolor > 0 || head_scale.is_some_and(|s| (s - 1.0).abs() > f32::EPSILON)).then(|| {
+                let f = p.bounds(o);
+                json!({ "id": o.id.to_string(), "shadow": o.style.shadow, "head_scale": head_scale, "recolor": recolor, "frame": [f.x, f.y, f.w, f.h] })
+            })
+        })
+        .collect();
+    let view = app.ed.page().view;
     json!({
+        "fields": fields,
+        "view": [view.x, view.y, view.zoom],
+        "canvas": [app.canvas_rect.min.x, app.canvas_rect.min.y],
         "state": name,
         "issue": issue,
         "join_error": join_error,

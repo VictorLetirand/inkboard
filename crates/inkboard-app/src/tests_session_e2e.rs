@@ -382,6 +382,16 @@ fn a_guest_leaving_frees_its_place_and_the_host_can_share_again() {
 
 #[test]
 fn an_incompatible_protocol_version_is_refused_by_the_host() {
+    a_peer_of_protocol_is_refused(PROTO_VERSION + 1);
+}
+
+#[test]
+fn a_v3_guest_is_refused_by_a_v4_host() {
+    // the page published before protocol v4 (GitHub Pages) says v3 in its first message
+    a_peer_of_protocol_is_refused(3);
+}
+
+fn a_peer_of_protocol_is_refused(proto: u32) {
     let mut room = Room::loopback();
     room.start_sharing();
     let ticket = parse_join_link(&room.link(Role::Edit)).unwrap();
@@ -389,7 +399,7 @@ fn an_incompatible_protocol_version_is_refused_by_the_host() {
     let mut conn = transport.connect_ticket(&ticket).unwrap();
     let mut chan = SecureChannel::new(FrameCipher::new(&ticket.key, Side::Guest), Box::new(JsonCodec), Box::new(SeededEntropy::new(5)), 1 << 20);
     let hello = Hello {
-        proto: PROTO_VERSION + 1,
+        proto,
         name: "From the future".to_owned(),
         join_proof: join_proof(&ticket.key, "From the future", Role::Edit),
         role_requested: Role::Edit,
