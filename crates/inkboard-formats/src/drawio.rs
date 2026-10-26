@@ -734,7 +734,7 @@ impl Builder<'_> {
             let mut f = rect_of(&r);
             f.angle = angle;
             let obj = Object::new(
-                Kind::Image(ImageObj { frame: f, asset: aid, latex: None, mono }),
+                Kind::Image(ImageObj { frame: f, asset: aid, latex: None, mono, recolor: Vec::new() }),
                 Style { width: 0.0, opacity: style_for(c, true).opacity, ..Style::default() },
             );
             let id = obj.id.clone();

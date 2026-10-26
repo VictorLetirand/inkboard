@@ -292,8 +292,10 @@ fn seed_messages() -> Vec<Value> {
     table.id = "tbl".into();
     let mut conn = Object::new(Kind::Connector(Connector::new(End::bound("conn".into()), End::bound("seed-1".into()))), Style::default());
     conn.id = "conn".into();
-    let mut img =
-        Object::new(Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("0".repeat(64)), latex: None, mono: false }), Style::default());
+    let mut img = Object::new(
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("0".repeat(64)), latex: None, mono: false, recolor: Vec::new() }),
+        Style::default(),
+    );
     img.id = "img".into();
     let ops = vec![
         put(boxed("n0", 3.0)),
@@ -653,8 +655,10 @@ fn image_uploads_with_forged_identifiers_gaps_and_duplicates_are_refused_without
     );
     assert_eq!(board_hash(&w.ed.doc), before);
     // a modification that uses an image nobody uploaded is refused too
-    let mut img =
-        Object::new(Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("ab".repeat(32)), latex: None, mono: false }), Style::default());
+    let mut img = Object::new(
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("ab".repeat(32)), latex: None, mono: false, recolor: Vec::new() }),
+        Style::default(),
+    );
     img.id = "img".into();
     let page = w.page();
     let mut b = w.attacker(Role::Edit);

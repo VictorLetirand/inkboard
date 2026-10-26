@@ -3,11 +3,11 @@
 //! The engine does not enforce object locks: `translate`, `update`, `duplicate` and `remove` act on locked objects, only
 //! `align` and `distribute` skip them (and the objects of a locked layer). The tools here keep that behavior and report it.
 
-use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, summary};
+use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, summary, summary_in};
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::num;
 use inkboard_core::{
-    Align, ApproxMeasurer, Arrowhead, Color, Dash, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route,
+    Align, ApproxMeasurer, Arrowhead, Color, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -188,8 +188,8 @@ fn frame_box(page: &Page, o: &Object) -> Rect {
 /* --------------------------------------------------------------- reading */
 
 /// `describe_board` object with `detail: "full"`: the brief summary plus style, font, stacking order, group, lock, rotation, arrow.
-pub(super) fn full(z: usize, o: &Object) -> Value {
-    let mut v = summary(o);
+pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
+    let mut v = summary_in(doc, o);
     let map = v.as_object_mut().expect("object");
     let st = &o.style;
     map.insert(
@@ -310,6 +310,41 @@ fn find_objects(ed: &mut Editor, args: &Value) -> Res<Value> {
 
 /* --------------------------------------------------------- update_object */
 
+/// Most color replacements one image can carry (same bound as the session's `max_recolor_pairs`).
+const MAX_RECOLOR: usize = 256;
+
+/// The `recolor` parameter: an object `{"#origin": "#new"}` or an array of `["#origin", "#new"]` pairs; an empty one clears it.
+fn recolor_arg(a: &Value) -> Res<Option<Vec<(Color, Color)>>> {
+    let Some(v) = a.get("recolor").filter(|v| !v.is_null()) else { return Ok(None) };
+    let shape = "\"recolor\" must be an object {\"#origin\": \"#new\"} or an array of [\"#origin\", \"#new\"] pairs";
+    let pairs: Vec<(&str, &str)> = match v {
+        Value::Object(m) => m.iter().map(|(k, t)| t.as_str().map(|t| (k.as_str(), t)).ok_or(shape)).collect::<Result<_, _>>()?,
+        Value::Array(l) => l
+            .iter()
+            .map(|p| p.as_array().filter(|p| p.len() == 2).and_then(|p| Some((p[0].as_str()?, p[1].as_str()?))).ok_or(shape))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(shape.into()),
+    };
+    if pairs.len() > MAX_RECOLOR {
+        return Err(format!("\"recolor\" has {} pairs (maximum {MAX_RECOLOR})", pairs.len()));
+    }
+    let mut out: Vec<(Color, Color)> = Vec::with_capacity(pairs.len());
+    for (from, to) in pairs {
+        let parse = |c: &str| Color::parse(c).ok_or_else(|| format!("invalid color \"{c}\" in \"recolor\" (expected #rrggbb or ink)"));
+        let (from, to) = (parse(from)?, parse(to)?);
+        if from == Color::Ink {
+            return Err("\"recolor\": an original color must be a #rrggbb color of the image, not ink".into());
+        }
+        if out.iter().any(|(f, _)| *f == from) {
+            return Err(format!("\"recolor\": original color {} given twice", from.to_hex()));
+        }
+        if from != to {
+            out.push((from, to));
+        }
+    }
+    Ok(Some(out))
+}
+
 /// Cell of a table to rewrite.
 struct Cell {
     row: usize,
@@ -336,6 +371,8 @@ pub(super) struct Patch {
     from: Option<Id>,
     to: Option<Id>,
     cell: Option<Cell>,
+    /// Image only: the whole new list of color replacements; the flag tells whether the image is an SVG that can be recolored.
+    recolor: Option<(Vec<(Color, Color)>, bool)>,
     /// Markdown warnings of the cell text.
     pub(super) warnings: Vec<String>,
 }
@@ -364,6 +401,10 @@ impl Patch {
             from: attachable("from")?,
             to: attachable("to")?,
             cell: None,
+            recolor: recolor_arg(a)?.map(|list| {
+                let svg = matches!(&o.kind, Kind::Image(i) if !i.is_tinted() && ed.doc.assets.get(&i.asset).is_some_and(|x| x.mime == "image/svg+xml"));
+                (list, svg)
+            }),
             warnings: Vec::new(),
         };
         if let Some(v) = a.get("cell").filter(|v| !v.is_null()) {
@@ -447,6 +488,7 @@ impl Patch {
             ("to", self.to.is_some()),
         ];
         let rotation = [("rotation", self.angle.is_some())];
+        let recolor = [("recolor", self.recolor.is_some() && !matches!(o.kind, Kind::Image(_)))];
         let mut ignored: Vec<&str> = Vec::new();
         match &mut o.kind {
             Kind::Box(b) => {
@@ -462,6 +504,11 @@ impl Patch {
             Kind::Image(i) => {
                 if let Some(r) = self.angle {
                     i.frame.angle = r;
+                }
+                match &self.recolor {
+                    Some((list, true)) => i.recolor.clone_from(list),
+                    Some((_, false)) => warn.push("recolor only applies to an imported SVG image that is not a formula or a monochrome icon (ignored)".into()),
+                    None => {}
                 }
                 ignored.extend(present(&font));
                 ignored.extend(present(&link));
@@ -511,6 +558,7 @@ impl Patch {
                 ignored.extend(present(&link));
             }
         }
+        ignored.extend(present(&recolor));
         if !ignored.is_empty() {
             warn.push(format!("{} not applicable to a {kind} (ignored)", ignored.join(", ")));
         }

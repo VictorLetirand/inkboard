@@ -33,7 +33,7 @@
 use inkboard_core::geom::{Frame, Pt, Rect};
 use inkboard_core::model::{Id, Kind, Object, Page, PenObj, Table};
 use inkboard_core::style::Style;
-use inkboard_core::{Align, BoxGeom, Label};
+use inkboard_core::{Align, BoxGeom, Color, Label};
 use inkboard_session::assets::{AssetAssembler, chunks, hash_hex};
 use inkboard_session::limits::*;
 use inkboard_session::proto::{AssetChunk, Hello, Message, Presence, Role, Submit};
@@ -178,6 +178,19 @@ fn identifiers() {
     assert!(refused(o));
     assert!(check_ops(&l(), &[WireOp::Delete { page: Id("p".into()), ids: vec![Id(String::new())] }]).is_err());
     assert!(check_ops(&l(), &[WireOp::Order { page: Id("x".repeat(65)), ids: vec![] }]).is_err());
+}
+
+#[test]
+fn image_color_replacements_are_bounded() {
+    let img = |n: usize| {
+        let recolor = (0..n).map(|i| (Color::rgb(i as u8, 0, 0), Color::Ink)).collect();
+        Object::new(
+            Kind::Image(inkboard_core::ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("a".into()), latex: None, mono: false, recolor }),
+            Style::default(),
+        )
+    };
+    assert!(!refused(img(256)));
+    assert!(matches!(check_object(&l(), &img(257)), Err(Violation::TooMany { what: "color replacements", .. })));
 }
 
 #[test]

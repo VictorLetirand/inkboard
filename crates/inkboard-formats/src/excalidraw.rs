@@ -663,7 +663,7 @@ pub fn import(content: &str, name: &str, measurer: &dyn Measurer) -> Result<Impo
                 let aid = Id::new();
                 doc.assets.insert(aid.clone(), Asset { mime, data: Arc::new(bytes) });
                 let mut o = Object::new(
-                    Kind::Image(ImageObj { frame: Frame { x, y, w: width, h: height, angle }, asset: aid, latex: None, mono: false }),
+                    Kind::Image(ImageObj { frame: Frame { x, y, w: width, h: height, angle }, asset: aid, latex: None, mono: false, recolor: Vec::new() }),
                     Style { width: 0.0, opacity: style_of(e, false).opacity, ..Style::default() },
                 );
                 o.id = scene.own_id(id);

@@ -67,8 +67,10 @@ impl App {
         let aid = self.ed.doc.add_asset("image/svg+xml", svg.into_bytes());
         let frame = Frame::new(at.x - w * k / 2.0, at.y - h * k / 2.0, w * k, h * k);
         let mono = lib.sets[r.set].mono;
-        let id =
-            self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono }), Style { width: 0.0, fill: None, ..Style::default() }));
+        let id = self.ed.insert(Object::new(
+            Kind::Image(ImageObj { frame, asset: aid, latex: None, mono, recolor: Vec::new() }),
+            Style { width: 0.0, fill: None, ..Style::default() },
+        ));
         self.sel = vec![id];
         self.tool = Tool::Select;
     }
@@ -98,7 +100,7 @@ impl App {
         let at = self.view_center();
         let frame = Frame::new(at.x - f.w / 2.0, at.y - f.h / 2.0, f.w, f.h);
         let style = Style { stroke: self.style.stroke, width: 0.0, fill: None, ..Style::default() };
-        let id = self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: Some(src), mono: false }), style));
+        let id = self.ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: Some(src), mono: false, recolor: Vec::new() }), style));
         self.sel = vec![id];
         self.tool = Tool::Select;
         Ok(())

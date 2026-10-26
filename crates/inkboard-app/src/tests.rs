@@ -1710,6 +1710,41 @@ fn every_library_icon_renders() {
 /* ------------------------------------------------------------ svg resolution */
 
 #[test]
+fn recoloring_an_svg_changes_its_cache_key_and_texture_and_is_undoable() {
+    use crate::render::TextureCache;
+    let ctx = egui::Context::default();
+    let mut t = T::new();
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20"><rect width="20" height="20" fill="#ff0000"/></svg>"##;
+    let aid = t.app().ed.doc.add_asset("image/svg+xml", svg.to_vec());
+    let img = ImageObj { frame: Frame::new(0.0, 0.0, 20.0, 20.0), asset: aid.clone(), latex: None, mono: false, recolor: Vec::new() };
+    let id = t.app().ed.insert(Object::new(Kind::Image(img), Style::default()));
+    let recolor_of = |t: &mut T| match &t.app().ed.page().get(&id).unwrap().kind {
+        Kind::Image(i) => i.clone(),
+        _ => unreachable!(),
+    };
+    let asset = t.app().ed.doc.assets.get(&aid).unwrap().clone();
+    let mut cache = TextureCache::default();
+    let before = recolor_of(&mut t);
+    let (key0, a0) = cache.recolored(&aid, &asset, &before, (0, 0, 0));
+    t.app().ed.update_many(std::slice::from_ref(&id), |o| {
+        if let Kind::Image(i) = &mut o.kind {
+            i.recolor = vec![(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255))];
+        }
+    });
+    let changed = recolor_of(&mut t);
+    assert_eq!(changed.recolor.len(), 1);
+    let (key1, a1) = cache.recolored(&aid, &asset, &changed, (0, 0, 0));
+    assert_ne!(key0, key1, "the cache key follows the recoloration");
+    assert!(String::from_utf8_lossy(&a1.data).contains("#0000ff") && !String::from_utf8_lossy(&a1.data).contains("#ff0000"));
+    assert_eq!(a0.data.as_slice(), svg.as_slice(), "no replacement: the original bytes");
+    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    let (red, blue) = (cache.get(&ctx, &key0, &a0, 40.0).unwrap(), cache.get(&ctx, &key1, &a1, 40.0).unwrap());
+    assert_ne!(red.avg, blue.avg, "the texture is drawn with the new color");
+    assert!(t.app().ed.undo());
+    assert!(recolor_of(&mut t).recolor.is_empty(), "one undo step per change");
+}
+
+#[test]
 fn svg_images_are_rasterized_at_the_size_they_are_shown() {
     use crate::render::TextureCache;
     let ctx = egui::Context::default();

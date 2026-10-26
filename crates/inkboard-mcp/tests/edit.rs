@@ -90,13 +90,25 @@ fn reference_board(path: &Path) {
     tb.id = Id::from("tb");
     objs.push(tb);
     let mut im = Object::new(
-        Kind::Image(inkboard_core::model::ImageObj { frame: Frame::new(600.0, 200.0, 50.0, 50.0), asset: asset.clone(), latex: None, mono: false }),
+        Kind::Image(inkboard_core::model::ImageObj {
+            frame: Frame::new(600.0, 200.0, 50.0, 50.0),
+            asset: asset.clone(),
+            latex: None,
+            mono: false,
+            recolor: Vec::new(),
+        }),
         Style::default(),
     );
     im.id = Id::from("im");
     objs.push(im);
     let mut fm = Object::new(
-        Kind::Image(inkboard_core::model::ImageObj { frame: Frame::new(600.0, 300.0, 50.0, 30.0), asset, latex: Some("x^2".into()), mono: true }),
+        Kind::Image(inkboard_core::model::ImageObj {
+            frame: Frame::new(600.0, 300.0, 50.0, 30.0),
+            asset,
+            latex: Some("x^2".into()),
+            mono: true,
+            recolor: Vec::new(),
+        }),
         Style::default(),
     );
     fm.id = Id::from("fm");

@@ -309,6 +309,109 @@ fn color_section(app: &mut App, ui: &mut Ui, target: &Target, dark: bool) {
     }
 }
 
+/// Color swatches shown at most for the colors of an imported SVG (very colorful ones are cut).
+const RECOLOR_MAX: usize = 24;
+
+/// Popup of a recolor swatch: palette and picker. Returns the chosen color and whether it is a live change (picker drag).
+fn recolor_popup(resp: &Response, current: [u8; 3], dark: bool) -> Option<(Color, bool)> {
+    let mut out = None;
+    egui::Popup::from_toggle_button_response(resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        ui.set_max_width(WIDTH - 40.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
+            for c in PALETTE {
+                if swatch(ui, Some(c), false, dark).clicked() {
+                    out = Some((c, false));
+                }
+            }
+        });
+        let mut col = Color32::from_rgb(current[0], current[1], current[2]);
+        if egui::color_picker::color_picker_color32(ui, &mut col, egui::color_picker::Alpha::Opaque) {
+            out = Some((Color::Rgb(col.r(), col.g(), col.b()), true));
+        }
+    });
+    out
+}
+
+/// New `recolor` list once the original color `from` becomes `to` (the pair is dropped when `to` is the original again).
+fn recolor_with(list: &[(Color, Color)], from: Color, to: Color) -> Vec<(Color, Color)> {
+    let mut out: Vec<(Color, Color)> = list.iter().copied().filter(|(f, _)| *f != from).collect();
+    if to != from {
+        out.push((from, to));
+    }
+    out
+}
+
+/// Colors of the selected SVG image: one swatch per color of the file, to replace each one.
+fn recolor_section(app: &mut App, ui: &mut Ui, target: &Target, dark: bool) {
+    let [obj] = target.objs.as_slice() else { return };
+    let Kind::Image(img) = &obj.kind else { return };
+    if img.is_tinted() {
+        return;
+    }
+    let Some(asset) = app.ed.doc.assets.get(&img.asset).filter(|a| a.mime == "image/svg+xml") else { return };
+    // the panel is drawn every frame: scan the file only when the selected asset changes
+    thread_local!(static FOUND: std::cell::RefCell<Option<(inkboard_core::AssetId, Vec<Color>)>> = const { std::cell::RefCell::new(None) });
+    let found = FOUND.with_borrow_mut(|memo| match memo {
+        Some((a, found)) if *a == img.asset => found.clone(),
+        _ => {
+            let found: Vec<Color> = inkboard_core::svgcolor::svg_colors(&asset.data).into_iter().map(|(r, g, b)| Color::Rgb(r, g, b)).collect();
+            *memo = Some((img.asset.clone(), found.clone()));
+            found
+        }
+    });
+    if found.is_empty() {
+        return;
+    }
+    let (id, list) = (obj.id.clone(), img.recolor.clone());
+    let current = |c: Color| list.iter().find(|(f, _)| *f == c).map_or(c, |(_, t)| *t);
+    let set = |app: &mut App, new: Vec<(Color, Color)>, live: bool| {
+        if live {
+            app.live_apply(&move |o| {
+                if let Kind::Image(i) = &mut o.kind {
+                    i.recolor.clone_from(&new);
+                }
+            });
+        } else {
+            app.ed.update_many(std::slice::from_ref(&id), |o| {
+                if let Kind::Image(i) = &mut o.kind {
+                    i.recolor.clone_from(&new);
+                }
+            });
+        }
+    };
+    let mut change: Option<(Vec<(Color, Color)>, bool)> = None;
+    theme::field_label(ui, "Image colors");
+    ui.add_space(-2.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
+        for &from in found.iter().take(RECOLOR_MAX) {
+            let now = current(from);
+            let resp = swatch(ui, Some(now), false, dark).on_hover_text(tr!("Original color: {}", from.to_hex()));
+            let (r, g, b) = now.resolve(dark);
+            if let Some((to, live)) = recolor_popup(&resp, [r, g, b], dark) {
+                change = Some((recolor_with(&list, from, to), live));
+            }
+        }
+    });
+    if found.len() > RECOLOR_MAX {
+        ui.weak(tr!("+ {} more colors", found.len() - RECOLOR_MAX));
+    }
+    ui.horizontal_wrapped(|ui| {
+        let all = ui.button(t("All one color"));
+        if let Some((to, live)) = recolor_popup(&all, [0x4f, 0x6d, 0xf5], dark) {
+            change = Some((found.iter().map(|&f| (f, to)).collect(), live));
+        }
+        if !list.is_empty() && ui.button(t("Original colors")).clicked() {
+            change = Some((Vec::new(), false));
+        }
+    });
+    if let Some((new, live)) = change {
+        set(app, new, live);
+    }
+    ui.add_space(6.0);
+}
+
 /// Thickness and stroke style.
 fn stroke_section(app: &mut App, ui: &mut Ui, target: &Target) {
     let highlighter = target.highlighter(app.tool);
@@ -493,6 +596,7 @@ fn props(app: &mut App, ui: &mut Ui) {
     if has_sel || drawing {
         code_lang_section(app, ui, &target);
         color_section(app, ui, &target, dark);
+        recolor_section(app, ui, &target, dark);
         if !target.only_text() {
             stroke_section(app, ui, &target);
         }

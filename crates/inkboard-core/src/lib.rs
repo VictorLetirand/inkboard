@@ -54,6 +54,7 @@ pub mod serial;
 pub mod spatial;
 pub mod style;
 pub mod svg;
+pub mod svgcolor;
 pub mod text;
 pub mod transform;
 

@@ -154,7 +154,7 @@ fn object(s: &Spec, id: Id, attach: &[Id], doc: &mut Document) -> Object {
     let kind = match &s.shape {
         Shape::Box(geom) => Kind::Box(BoxObj { geom: *geom, frame: f, label: Label::new(&s.text, 20.0, Align::Center), lang: None }),
         Shape::Image { latex, mono, data } => {
-            Kind::Image(ImageObj { frame: f, asset: doc.add_asset("image/png", data.clone()), latex: latex.clone(), mono: *mono })
+            Kind::Image(ImageObj { frame: f, asset: doc.add_asset("image/png", data.clone()), latex: latex.clone(), mono: *mono, recolor: Vec::new() })
         }
         Shape::Table { rows, cols } => {
             let mut t = Table::new(Pt::new(f.x, f.y), *rows, *cols);

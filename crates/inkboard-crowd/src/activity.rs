@@ -418,7 +418,7 @@ fn create(g: &mut SimGuest, now: u64) -> bool {
         let Some(asset) = icon else { return false };
         let s = 40.0 + g.rng.range(0.0, 50.0);
         Object::new(
-            Kind::Image(ImageObj { frame: Frame::new(at.x, at.y, s, s), asset, latex: None, mono: false }),
+            Kind::Image(ImageObj { frame: Frame::new(at.x, at.y, s, s), asset, latex: None, mono: false, recolor: Vec::new() }),
             Style { width: 0.0, fill: None, ..Style::default() },
         )
     };
@@ -515,7 +515,13 @@ fn upload_tick(g: &mut SimGuest, now: u64) -> bool {
     if up.stored {
         let (w, h) = (240.0, 180.0);
         let mut o = Object::new(
-            Kind::Image(ImageObj { frame: Frame::new(up.frame_at.x, up.frame_at.y, w, h), asset: Id(up.hash.clone()), latex: None, mono: false }),
+            Kind::Image(ImageObj {
+                frame: Frame::new(up.frame_at.x, up.frame_at.y, w, h),
+                asset: Id(up.hash.clone()),
+                latex: None,
+                mono: false,
+                recolor: Vec::new(),
+            }),
             Style { width: 0.0, fill: None, ..Style::default() },
         );
         o.id = new_id(g);

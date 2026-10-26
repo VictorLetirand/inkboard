@@ -547,7 +547,10 @@ fn an_uploaded_image_reaches_the_board_and_is_served_to_the_others_by_hash() {
     let page = w.page();
     let image = |asset: &str| {
         let style = Style { width: 0.0, fill: None, ..Style::default() };
-        let mut o = Object::new(Kind::Image(ImageObj { frame: Frame::new(10.0, 10.0, 50.0, 50.0), asset: asset.into(), latex: None, mono: false }), style);
+        let mut o = Object::new(
+            Kind::Image(ImageObj { frame: Frame::new(10.0, 10.0, 50.0, 50.0), asset: asset.into(), latex: None, mono: false, recolor: Vec::new() }),
+            style,
+        );
         o.id = "pic".into();
         o
     };
@@ -1815,7 +1818,10 @@ fn guests_who_arrive_within_a_few_seconds_share_one_encoding_of_the_board() {
     assert_eq!(w.host.stats().snapshots_built, 1, "one encoding for six arrivals");
     // an image the board gains makes the encoding obsolete: a newcomer must find the image in its list
     let id = w.ed.doc.add_asset("image/png", vec![1, 2, 3]);
-    let img = Object::new(Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: id.clone(), latex: None, mono: false }), Style::default());
+    let img = Object::new(
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: id.clone(), latex: None, mono: false, recolor: Vec::new() }),
+        Style::default(),
+    );
     w.ed.insert(img);
     w.rounds(3);
     let late = w.add_guest("late", Role::Edit);
