@@ -310,6 +310,22 @@ fn fill_page(
     }
 }
 
+/// Sets the fields added by protocol v4 on a share of the objects (drop shadows, enlarged arrowheads, recolored SVG icons), with its own
+/// random stream: the rest of the board stays the one `seed_document` made. Opt-in (the load-test host reads `CROWD_NEW_FIELDS`).
+pub fn add_v4_fields(doc: &mut Document, seed: u64) {
+    let mut rng = Rng::stream(seed, 0x5ad0);
+    for o in doc.pages.iter_mut().flat_map(|p| p.objects.iter_mut()) {
+        match &mut o.kind {
+            Kind::Box(_) if rng.chance(0.4) => o.style.shadow = true,
+            Kind::Connector(c) if rng.chance(0.6) => c.set_head_scale(0.5 + rng.f64() as f32 * 3.5),
+            Kind::Image(i) if !i.mono && i.latex.is_none() && doc.assets.get(&i.asset).is_some_and(|a| a.mime == "image/svg+xml") && rng.chance(0.5) => {
+                i.recolor = vec![(*rng.pick(&PALETTE), *rng.pick(&PALETTE)), (*rng.pick(&PALETTE), Color::Ink)];
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Total bytes of the images of a document.
 #[must_use]
 pub fn asset_bytes(doc: &Document) -> u64 {
@@ -350,5 +366,21 @@ mod tests {
             }
         }
         assert!(asset_bytes(&a) > 5_000_000);
+    }
+
+    #[test]
+    fn the_v4_fields_are_added_to_a_share_of_the_objects_and_stay_valid() {
+        let mut doc = seed_document(&BoardSpec::sized(1_000, 7));
+        let before = serde_json::to_string(&doc.pages).unwrap();
+        add_v4_fields(&mut doc, 7);
+        let all = || doc.pages.iter().flat_map(|p| p.objects.iter());
+        assert!(all().any(|o| o.style.shadow));
+        assert!(all().any(|o| matches!(&o.kind, Kind::Connector(c) if c.has_custom_head_scale())));
+        assert!(all().any(|o| matches!(&o.kind, Kind::Image(i) if !i.recolor.is_empty())));
+        assert_ne!(before, serde_json::to_string(&doc.pages).unwrap());
+        let l = inkboard_session::Limits::host_trust();
+        for o in all() {
+            inkboard_session::limits::check_object(&l, o).unwrap_or_else(|e| panic!("{e}: {o:?}"));
+        }
     }
 }
