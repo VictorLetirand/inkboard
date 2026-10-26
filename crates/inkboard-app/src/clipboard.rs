@@ -59,12 +59,10 @@ fn parse_tsv(text: &str) -> Option<Vec<Vec<String>>> {
         row.push(cell);
         rows.push(row);
     }
-    let cols = rows.iter().map(Vec::len).max()?;
-    if rows.len() * cols < 2 {
+    // spreadsheets always write rectangular data: ragged rows or an empty first column are tab-indented text (code), not a table
+    let cols = rows.first()?.len();
+    if rows.len() * cols < 2 || rows.iter().any(|r| r.len() != cols) || rows.iter().all(|r| r[0].is_empty()) {
         return None;
-    }
-    for r in &mut rows {
-        r.resize(cols, String::new());
     }
     Some(rows)
 }

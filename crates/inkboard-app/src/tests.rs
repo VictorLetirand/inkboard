@@ -2288,12 +2288,22 @@ fn pasted_quoted_cell_keeps_its_line_break_tab_and_quotes() {
 }
 
 #[test]
-fn pasted_irregular_rows_are_padded_with_empty_cells() {
+fn pasted_rows_with_empty_cells_keep_their_place() {
     let mut t = T::new();
-    let tb = pasted_table(&mut t, "a\tb\tc\nd\ne\tf");
+    let tb = pasted_table(&mut t, "a\tb\tc\nd\t\t\ne\tf\t");
     assert_eq!((tb.rows(), tb.cols()), (3, 3));
     assert_eq!(tb.cell(1, 2).unwrap().to_plain(), "");
     assert_eq!(tb.cell(2, 1).unwrap().to_plain(), "f");
+}
+
+#[test]
+fn pasting_tab_indented_code_stays_a_text_box() {
+    for code in ["fn main() {\n\tprintln!();\n}", "\tlet a = 1;\n\tlet b = 2;"] {
+        let mut t = T::new();
+        t.app().paste_event(code);
+        assert_eq!(t.boxes().len(), 1, "{code:?}");
+        assert_eq!(t.objects().len(), 1, "{code:?}");
+    }
 }
 
 #[test]
