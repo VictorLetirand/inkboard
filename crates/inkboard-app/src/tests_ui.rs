@@ -753,6 +753,21 @@ fn the_connector_path_buttons_are_translated() {
 }
 
 #[test]
+fn a_shadowed_image_is_drawn_at_every_zoom_with_a_shadow_that_follows_its_silhouette() {
+    let mut t = T::new();
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#ff0000"/></svg>"##;
+    let asset = t.app().ed.doc.add_asset("image/svg+xml", svg.to_vec());
+    let img = ImageObj { frame: Frame::new(100.0, 100.0, 24.0, 24.0), asset, latex: None, mono: false, recolor: Vec::new() };
+    t.app().ed.insert(Object::new(Kind::Image(img), Style { shadow: true, ..Style::default() }));
+    // full size (silhouette shadow), a few pixels wide (flat quad, rectangular shadow), below the shadow threshold
+    for zoom in [1.0, 0.3, 0.1] {
+        t.app().set_view(View { x: 0.0, y: 0.0, zoom });
+        t.h.step();
+        t.h.step();
+    }
+}
+
+#[test]
 fn the_lock_button_toggles_and_the_tool_tips_are_translated() {
     set_for_thread(Some(Lang::En));
     let mut t = T::new();

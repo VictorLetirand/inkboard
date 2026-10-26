@@ -537,7 +537,16 @@ impl Renderer<'_> {
     fn object<'x>(&mut self, o: &Object, skip_text: bool, mul: f32, get: &dyn Fn(&Id) -> Option<&'x Object>) {
         let op = o.style.opacity * mul;
         if o.style.shadow && self.cam.zoom >= SHADOW_MIN_ZOOM {
-            self.shadow(o, op);
+            match &o.kind {
+                // the shadow of an image follows its silhouette (a transparent icon must not get a grey box): the image itself, all black
+                Kind::Image(i) if num::f32(i.frame.w.max(i.frame.h)) * self.cam.zoom >= IMAGE_FLAT_PT => {
+                    let mut ghost = i.clone();
+                    ghost.frame.x += f64::from(SHADOW_OFFSET);
+                    ghost.frame.y += f64::from(SHADOW_OFFSET);
+                    self.image(&ghost, self.shadow_color(op));
+                }
+                _ => self.shadow(o, op),
+            }
         }
         match &o.kind {
             Kind::Box(b) => self.boxed(o, b, skip_text, op),
