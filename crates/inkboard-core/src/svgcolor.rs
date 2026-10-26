@@ -62,8 +62,8 @@ fn parse_color(v: &str) -> Option<Rgb> {
         let d = |i: usize, n: usize| u8::from_str_radix(&h[i..i + n], 16).ok();
         return match h.len() {
             // `#rgba` and `#rrggbbaa`: the alpha is kept by `apply_recolor`
-            3 | 4 => Some((d(0, 1)? * 17, d(1, 1)? * 17, d(2, 1)? * 17)).filter(|_| h.len() == 3 || d(3, 1).is_some()),
-            6 | 8 => Some((d(0, 2)?, d(2, 2)?, d(4, 2)?)).filter(|_| h.len() == 6 || d(6, 2).is_some()),
+            3 | 4 => (h.len() == 3 || d(3, 1).is_some()).then_some((d(0, 1)? * 17, d(1, 1)? * 17, d(2, 1)? * 17)),
+            6 | 8 => (h.len() == 6 || d(6, 2).is_some()).then_some((d(0, 2)?, d(2, 2)?, d(4, 2)?)),
             _ => None,
         };
     }
