@@ -2259,3 +2259,86 @@ fn an_unreadable_svg_is_refused_without_changing_the_board() {
     assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     let _ = std::fs::remove_file(bad);
 }
+
+fn pasted_table(t: &mut T, text: &str) -> inkboard_core::Table {
+    t.app().paste_event(text);
+    let objs = t.objects();
+    assert_eq!(objs.len(), 1);
+    let Kind::Table(tb) = &objs[0].kind else { panic!("not a table") };
+    tb.clone()
+}
+
+#[test]
+fn pasting_tab_separated_data_creates_a_table() {
+    let mut t = T::new();
+    let tb = pasted_table(&mut t, "a\tb\tc\r\nd\te\tf\r\n");
+    assert_eq!((tb.rows(), tb.cols()), (2, 3));
+    assert_eq!(tb.cell(0, 2).unwrap().to_plain(), "c");
+    assert_eq!(tb.cell(1, 0).unwrap().to_plain(), "d");
+}
+
+#[test]
+fn pasted_quoted_cell_keeps_its_line_break_tab_and_quotes() {
+    let mut t = T::new();
+    let tb = pasted_table(&mut t, "\"x\ny\tz\"\t\"say \"\"hi\"\"\"\nlast\tend");
+    assert_eq!((tb.rows(), tb.cols()), (2, 2));
+    assert_eq!(tb.cell(0, 0).unwrap().to_plain(), "x\ny\tz");
+    assert_eq!(tb.cell(0, 1).unwrap().to_plain(), "say \"hi\"");
+    assert_eq!(tb.cell(1, 1).unwrap().to_plain(), "end");
+}
+
+#[test]
+fn pasted_rows_with_empty_cells_keep_their_place() {
+    let mut t = T::new();
+    let tb = pasted_table(&mut t, "a\tb\tc\nd\t\t\ne\tf\t");
+    assert_eq!((tb.rows(), tb.cols()), (3, 3));
+    assert_eq!(tb.cell(1, 2).unwrap().to_plain(), "");
+    assert_eq!(tb.cell(2, 1).unwrap().to_plain(), "f");
+}
+
+#[test]
+fn pasting_tab_indented_code_stays_a_text_box() {
+    for code in ["fn main() {\n\tprintln!();\n}", "\tlet a = 1;\n\tlet b = 2;"] {
+        let mut t = T::new();
+        t.app().paste_event(code);
+        assert_eq!(t.boxes().len(), 1, "{code:?}");
+        assert_eq!(t.objects().len(), 1, "{code:?}");
+    }
+}
+
+#[test]
+fn pasting_text_without_tab_stays_a_text_box() {
+    let mut t = T::new();
+    t.app().paste_event("a,b,c\n1,2,3");
+    assert_eq!(t.boxes().len(), 1);
+    assert_eq!(t.objects().len(), 1);
+}
+
+#[test]
+fn pasting_a_single_cell_without_tab_stays_a_text_box() {
+    let mut t = T::new();
+    t.app().paste_event("just one cell\n");
+    assert_eq!(t.boxes().len(), 1);
+    assert_eq!(t.objects().len(), 1);
+}
+
+#[test]
+fn pasted_table_is_truncated_to_the_limits_and_fits_the_session() {
+    let mut t = T::new();
+    let row = vec!["x".repeat(6000); 60].join("\t");
+    let text = vec![row; 250].join("\n");
+    let tb = pasted_table(&mut t, &text);
+    assert_eq!((tb.rows(), tb.cols()), (200, 50));
+    let o = t.objects().remove(0);
+    inkboard_session::limits::check_object(&inkboard_session::limits::Limits::default(), &o).expect("within the session limits");
+    assert!(t.app().toast.is_some(), "the truncation is announced");
+}
+
+#[test]
+fn undo_removes_a_pasted_table_in_one_step() {
+    let mut t = T::new();
+    pasted_table(&mut t, "a\tb\nc\td");
+    t.app().ed.undo();
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
+    assert!(!t.app().ed.can_undo());
+}
