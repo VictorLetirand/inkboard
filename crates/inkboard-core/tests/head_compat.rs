@@ -87,6 +87,44 @@ fn setting_an_original_head_drops_the_extended_one_and_the_other_way_round() {
 }
 
 #[test]
+fn head_scale_is_written_only_when_changed_and_an_old_file_is_rewritten_identically() {
+    let plain = connector(|_| {});
+    let json = serde_json::to_string(&plain).unwrap();
+    assert!(!json.contains("head_scale"), "{json}");
+    assert_eq!(serde_json::from_str::<Connector>(&json).unwrap(), plain);
+    // a file written before the field existed loads with the usual size and is written back without it
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let loaded: Connector = serde_json::from_value(v.clone()).unwrap();
+    assert!((loaded.head_scale - 1.0).abs() < f32::EPSILON);
+    assert_eq!(serde_json::to_value(&loaded).unwrap(), v);
+    // a changed size round-trips
+    let big = connector(|c| c.set_head_scale(2.5));
+    let json = serde_json::to_string(&big).unwrap();
+    assert!(json.contains("head_scale"), "{json}");
+    assert_eq!(serde_json::from_str::<Connector>(&json).unwrap(), big);
+}
+
+#[test]
+fn head_scale_out_of_range_is_brought_back_and_a_non_finite_one_is_ignored() {
+    let mut c = connector(|_| {});
+    for (asked, kept) in [(0.1, 0.5), (9.0, 4.0), (0.5, 0.5), (4.0, 4.0), (1.7, 1.7)] {
+        c.set_head_scale(asked);
+        assert!((c.head_scale - kept).abs() < 1e-6, "{asked}");
+    }
+    c.set_head_scale(2.0);
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        c.set_head_scale(bad);
+        assert!((c.head_scale - 2.0).abs() < 1e-6, "{bad}");
+    }
+    // a hostile file cannot make the drawn size leave the range either
+    c.head_scale = 1000.0;
+    assert!((c.head_size(3.0) - 13.5 * 4.0).abs() < 1e-9);
+    c.head_scale = f32::NAN;
+    assert!((c.head_size(3.0) - 13.5).abs() < 1e-9);
+    assert!((connector(|_| {}).head_size(3.0) - 13.5).abs() < 1e-9, "the default size is the one always drawn");
+}
+
+#[test]
 fn names_are_unique_and_read_back() {
     let mut seen = std::collections::HashSet::new();
     for e in HeadExt::ALL {

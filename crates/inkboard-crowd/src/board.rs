@@ -86,6 +86,7 @@ fn style(rng: &mut Rng) -> Style {
         dash: if rng.chance(0.1) { Dash::Dashed } else { Dash::Solid },
         opacity: 1.0,
         roundness: 0.0,
+        ..Style::default()
     }
 }
 

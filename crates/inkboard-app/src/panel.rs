@@ -473,6 +473,28 @@ fn corners_section(app: &mut App, ui: &mut Ui, target: &Target) {
     });
 }
 
+/// Drop shadow on or off.
+fn shadow_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    row(ui, "Shadow", |ui| {
+        let on = target.style.shadow;
+        if theme::seg_button(ui, on, "Drop shadow", |p, r, c| {
+            let body = ERect::from_center_size(r.center() + vec2(-2.0, -2.0), vec2(14.0, 11.0));
+            p.rect_filled(body.translate(vec2(3.0, 3.0)), 2.0, c.gamma_multiply(0.35));
+            p.rect_stroke(body, 2.0, Stroke::new(1.8_f32, c), egui::StrokeKind::Middle);
+        })
+        .clicked()
+        {
+            set_shadow(app, &target.ids, !on);
+        }
+    });
+}
+
+/// Turns the drop shadow of the objects among `ids` on or off (and of the next ones drawn), as one undo step.
+pub(crate) fn set_shadow(app: &mut App, ids: &[Id], on: bool) {
+    app.style.shadow = on;
+    app.ed.update_many(ids, |o| o.style.shadow = on);
+}
+
 /// Path and arrowheads of the connectors.
 fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
     let cur = target.objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
@@ -516,8 +538,30 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
                 }
             });
         }
+        row(ui, "Arrowhead size", |ui| {
+            for (scale, name, tip) in HEAD_SIZES {
+                if theme::seg_button(ui, (c.head_scale - scale).abs() < 0.05, tip, |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(13.0)))
+                    .clicked()
+                {
+                    set_head_scale(app, &target.ids, scale);
+                }
+            }
+        });
     }
 }
+
+/// Sets the arrowhead size of the connectors among `ids`, as one undo step.
+pub(crate) fn set_head_scale(app: &mut App, ids: &[Id], scale: f32) {
+    app.ed.update_many(ids, |o| {
+        if let Kind::Connector(c) = &mut o.kind {
+            c.set_head_scale(scale);
+        }
+    });
+}
+
+/// Steps of the arrowhead size: size factor, label and tooltip.
+pub(crate) const HEAD_SIZES: [(f32, &str, &str); 4] =
+    [(0.6, "S", "Small arrowheads"), (1.0, "M", "Medium arrowheads"), (1.6, "L", "Large arrowheads"), (2.4, "XL", "Extra large arrowheads")];
 
 /// Tooltip of the button of an extended arrowhead (translated by the button).
 fn head_ext_tip(e: HeadExt) -> &'static str {
@@ -602,6 +646,9 @@ fn props(app: &mut App, ui: &mut Ui) {
         }
         if target.shapes() || matches!(app.tool, Tool::Shape(BoxGeom::Rect) | Tool::Sticky) {
             corners_section(app, ui, &target);
+        }
+        if !target.only_pen() && !target.highlighter(app.tool) && !matches!(app.tool, Tool::Pen) {
+            shadow_section(app, ui, &target);
         }
     }
     if target.connectors() || matches!(app.tool, Tool::Line | Tool::Arrow) {

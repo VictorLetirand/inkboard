@@ -7,7 +7,8 @@ use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, su
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::num;
 use inkboard_core::{
-    Align, ApproxMeasurer, Arrowhead, Color, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route,
+    Align, ApproxMeasurer, Arrowhead, Color, Connector, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect,
+    RichText, Route,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -113,7 +114,7 @@ fn opt_str<'a>(a: &'a Value, k: &str) -> Res<Option<&'a str>> {
     }
 }
 
-fn bool_arg(a: &Value, k: &str) -> Res<Option<bool>> {
+pub(super) fn bool_arg(a: &Value, k: &str) -> Res<Option<bool>> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(*b)),
@@ -129,6 +130,12 @@ pub(super) fn num_arg(a: &Value, k: &str, min: f64, max: f64) -> Res<Option<f64>
             if (min..=max).contains(&n) { Ok(Some(n)) } else { Err(format!("\"{k}\" is out of range: {n} (allowed: {min} to {max})")) }
         }
     }
+}
+
+/// The `head_scale` parameter: the size factor of the arrowheads, within the range the connector accepts.
+pub(super) fn head_scale_arg(a: &Value) -> Res<Option<f32>> {
+    let range = Connector::HEAD_SCALE_RANGE;
+    Ok(num_arg(a, "head_scale", f64::from(*range.start()), f64::from(*range.end()))?.map(num::f32))
 }
 
 fn enum_arg<T: Copy>(a: &Value, k: &str, table: &[(&str, T)]) -> Res<Option<T>> {
@@ -197,6 +204,9 @@ pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
         json!({"stroke": st.stroke.to_hex(), "fill": st.fill.map(Color::to_hex), "width": st.width, "dash": name_of(&DASHES, st.dash),
             "opacity": r3(f64::from(st.opacity)), "roundness": r3(f64::from(st.roundness))}),
     );
+    if st.shadow {
+        map.get_mut("style").and_then(Value::as_object_mut).expect("style").insert("shadow".into(), json!(true));
+    }
     let font = |l: &Label| json!({"family": name_of(&FAMILIES, l.family), "size": l.size, "align": name_of(&ALIGNS, l.align)});
     match &o.kind {
         Kind::Box(b) => {
@@ -229,6 +239,9 @@ pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
             let plain = |h: Arrowhead, ext: Option<HeadExt>| ext.is_none() && [Arrowhead::None, Arrowhead::Arrow].contains(&h);
             if !plain(c.head_start, c.head_start_ext) || !plain(c.head_end, c.head_end_ext) {
                 map.insert("heads".into(), json!({"start": head(c.head_start, c.head_start_ext), "end": head(c.head_end, c.head_end_ext)}));
+            }
+            if c.has_custom_head_scale() {
+                map.insert("head_scale".into(), json!(r3(f64::from(c.head_scale))));
             }
             map.insert("stroke".into(), json!(st.stroke.to_hex()));
         }
@@ -358,6 +371,7 @@ pub(super) struct Patch {
     dash: Option<Dash>,
     opacity: Option<f32>,
     roundness: Option<f32>,
+    shadow: Option<bool>,
     size: Option<f64>,
     family: Option<FontFamily>,
     align: Option<Align>,
@@ -368,6 +382,7 @@ pub(super) struct Patch {
     arrow: Option<(Arrowhead, Arrowhead)>,
     head_start: Option<HeadKind>,
     head_end: Option<HeadKind>,
+    head_scale: Option<f32>,
     from: Option<Id>,
     to: Option<Id>,
     cell: Option<Cell>,
@@ -389,6 +404,7 @@ impl Patch {
             dash: enum_arg(a, "dash", &DASHES)?,
             opacity: num_arg(a, "opacity", 0.0, 1.0)?.map(num::f32),
             roundness: num_arg(a, "roundness", 0.0, 1.0)?.map(num::f32),
+            shadow: bool_arg(a, "shadow")?,
             size: num_arg(a, "font_size", 4.0, 400.0)?,
             family: enum_arg(a, "font_family", &FAMILIES)?,
             align: enum_arg(a, "align", &ALIGNS)?,
@@ -398,6 +414,7 @@ impl Patch {
             arrow: enum_arg(a, "arrow", &ARROWS)?,
             head_start: head_arg(a, "head_start")?,
             head_end: head_arg(a, "head_end")?,
+            head_scale: head_scale_arg(a)?,
             from: attachable("from")?,
             to: attachable("to")?,
             cell: None,
@@ -473,6 +490,9 @@ impl Patch {
         if let Some(v) = self.roundness {
             o.style.roundness = v;
         }
+        if let Some(v) = self.shadow {
+            o.style.shadow = v;
+        }
         if let Some(l) = self.locked {
             o.locked = l;
         }
@@ -484,6 +504,7 @@ impl Patch {
             ("arrow", self.arrow.is_some()),
             ("head_start", self.head_start.is_some()),
             ("head_end", self.head_end.is_some()),
+            ("head_scale", self.head_scale.is_some()),
             ("from", self.from.is_some()),
             ("to", self.to.is_some()),
         ];
@@ -537,6 +558,9 @@ impl Patch {
                     c.route = r;
                 }
                 self.apply_heads(c);
+                if let Some(v) = self.head_scale {
+                    c.set_head_scale(v);
+                }
                 if let Some(id) = &self.from {
                     c.start = inkboard_core::End::bound(id.clone());
                 }

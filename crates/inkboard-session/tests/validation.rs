@@ -316,3 +316,18 @@ fn images_by_hash_are_chunked_and_verified() {
     assert!(small.push(&parts[0]).is_err(), "more bytes than announced");
     assert_eq!(chunks(&[], "h", 10).len(), 1, "an empty image is one empty last chunk");
 }
+
+#[test]
+fn a_connector_head_scale_must_be_finite_and_within_the_allowed_range() {
+    let with_scale = |scale: f32| {
+        let mut c = inkboard_core::Connector::straight(Pt::new(0.0, 0.0), Pt::new(100.0, 0.0));
+        c.head_scale = scale;
+        Object::new(Kind::Connector(c), Style::default())
+    };
+    for ok in [0.5, 1.0, 2.4, 4.0] {
+        check_object(&l(), &with_scale(ok)).unwrap_or_else(|e| panic!("{ok}: {e}"));
+    }
+    for bad in [0.0, 0.49, 4.01, 1000.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(check_object(&l(), &with_scale(bad)).is_err(), "{bad}");
+    }
+}
