@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+## [0.2.0-beta.3] - 2026-10-27
+
+**Pre-release.** Four of the most requested whiteboard features, and live sharing moves to protocol v4: update every app that hosts or joins a session.
+
 ### Added
 
 - **Paste from a spreadsheet:** a range copied from Excel, LibreOffice or Google Sheets (tab-separated text, quoted cells included) becomes a table, sized to its content, in one undo step. Up to 200 rows × 50 columns (a message says when the paste was cut). Tab-indented text such as code is still pasted as text.
@@ -79,6 +83,7 @@ has been tried by hand on a few devices and networks, but not widely. See the kn
   private address (S-06), and a single frame over 1 MiB from the host (S-04, recovered by a snapshot).
 - Linux and macOS builds pass CI but have not been used by hand yet.
 
-[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-beta.2...HEAD
+[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-beta.3...HEAD
+[0.2.0-beta.3]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.1
