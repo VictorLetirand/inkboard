@@ -85,6 +85,7 @@ fn convert(raw: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> 
         },
         opacity,
         roundness: if raw.get("round").and_then(Value::as_bool).unwrap_or(false) { 0.45 } else { 0.0 },
+        shadow: false,
     };
     let label = || Label {
         text: RichText::plain(s(raw, "text").unwrap_or("")),
@@ -157,7 +158,7 @@ fn convert(raw: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> 
             if !assets.contains_key(&asset) {
                 return None;
             }
-            Object::new(Kind::Image(ImageObj { frame, asset, latex: None, mono: false }), Style { width: 0.0, fill: None, ..style })
+            Object::new(Kind::Image(ImageObj { frame, asset, latex: None, mono: false, recolor: Vec::new() }), Style { width: 0.0, fill: None, ..style })
         }
         _ => return None,
     };

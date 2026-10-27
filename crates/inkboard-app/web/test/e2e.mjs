@@ -428,6 +428,42 @@ try {
     hostObjects = after;
   });
 
+  /* ---- p. fields of protocol v4 (shadow, arrowhead size, recolored SVG): sent to the guest, kept through the guest's own edit */
+  await scenario('p. v4 fields (shadow, head size, recolor) reach the browser guest and survive its edit', async () => {
+    const [shapeId, imageId, connId] = (await hostAsk('rich', 'RICH ')).split(' ');
+    const holds = (s) => {
+      const f = (id) => s.fields?.find((x) => x.id === id);
+      return f(shapeId)?.shadow === true && f(imageId)?.recolor === 2 && Math.abs((f(connId)?.head_scale ?? 0) - 3) < 1e-6;
+    };
+    const got = await until(A, 'the shape with a shadow, the recolored SVG and the connector with big heads', holds, { timeout: 60000 });
+    await shot(A, 'p1-v4-objects-on-the-guest');
+    check('the guest received the shadow, the recolor pairs and the head scale set by the host', holds(got));
+    await sleep(1500); // the view of the guest may still be moving
+    const now = await state(A);
+    const before = now.fields.find((x) => x.id === shapeId).frame;
+    const [vx, vy, zoom] = now.view;
+    // screen position of the center of the shape: canvas origin + world * zoom + view offset
+    const [x0, y0] = [now.canvas[0] + (before[0] + before[2] / 2) * zoom + vx, now.canvas[1] + (before[1] + before[3] / 2) * zoom + vy];
+    check('the shape is on the screen of the guest (so that it can be grabbed)', x0 > 280 && x0 < 1340 && y0 > 80 && y0 < 780, `${Math.round(x0)},${Math.round(y0)}`);
+    await A.mouse.click(1300, 800);
+    await drag(A, x0, y0, x0 + 90, y0 + 60);
+    const moved = await until(A, 'the shape to have moved on the guest', (s) => (s.fields?.find((x) => x.id === shapeId)?.frame[0] ?? 0) > before[0] + 20, { timeout: 20000 });
+    await shot(A, 'p2-guest-moved-the-shape');
+    check('the guest moved the shape (its own edit)', true, `x ${before[0]} -> ${moved.fields.find((x) => x.id === shapeId).frame[0]}`);
+    check('the guest still holds shadow, recolor and head scale after its own edit', holds(moved));
+    let host = null;
+    for (let i = 0; i < 60; i++) {
+      host = JSON.parse(await hostAsk('fields', 'FIELDS '));
+      if (host.shape.frame[0] > before[0] + 20) break;
+      await sleep(500);
+    }
+    check('the edit reached the host', host.shape.frame[0] > before[0] + 20, `x ${host.shape.frame[0]}`);
+    check('the host still has the shadow of the shape (no loss in the round trip)', host.shape.shadow === true);
+    check('the host still has the head scale of the connector', host.connector.head_scale === 3, String(host.connector.head_scale));
+    check('the host still has the recolor of the SVG', JSON.stringify(host.image.recolor) === '[["#ff0000","#0000ff"],["#00ff00","ink"]]', JSON.stringify(host.image.recolor));
+    hostObjects = Number(await hostAsk('count', 'COUNT '));
+  });
+
   /* ---- images: paste, drop, copies */
   await scenario('images: paste and drop reach the host; copies for the guest', async () => {
     const s0 = await state(A);
@@ -653,6 +689,33 @@ try {
     const d = await until(D, 'Dave to be live', (st) => isLive(st) && st.objects > 0);
     check('a valid link pasted afterwards joins', d.state === 'live');
     await D.close();
+  });
+
+  /* ---- o. a host of the previous protocol (v3) refuses this page and says to update */
+  await scenario('o. a host of protocol v3: the page is refused with a message that says to update', async () => {
+    const oldHost = spawn(exe, ['web_bench_old_host', '--ignored', '--nocapture'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const lines = [];
+    oldHost.stdout.on('data', (d) => lines.push(...String(d).split('\n').map((l) => l.trim()).filter(Boolean)));
+    try {
+      let oldTicket = null;
+      for (let i = 0; i < 600 && !oldTicket; i++) { oldTicket = lines.find((l) => l.startsWith('OLD_TICKET '))?.slice(11) ?? null; await sleep(100); }
+      if (!oldTicket) throw new Error('the v3 host did not print its ticket');
+      const P = await newPage(ctxC, 'v3-host');
+      regularPages.push(P);
+      await open(P, oldTicket);
+      await until(P, 'the join box', (s) => s.window?.from_system);
+      await typeName(P, 'Vera');
+      await press(P, 'join_go');
+      const s = await until(P, 'the refusal', (st) => st.state === 'ended' || st.state === 'failed', { timeout: 120000 });
+      await sleep(500);
+      await shot(P, 'o1-refused-by-a-v3-host');
+      check('the v3 host answered the page with a refusal (the session ended, not "failed")', s.state === 'ended' && /Refused\(Version/.test(s.issue?.reason ?? ''), JSON.stringify(s.issue));
+      check('the message tells to update Inkboard (or reload the page)', /update Inkboard/i.test(s.issue?.message ?? '') && /another version/i.test(s.issue?.message ?? ''), s.issue?.message);
+      await P.close();
+    } finally {
+      oldHost.stdin.write('quit\n');
+      setTimeout(() => oldHost.kill(), 3000).unref();
+    }
   });
 
   /* ---- m. phone: touch */

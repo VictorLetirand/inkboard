@@ -532,7 +532,10 @@ fn cmd_board(a: &Args) -> Result<(), String> {
     let objects: usize = a.or("objects", 5_000)?;
     let spec = BoardSpec::sized(objects, a.or("seed", 1)?);
     let started = Instant::now();
-    let doc = seed_document(&spec);
+    let mut doc = seed_document(&spec);
+    if a.flag("v4") {
+        inkboard_crowd::board::add_v4_fields(&mut doc, spec.seed);
+    }
     let json = serde_json::to_vec(&doc.pages).map_err(|e| e.to_string())?.len();
     println!(
         "{} objects on {} pages, {:.1} MiB of JSON (the snapshot), {} images, {:.1} MiB of image bytes; built in {:.2} s",

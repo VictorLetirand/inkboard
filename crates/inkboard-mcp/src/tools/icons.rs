@@ -236,7 +236,7 @@ fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
         style.stroke = c;
     }
     let (id, label_id) = ed.transact(|ed| {
-        let id = ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: set.mono }), style));
+        let id = ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: set.mono, recolor: Vec::new() }), style));
         let label_id = label.map(|text| {
             let text_style = Style { stroke: Color::Ink, fill: None, width: 0.0, roundness: 0.0, ..Style::default() };
             let mut label = Label::new(text, LABEL_SIZE, Align::Center);

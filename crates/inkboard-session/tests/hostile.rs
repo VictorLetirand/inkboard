@@ -205,7 +205,7 @@ fn rich_object(kind: u8, id: &str) -> Object {
         2 => Object::new(Kind::Table(Table::new(Pt::new(1.0, 2.0), 2, 3)), Style::default()),
         3 => Object::new(Kind::Connector(Connector::new(End::bound(Id("a".into())), End::free(Pt::new(50.0, 50.0)))), Style::default()),
         4 => Object::new(
-            Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("0".repeat(64)), latex: None, mono: false }),
+            Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("0".repeat(64)), latex: None, mono: false, recolor: Vec::new() }),
             Style::default(),
         ),
         _ => {
@@ -390,7 +390,10 @@ fn hostile_object(r: [u8; 8]) -> Object {
             c.via = (0..(r[4] % 3)).map(|i| Pt::new(num(r[5].wrapping_add(i)), 1.0)).collect();
             Object::new(Kind::Connector(c), Style::default())
         }
-        4 => Object::new(Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, num(r[2]), 10.0), asset: pid(r[3]), latex: None, mono: false }), Style::default()),
+        4 => Object::new(
+            Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, num(r[2]), 10.0), asset: pid(r[3]), latex: None, mono: false, recolor: Vec::new() }),
+            Style::default(),
+        ),
         5 => {
             let mut b = boxed(id.as_str(), 0.0);
             b.group = Some(pid(r[2]));

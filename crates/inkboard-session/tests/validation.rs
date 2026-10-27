@@ -33,7 +33,7 @@
 use inkboard_core::geom::{Frame, Pt, Rect};
 use inkboard_core::model::{Id, Kind, Object, Page, PenObj, Table};
 use inkboard_core::style::Style;
-use inkboard_core::{Align, BoxGeom, Label};
+use inkboard_core::{Align, BoxGeom, Color, Label};
 use inkboard_session::assets::{AssetAssembler, chunks, hash_hex};
 use inkboard_session::limits::*;
 use inkboard_session::proto::{AssetChunk, Hello, Message, Presence, Role, Submit};
@@ -181,6 +181,19 @@ fn identifiers() {
 }
 
 #[test]
+fn image_color_replacements_are_bounded() {
+    let img = |n: usize| {
+        let recolor = (0..n).map(|i| (Color::rgb(i as u8, 0, 0), Color::Ink)).collect();
+        Object::new(
+            Kind::Image(inkboard_core::ImageObj { frame: Frame::new(0.0, 0.0, 10.0, 10.0), asset: Id("a".into()), latex: None, mono: false, recolor }),
+            Style::default(),
+        )
+    };
+    assert!(!refused(img(256)));
+    assert!(matches!(check_object(&l(), &img(257)), Err(Violation::TooMany { what: "color replacements", .. })));
+}
+
+#[test]
 fn strokes_and_tables_must_be_consistent() {
     let pen = |n: usize, pressures: Option<usize>| {
         let pts: Vec<Pt> = (0..n).map(|i| Pt::new(i as f64, 0.0)).collect();
@@ -302,4 +315,19 @@ fn images_by_hash_are_chunked_and_verified() {
     let mut small = AssetAssembler::new(&hash, 10, 15 << 20).unwrap();
     assert!(small.push(&parts[0]).is_err(), "more bytes than announced");
     assert_eq!(chunks(&[], "h", 10).len(), 1, "an empty image is one empty last chunk");
+}
+
+#[test]
+fn a_connector_head_scale_must_be_finite_and_within_the_allowed_range() {
+    let with_scale = |scale: f32| {
+        let mut c = inkboard_core::Connector::straight(Pt::new(0.0, 0.0), Pt::new(100.0, 0.0));
+        c.head_scale = scale;
+        Object::new(Kind::Connector(c), Style::default())
+    };
+    for ok in [0.5, 1.0, 2.4, 4.0] {
+        check_object(&l(), &with_scale(ok)).unwrap_or_else(|e| panic!("{ok}: {e}"));
+    }
+    for bad in [0.0, 0.49, 4.01, 1000.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(check_object(&l(), &with_scale(bad)).is_err(), "{bad}");
+    }
 }

@@ -2,6 +2,8 @@
 //!
 //! The protocol is implemented by hand (JSON-RPC 2.0, one JSON message per line on stdin/stdout): `initialize`, `ping`, `tools/list`, `tools/call`.
 //! See [`tools`] for the list of tools.
+// The `json!` schema of `update_object` is deeper than the default macro recursion limit.
+#![recursion_limit = "256"]
 // Test code counts, casts and compares freely: these `clippy::pedantic` lints are for the code that ships.
 #![cfg_attr(
     test,

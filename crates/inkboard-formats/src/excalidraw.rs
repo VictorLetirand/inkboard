@@ -407,6 +407,7 @@ fn style_of(e: &Value, is_text: bool) -> Style {
         },
         opacity: num::f32((e.get("opacity").and_then(Value::as_f64).unwrap_or(100.0) / 100.0).clamp(0.05, 1.0)),
         roundness: 0.0,
+        shadow: false,
     }
 }
 
@@ -663,7 +664,7 @@ pub fn import(content: &str, name: &str, measurer: &dyn Measurer) -> Result<Impo
                 let aid = Id::new();
                 doc.assets.insert(aid.clone(), Asset { mime, data: Arc::new(bytes) });
                 let mut o = Object::new(
-                    Kind::Image(ImageObj { frame: Frame { x, y, w: width, h: height, angle }, asset: aid, latex: None, mono: false }),
+                    Kind::Image(ImageObj { frame: Frame { x, y, w: width, h: height, angle }, asset: aid, latex: None, mono: false, recolor: Vec::new() }),
                     Style { width: 0.0, opacity: style_of(e, false).opacity, ..Style::default() },
                 );
                 o.id = scene.own_id(id);

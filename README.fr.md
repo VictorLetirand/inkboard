@@ -86,6 +86,8 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
   **points de passage** (glisser le rond creux au milieu d'un tronçon pour en créer un, Alt+clic pour le retirer, menu « Redresser »).
 - **Stylet** : la pression fait varier l'épaisseur du trait (écran, SVG, Excalidraw) ; l'**extrémité gomme** du stylet efface, quel que soit l'outil actif (Windows, via l'API Pointer — voir `inkboard-pen`). **À valider avec un vrai stylet** : `inkboard --pen-test` affiche un diagnostic et produit un rapport ([docs/STYLET.md](docs/fr/STYLET.md)).
 - **Presse-papiers système** : copier/coller d'objets, d'images et de texte.
+- **Style** : ombre portée, taille des pointes de flèche, et n'importe quelle couleur d'un SVG importé remplacée par une autre (logos multicolores compris).
+- **Coller depuis un tableur** : une plage copiée depuis Excel, LibreOffice ou Google Sheets devient un tableau.
 - **Bibliothèque d'icônes** : environ 28 800 icônes et formes hors ligne — AWS, Azure, Google Cloud, Cisco, IBM, Kubernetes, formes d'organigramme / BPMN, symboles électriques et de procédé, éléments de maquette, 3 400 logos de marques et 14 500 icônes générales — avec recherche depuis la barre d'outils ([détails et licences](docs/fr/ICONS.md)).
 - **Menu Insérer** : bloc de code (police à chasse fixe, coloration syntaxique avec choix du langage), **formule LaTeX composée** (vraie typographie TeX, police STIX Two Math embarquée : fractions, racines, sommes, intégrales, matrices ; double-clic pour la modifier, couleur = couleur de trait, source conservée),
   pastilles de vote (outil dédié).

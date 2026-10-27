@@ -1710,6 +1710,41 @@ fn every_library_icon_renders() {
 /* ------------------------------------------------------------ svg resolution */
 
 #[test]
+fn recoloring_an_svg_changes_its_cache_key_and_texture_and_is_undoable() {
+    use crate::render::TextureCache;
+    let ctx = egui::Context::default();
+    let mut t = T::new();
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20"><rect width="20" height="20" fill="#ff0000"/></svg>"##;
+    let aid = t.app().ed.doc.add_asset("image/svg+xml", svg.to_vec());
+    let img = ImageObj { frame: Frame::new(0.0, 0.0, 20.0, 20.0), asset: aid.clone(), latex: None, mono: false, recolor: Vec::new() };
+    let id = t.app().ed.insert(Object::new(Kind::Image(img), Style::default()));
+    let recolor_of = |t: &mut T| match &t.app().ed.page().get(&id).unwrap().kind {
+        Kind::Image(i) => i.clone(),
+        _ => unreachable!(),
+    };
+    let asset = t.app().ed.doc.assets.get(&aid).unwrap().clone();
+    let mut cache = TextureCache::default();
+    let before = recolor_of(&mut t);
+    let (key0, a0) = cache.recolored(&aid, &asset, &before, (0, 0, 0));
+    t.app().ed.update_many(std::slice::from_ref(&id), |o| {
+        if let Kind::Image(i) = &mut o.kind {
+            i.recolor = vec![(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255))];
+        }
+    });
+    let changed = recolor_of(&mut t);
+    assert_eq!(changed.recolor.len(), 1);
+    let (key1, a1) = cache.recolored(&aid, &asset, &changed, (0, 0, 0));
+    assert_ne!(key0, key1, "the cache key follows the recoloration");
+    assert!(String::from_utf8_lossy(&a1.data).contains("#0000ff") && !String::from_utf8_lossy(&a1.data).contains("#ff0000"));
+    assert_eq!(a0.data.as_slice(), svg.as_slice(), "no replacement: the original bytes");
+    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    let (red, blue) = (cache.get(&ctx, &key0, &a0, 40.0).unwrap(), cache.get(&ctx, &key1, &a1, 40.0).unwrap());
+    assert_ne!(red.avg, blue.avg, "the texture is drawn with the new color");
+    assert!(t.app().ed.undo());
+    assert!(recolor_of(&mut t).recolor.is_empty(), "one undo step per change");
+}
+
+#[test]
 fn svg_images_are_rasterized_at_the_size_they_are_shown() {
     use crate::render::TextureCache;
     let ctx = egui::Context::default();
@@ -2258,4 +2293,111 @@ fn an_unreadable_svg_is_refused_without_changing_the_board() {
     t.app().insert_image_files(std::slice::from_ref(&bad), at);
     assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     let _ = std::fs::remove_file(bad);
+}
+
+fn pasted_table(t: &mut T, text: &str) -> inkboard_core::Table {
+    t.app().paste_event(text);
+    let objs = t.objects();
+    assert_eq!(objs.len(), 1);
+    let Kind::Table(tb) = &objs[0].kind else { panic!("not a table") };
+    tb.clone()
+}
+
+#[test]
+fn spreadsheet_data_wins_over_the_picture_excel_puts_in_the_clipboard() {
+    let mut t = T::new();
+    t.app().system_image = || Some((4, 2, vec![200; 4 * 2 * 4]));
+    let tb = pasted_table(&mut t, "a\tb\r\nc\td\r\n");
+    assert_eq!((tb.rows(), tb.cols()), (2, 2));
+}
+
+#[test]
+fn pasting_tab_separated_data_creates_a_table() {
+    let mut t = T::new();
+    let tb = pasted_table(&mut t, "a\tb\tc\r\nd\te\tf\r\n");
+    assert_eq!((tb.rows(), tb.cols()), (2, 3));
+    assert_eq!(tb.cell(0, 2).unwrap().to_plain(), "c");
+    assert_eq!(tb.cell(1, 0).unwrap().to_plain(), "d");
+}
+
+#[test]
+fn pasted_quoted_cell_keeps_its_line_break_tab_and_quotes() {
+    let mut t = T::new();
+    let tb = pasted_table(&mut t, "\"x\ny\tz\"\t\"say \"\"hi\"\"\"\nlast\tend");
+    assert_eq!((tb.rows(), tb.cols()), (2, 2));
+    assert_eq!(tb.cell(0, 0).unwrap().to_plain(), "x\ny\tz");
+    assert_eq!(tb.cell(0, 1).unwrap().to_plain(), "say \"hi\"");
+    assert_eq!(tb.cell(1, 1).unwrap().to_plain(), "end");
+}
+
+#[test]
+fn pasted_rows_with_empty_cells_keep_their_place() {
+    let mut t = T::new();
+    let tb = pasted_table(&mut t, "a\tb\tc\nd\t\t\ne\tf\t");
+    assert_eq!((tb.rows(), tb.cols()), (3, 3));
+    assert_eq!(tb.cell(1, 2).unwrap().to_plain(), "");
+    assert_eq!(tb.cell(2, 1).unwrap().to_plain(), "f");
+}
+
+#[test]
+fn pasting_tab_indented_code_stays_a_text_box() {
+    for code in ["fn main() {\n\tprintln!();\n}", "\tlet a = 1;\n\tlet b = 2;"] {
+        let mut t = T::new();
+        t.app().paste_event(code);
+        assert_eq!(t.boxes().len(), 1, "{code:?}");
+        assert_eq!(t.objects().len(), 1, "{code:?}");
+    }
+}
+
+#[test]
+fn pasting_text_without_tab_stays_a_text_box() {
+    let mut t = T::new();
+    t.app().paste_event("a,b,c\n1,2,3");
+    assert_eq!(t.boxes().len(), 1);
+    assert_eq!(t.objects().len(), 1);
+}
+
+#[test]
+fn pasting_a_single_cell_without_tab_stays_a_text_box() {
+    let mut t = T::new();
+    t.app().paste_event("just one cell\n");
+    assert_eq!(t.boxes().len(), 1);
+    assert_eq!(t.objects().len(), 1);
+}
+
+#[test]
+fn pasted_table_is_truncated_to_the_limits_and_fits_the_session() {
+    let mut t = T::new();
+    let row = vec!["x".repeat(6000); 60].join("\t");
+    let text = vec![row; 250].join("\n");
+    let tb = pasted_table(&mut t, &text);
+    assert_eq!((tb.rows(), tb.cols()), (200, 50));
+    let o = t.objects().remove(0);
+    inkboard_session::limits::check_object(&inkboard_session::limits::Limits::default(), &o).expect("within the session limits");
+    assert!(t.app().toast.is_some(), "the truncation is announced");
+}
+
+#[test]
+fn pasted_table_larger_than_the_view_is_framed_but_a_small_one_keeps_the_view() {
+    let mut t = T::new();
+    let before = t.app().ed.page().view;
+    pasted_table(&mut t, "a\tb\nc\td");
+    assert_eq!(t.app().ed.page().view.zoom, before.zoom, "a table that fits leaves the view alone");
+    let mut t = T::new();
+    let row = vec!["x"; 40].join("\t");
+    pasted_table(&mut t, &vec![row; 120].join("\n"));
+    let (view, size) = (t.app().ed.page().view, t.app().canvas_size);
+    let b = t.app().ed.page().content_bounds().expect("table bounds");
+    assert!(view.zoom < 1.0, "the view zooms out");
+    assert!(b.w * view.zoom <= f64::from(size.0) && b.h * view.zoom <= f64::from(size.1), "the table fits the canvas");
+    assert!(b.x * view.zoom + view.x >= 0.0 && b.y * view.zoom + view.y >= 0.0, "the table starts on screen");
+}
+
+#[test]
+fn undo_removes_a_pasted_table_in_one_step() {
+    let mut t = T::new();
+    pasted_table(&mut t, "a\tb\nc\td");
+    t.app().ed.undo();
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
+    assert!(!t.app().ed.can_undo());
 }

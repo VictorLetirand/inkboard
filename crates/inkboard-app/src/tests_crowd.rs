@@ -232,7 +232,10 @@ fn run_host(b: &Bench) {
     std::fs::create_dir_all(&b.out).expect("the output folder");
     let spec = BoardSpec::sized(b.objects, b.seed);
     let board_started = Instant::now();
-    let doc = seed_document(&spec);
+    let mut doc = seed_document(&spec);
+    if std::env::var_os("CROWD_NEW_FIELDS").is_some() {
+        inkboard_crowd::board::add_v4_fields(&mut doc, b.seed);
+    }
     eprintln!(
         "[host] board of {} objects, {} pages, {:.1} MiB of images, built in {:.1} s",
         object_count(&doc),

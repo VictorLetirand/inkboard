@@ -50,7 +50,7 @@ fn reference(connector_label: bool) -> Document {
     }
     let aid = d.add_asset("image/png", PNG.to_vec());
     let image = Object::new(
-        Kind::Image(ImageObj { frame: Frame::new(650.0, 300.0, 80.0, 60.0), asset: aid, latex: None, mono: false }),
+        Kind::Image(ImageObj { frame: Frame::new(650.0, 300.0, 80.0, 60.0), asset: aid, latex: None, mono: false, recolor: Vec::new() }),
         Style { width: 0.0, ..Default::default() },
     );
     let mut yes = Connector::new(End::bound(process.id.clone()), End::bound(decision.id.clone()));
@@ -210,7 +210,7 @@ fn link_to(mut d: Document, target: Object) -> Document {
 fn image_object(d: &mut Document) -> Object {
     let aid = d.add_asset("image/png", PNG.to_vec());
     Object::new(
-        Kind::Image(ImageObj { frame: Frame::new(400.0, 100.0, 80.0, 60.0), asset: aid, latex: None, mono: false }),
+        Kind::Image(ImageObj { frame: Frame::new(400.0, 100.0, 80.0, 60.0), asset: aid, latex: None, mono: false, recolor: Vec::new() }),
         Style { width: 0.0, ..Default::default() },
     )
 }
@@ -268,7 +268,9 @@ fn drawio_keeps_an_icon_of_the_library() {
         let mut d = Document::new("Icon");
         let aid = d.add_asset("image/svg+xml", svg.clone().into_bytes());
         let frame = Frame::new(120.0, 80.0, 64.0, 64.0);
-        d.pages[0].objects.push(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono }), Style { width: 0.0, ..Default::default() }));
+        d.pages[0]
+            .objects
+            .push(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono, recolor: Vec::new() }), Style { width: 0.0, ..Default::default() }));
         let imp = import_any("i.drawio", &drawio::export(&d, &ApproxMeasurer), &ApproxMeasurer).unwrap();
         assert_eq!((imp.report.skipped, imp.report.placeholders), (0, 0), "{query}");
         let [Kind::Image(img)] = &imp.doc.pages[0].objects.iter().map(|o| o.kind.clone()).collect::<Vec<_>>()[..] else { panic!("{query}: one image") };

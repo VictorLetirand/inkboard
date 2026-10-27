@@ -192,7 +192,7 @@ mod tests {
         d.pages[0].objects.push(pressured);
         let aid = d.add_asset("image/png", vec![1, 2, 3, 4]);
         let img = Object::new(
-            Kind::Image(crate::model::ImageObj { frame: Frame::new(500.0, 0.0, 40.0, 40.0), asset: aid, latex: None, mono: false }),
+            Kind::Image(crate::model::ImageObj { frame: Frame::new(500.0, 0.0, 40.0, 40.0), asset: aid, latex: None, mono: false, recolor: Vec::new() }),
             Style::default(),
         );
         d.pages[0].objects.extend([a, b, c, pen, img]);

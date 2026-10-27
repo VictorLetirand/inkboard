@@ -32,6 +32,8 @@ struct Ctx<'a> {
     doc: &'a Document,
     page: &'a Page,
     m: &'a dyn Measurer,
+    /// Shadow filters emitted so far (gives each its own id).
+    shadows: std::cell::Cell<usize>,
 }
 
 impl Ctx<'_> {
@@ -237,7 +239,7 @@ impl Ctx<'_> {
         let op = if st.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(st.opacity))) } else { String::new() };
         let d: Vec<String> = path.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
         let mut out = format!(r#"<path d="{}" fill="none" {}/>"#, d.join(""), self.stroke(st, false));
-        let size = (st.width * 4.5).max(12.0);
+        let size = c.head_size(st.width);
         let col = self.col(st.stroke);
         let background = if self.dark { "#262b38" } else { "#ffffff" };
         let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
@@ -353,7 +355,28 @@ impl Ctx<'_> {
         format!("<g{op}>{out}</g>")
     }
 
+    /// The object, in a group that references its own drop shadow filter when it has a shadow. The filter region is the object's box:
+    /// a region as big as the drawing, repeated for every shadowed object, makes the PNG and PDF export grow with objects x page area.
     fn object(&self, o: &Object) -> String {
+        let inner = self.plain_object(o);
+        if !casts_shadow(o) || inner.is_empty() {
+            return inner;
+        }
+        let k = self.shadows.get();
+        self.shadows.set(k + 1);
+        // given in user space (a straight line has no box to size a relative region on), with room for the offset, the blur and the stroke
+        let r = self.page.bounds(o).expand(SHADOW_ROOM + o.style.width);
+        format!(
+            r##"<filter id="{SHADOW_FILTER}-{k}" filterUnits="userSpaceOnUse" x="{}" y="{}" width="{}" height="{}"><feDropShadow dx="4" dy="4" stdDeviation="2" flood-color="#000000" flood-opacity="{}"/></filter><g filter="url(#{SHADOW_FILTER}-{k})">{inner}</g>"##,
+            n(r.x),
+            n(r.y),
+            n(r.w),
+            n(r.h),
+            if self.dark { "0.5" } else { "0.25" }
+        )
+    }
+
+    fn plain_object(&self, o: &Object) -> String {
         match &o.kind {
             Kind::Box(b) => self.boxed(o, b),
             Kind::Pen(p) => match &p.pressures {
@@ -386,15 +409,26 @@ impl Ctx<'_> {
     }
 }
 
+/// Prefix of the ids of the drop shadow filters.
+const SHADOW_FILTER: &str = "ink-shadow";
+/// Room around an object for its shadow (offset 4 and blur), on top of its stroke width.
+const SHADOW_ROOM: f64 = 12.0;
+
+/// Whether the object is drawn with a drop shadow: not a pen stroke, and not a sticky note (which has its own).
+fn casts_shadow(o: &Object) -> bool {
+    o.style.shadow && !matches!(&o.kind, Kind::Pen(_)) && !matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)
+}
+
 /// Exports a page (or only `ids`) to SVG. `None` when there is nothing to export.
 pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer, opts: &SvgOptions) -> Option<String> {
     let objs: Vec<&Object> = page.objects.iter().filter(|o| page.is_visible(o) && ids.is_none_or(|ids| ids.contains(&o.id))).collect();
     let mut bounds = objs.iter().map(|o| page.bounds(o)).reduce(|a, b| a.union(&b))?;
-    if objs.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)) {
+    let shadows = objs.iter().any(|o| casts_shadow(o));
+    if shadows || objs.iter().any(|o| matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)) {
         bounds = bounds.expand(10.0);
     }
     let b = bounds.expand(opts.padding);
-    let ctx = Ctx { dark: doc.background.preset.is_dark(), doc, page, m };
+    let ctx = Ctx { dark: doc.background.preset.is_dark(), doc, page, m, shadows: std::cell::Cell::new(0) };
     let mut s = String::new();
     let _ = write!(
         s,
@@ -501,6 +535,50 @@ mod tests {
         let mut d = doc_with(vec![a]);
         d.pages[0].layers[0].visible = false;
         assert!(export_approx(&d, &d.pages[0]).is_none());
+    }
+
+    #[test]
+    fn a_larger_head_scale_draws_a_larger_arrowhead_in_the_export() {
+        let head_width = |scale: f32| {
+            let mut c = Connector::straight(Pt::new(0.0, 0.0), Pt::new(300.0, 0.0));
+            c.set_head_end(Arrowhead::Triangle);
+            c.set_head_scale(scale);
+            let d = doc_with(vec![Object::new(Kind::Connector(c), Style::default())]);
+            let svg = export_approx(&d, &d.pages[0]).unwrap();
+            let pts = svg.split("<polygon points=\"").nth(1).and_then(|s| s.split('"').next()).expect("a head polygon").to_owned();
+            let xs: Vec<f64> = pts.split(' ').filter_map(|p| p.split(',').next()?.parse().ok()).collect();
+            xs.iter().copied().fold(f64::MIN, f64::max) - xs.iter().copied().fold(f64::MAX, f64::min)
+        };
+        let (normal, big) = (head_width(1.0), head_width(3.0));
+        assert!((big / normal - 3.0).abs() < 0.05, "{normal} {big}");
+    }
+
+    #[test]
+    fn the_shadow_filter_is_defined_once_and_used_by_the_objects_that_cast_one() {
+        let shadowed = Style { shadow: true, ..Style::default() };
+        let boxed = |x: f64, st: &Style| Object::new_box(BoxGeom::Rect, Frame::new(x, 0.0, 50.0, 50.0), st.clone(), Label::default());
+        let sticky = Object::new_box(BoxGeom::Sticky, Frame::new(300.0, 0.0, 50.0, 50.0), shadowed.clone(), Label::default());
+        let pen = Object::new_pen(vec![Pt::new(0.0, 100.0), Pt::new(40.0, 120.0)], false, shadowed.clone());
+        let line = Object::new(Kind::Connector(Connector::straight(Pt::new(0.0, 200.0), Pt::new(100.0, 200.0))), shadowed.clone());
+        let d = doc_with(vec![boxed(0.0, &shadowed), boxed(100.0, &shadowed), boxed(200.0, &Style::default()), sticky, pen, line]);
+        let svg = export_approx(&d, &d.pages[0]).unwrap();
+        assert_eq!(svg.matches("<filter").count(), 3, "one filter per shadowed object, sized to it");
+        assert!(svg.contains("feDropShadow"));
+        // the region is the object's, not the drawing's (the drawing is more than 350 wide)
+        for f in svg.split("<filter ").skip(1) {
+            let w: f64 = f.split("width=\"").nth(1).and_then(|s| s.split('"').next()).and_then(|s| s.parse().ok()).unwrap();
+            assert!(w < 150.0, "filter region {w} wide");
+        }
+        assert_eq!(svg.matches("filter=\"url(#ink-shadow-").count(), 3, "two boxes and the connector; not the plain box, the sticky note or the pen");
+        assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
+        // nothing shadowed: no filter at all, and the exported size is the one it always was
+        let plain = doc_with(vec![boxed(0.0, &Style::default())]);
+        let plain_svg = export_approx(&plain, &plain.pages[0]).unwrap();
+        assert!(!plain_svg.contains("filter"));
+        let shadow_only = doc_with(vec![boxed(0.0, &shadowed)]);
+        let width_of = |svg: &str| svg.split("width=\"").nth(1).and_then(|s| s.split('"').next()).and_then(|w| w.parse::<f64>().ok()).unwrap();
+        let (with, without) = (width_of(&export_approx(&shadow_only, &shadow_only.pages[0]).unwrap()), width_of(&plain_svg));
+        assert!((with - without - 20.0).abs() < 1.5, "room left for the shadow: {with} {without}");
     }
 
     #[test]

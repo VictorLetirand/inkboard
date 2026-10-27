@@ -3,11 +3,12 @@
 //! The engine does not enforce object locks: `translate`, `update`, `duplicate` and `remove` act on locked objects, only
 //! `align` and `distribute` skip them (and the objects of a locked layer). The tools here keep that behavior and report it.
 
-use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, summary};
+use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, summary, summary_in};
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::num;
 use inkboard_core::{
-    Align, ApproxMeasurer, Arrowhead, Color, Dash, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect, RichText, Route,
+    Align, ApproxMeasurer, Arrowhead, Color, Connector, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect,
+    RichText, Route,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -113,7 +114,7 @@ fn opt_str<'a>(a: &'a Value, k: &str) -> Res<Option<&'a str>> {
     }
 }
 
-fn bool_arg(a: &Value, k: &str) -> Res<Option<bool>> {
+pub(super) fn bool_arg(a: &Value, k: &str) -> Res<Option<bool>> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(*b)),
@@ -129,6 +130,12 @@ pub(super) fn num_arg(a: &Value, k: &str, min: f64, max: f64) -> Res<Option<f64>
             if (min..=max).contains(&n) { Ok(Some(n)) } else { Err(format!("\"{k}\" is out of range: {n} (allowed: {min} to {max})")) }
         }
     }
+}
+
+/// The `head_scale` parameter: the size factor of the arrowheads, within the range the connector accepts.
+pub(super) fn head_scale_arg(a: &Value) -> Res<Option<f32>> {
+    let range = Connector::HEAD_SCALE_RANGE;
+    Ok(num_arg(a, "head_scale", f64::from(*range.start()), f64::from(*range.end()))?.map(num::f32))
 }
 
 fn enum_arg<T: Copy>(a: &Value, k: &str, table: &[(&str, T)]) -> Res<Option<T>> {
@@ -188,8 +195,8 @@ fn frame_box(page: &Page, o: &Object) -> Rect {
 /* --------------------------------------------------------------- reading */
 
 /// `describe_board` object with `detail: "full"`: the brief summary plus style, font, stacking order, group, lock, rotation, arrow.
-pub(super) fn full(z: usize, o: &Object) -> Value {
-    let mut v = summary(o);
+pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
+    let mut v = summary_in(doc, o);
     let map = v.as_object_mut().expect("object");
     let st = &o.style;
     map.insert(
@@ -197,6 +204,9 @@ pub(super) fn full(z: usize, o: &Object) -> Value {
         json!({"stroke": st.stroke.to_hex(), "fill": st.fill.map(Color::to_hex), "width": st.width, "dash": name_of(&DASHES, st.dash),
             "opacity": r3(f64::from(st.opacity)), "roundness": r3(f64::from(st.roundness))}),
     );
+    if st.shadow {
+        map.get_mut("style").and_then(Value::as_object_mut).expect("style").insert("shadow".into(), json!(true));
+    }
     let font = |l: &Label| json!({"family": name_of(&FAMILIES, l.family), "size": l.size, "align": name_of(&ALIGNS, l.align)});
     match &o.kind {
         Kind::Box(b) => {
@@ -229,6 +239,9 @@ pub(super) fn full(z: usize, o: &Object) -> Value {
             let plain = |h: Arrowhead, ext: Option<HeadExt>| ext.is_none() && [Arrowhead::None, Arrowhead::Arrow].contains(&h);
             if !plain(c.head_start, c.head_start_ext) || !plain(c.head_end, c.head_end_ext) {
                 map.insert("heads".into(), json!({"start": head(c.head_start, c.head_start_ext), "end": head(c.head_end, c.head_end_ext)}));
+            }
+            if c.has_custom_head_scale() {
+                map.insert("head_scale".into(), json!(r3(f64::from(c.head_scale))));
             }
             map.insert("stroke".into(), json!(st.stroke.to_hex()));
         }
@@ -310,6 +323,41 @@ fn find_objects(ed: &mut Editor, args: &Value) -> Res<Value> {
 
 /* --------------------------------------------------------- update_object */
 
+/// Most color replacements one image can carry (same bound as the session's `max_recolor_pairs`).
+const MAX_RECOLOR: usize = 256;
+
+/// The `recolor` parameter: an object `{"#origin": "#new"}` or an array of `["#origin", "#new"]` pairs; an empty one clears it.
+fn recolor_arg(a: &Value) -> Res<Option<Vec<(Color, Color)>>> {
+    let Some(v) = a.get("recolor").filter(|v| !v.is_null()) else { return Ok(None) };
+    let shape = "\"recolor\" must be an object {\"#origin\": \"#new\"} or an array of [\"#origin\", \"#new\"] pairs";
+    let pairs: Vec<(&str, &str)> = match v {
+        Value::Object(m) => m.iter().map(|(k, t)| t.as_str().map(|t| (k.as_str(), t)).ok_or(shape)).collect::<Result<_, _>>()?,
+        Value::Array(l) => l
+            .iter()
+            .map(|p| p.as_array().filter(|p| p.len() == 2).and_then(|p| Some((p[0].as_str()?, p[1].as_str()?))).ok_or(shape))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(shape.into()),
+    };
+    if pairs.len() > MAX_RECOLOR {
+        return Err(format!("\"recolor\" has {} pairs (maximum {MAX_RECOLOR})", pairs.len()));
+    }
+    let mut out: Vec<(Color, Color)> = Vec::with_capacity(pairs.len());
+    for (from, to) in pairs {
+        let parse = |c: &str| Color::parse(c).ok_or_else(|| format!("invalid color \"{c}\" in \"recolor\" (expected #rrggbb or ink)"));
+        let (from, to) = (parse(from)?, parse(to)?);
+        if from == Color::Ink {
+            return Err("\"recolor\": an original color must be a #rrggbb color of the image, not ink".into());
+        }
+        if out.iter().any(|(f, _)| *f == from) {
+            return Err(format!("\"recolor\": original color {} given twice", from.to_hex()));
+        }
+        if from != to {
+            out.push((from, to));
+        }
+    }
+    Ok(Some(out))
+}
+
 /// Cell of a table to rewrite.
 struct Cell {
     row: usize,
@@ -323,6 +371,7 @@ pub(super) struct Patch {
     dash: Option<Dash>,
     opacity: Option<f32>,
     roundness: Option<f32>,
+    shadow: Option<bool>,
     size: Option<f64>,
     family: Option<FontFamily>,
     align: Option<Align>,
@@ -333,9 +382,12 @@ pub(super) struct Patch {
     arrow: Option<(Arrowhead, Arrowhead)>,
     head_start: Option<HeadKind>,
     head_end: Option<HeadKind>,
+    head_scale: Option<f32>,
     from: Option<Id>,
     to: Option<Id>,
     cell: Option<Cell>,
+    /// Image only: the whole new list of color replacements; the flag tells whether the image is an SVG that can be recolored.
+    recolor: Option<(Vec<(Color, Color)>, bool)>,
     /// Markdown warnings of the cell text.
     pub(super) warnings: Vec<String>,
 }
@@ -352,6 +404,7 @@ impl Patch {
             dash: enum_arg(a, "dash", &DASHES)?,
             opacity: num_arg(a, "opacity", 0.0, 1.0)?.map(num::f32),
             roundness: num_arg(a, "roundness", 0.0, 1.0)?.map(num::f32),
+            shadow: bool_arg(a, "shadow")?,
             size: num_arg(a, "font_size", 4.0, 400.0)?,
             family: enum_arg(a, "font_family", &FAMILIES)?,
             align: enum_arg(a, "align", &ALIGNS)?,
@@ -361,9 +414,14 @@ impl Patch {
             arrow: enum_arg(a, "arrow", &ARROWS)?,
             head_start: head_arg(a, "head_start")?,
             head_end: head_arg(a, "head_end")?,
+            head_scale: head_scale_arg(a)?,
             from: attachable("from")?,
             to: attachable("to")?,
             cell: None,
+            recolor: recolor_arg(a)?.map(|list| {
+                let svg = matches!(&o.kind, Kind::Image(i) if !i.is_tinted() && ed.doc.assets.get(&i.asset).is_some_and(|x| x.mime == "image/svg+xml"));
+                (list, svg)
+            }),
             warnings: Vec::new(),
         };
         if let Some(v) = a.get("cell").filter(|v| !v.is_null()) {
@@ -419,19 +477,26 @@ impl Patch {
         }
     }
 
-    pub(super) fn apply(&self, o: &mut Object, warn: &mut Vec<String>) {
+    fn apply_style(&self, s: &mut inkboard_core::Style) {
         if let Some(w) = self.width {
-            o.style.width = w;
+            s.width = w;
         }
         if let Some(d) = self.dash {
-            o.style.dash = d;
+            s.dash = d;
         }
         if let Some(v) = self.opacity {
-            o.style.opacity = v;
+            s.opacity = v;
         }
         if let Some(v) = self.roundness {
-            o.style.roundness = v;
+            s.roundness = v;
         }
+        if let Some(v) = self.shadow {
+            s.shadow = v;
+        }
+    }
+
+    pub(super) fn apply(&self, o: &mut Object, warn: &mut Vec<String>) {
+        self.apply_style(&mut o.style);
         if let Some(l) = self.locked {
             o.locked = l;
         }
@@ -443,10 +508,12 @@ impl Patch {
             ("arrow", self.arrow.is_some()),
             ("head_start", self.head_start.is_some()),
             ("head_end", self.head_end.is_some()),
+            ("head_scale", self.head_scale.is_some()),
             ("from", self.from.is_some()),
             ("to", self.to.is_some()),
         ];
         let rotation = [("rotation", self.angle.is_some())];
+        let recolor = [("recolor", self.recolor.is_some() && !matches!(o.kind, Kind::Image(_)))];
         let mut ignored: Vec<&str> = Vec::new();
         match &mut o.kind {
             Kind::Box(b) => {
@@ -462,6 +529,11 @@ impl Patch {
             Kind::Image(i) => {
                 if let Some(r) = self.angle {
                     i.frame.angle = r;
+                }
+                match &self.recolor {
+                    Some((list, true)) => i.recolor.clone_from(list),
+                    Some((_, false)) => warn.push("recolor only applies to an imported SVG image that is not a formula or a monochrome icon (ignored)".into()),
+                    None => {}
                 }
                 ignored.extend(present(&font));
                 ignored.extend(present(&link));
@@ -490,6 +562,9 @@ impl Patch {
                     c.route = r;
                 }
                 self.apply_heads(c);
+                if let Some(v) = self.head_scale {
+                    c.set_head_scale(v);
+                }
                 if let Some(id) = &self.from {
                     c.start = inkboard_core::End::bound(id.clone());
                 }
@@ -511,6 +586,7 @@ impl Patch {
                 ignored.extend(present(&link));
             }
         }
+        ignored.extend(present(&recolor));
         if !ignored.is_empty() {
             warn.push(format!("{} not applicable to a {kind} (ignored)", ignored.join(", ")));
         }

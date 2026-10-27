@@ -309,6 +309,109 @@ fn color_section(app: &mut App, ui: &mut Ui, target: &Target, dark: bool) {
     }
 }
 
+/// Color swatches shown at most for the colors of an imported SVG (very colorful ones are cut).
+const RECOLOR_MAX: usize = 24;
+
+/// Popup of a recolor swatch: palette and picker. Returns the chosen color and whether it is a live change (picker drag).
+fn recolor_popup(resp: &Response, current: [u8; 3], dark: bool) -> Option<(Color, bool)> {
+    let mut out = None;
+    egui::Popup::from_toggle_button_response(resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        ui.set_max_width(WIDTH - 40.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
+            for c in PALETTE {
+                if swatch(ui, Some(c), false, dark).clicked() {
+                    out = Some((c, false));
+                }
+            }
+        });
+        let mut col = Color32::from_rgb(current[0], current[1], current[2]);
+        if egui::color_picker::color_picker_color32(ui, &mut col, egui::color_picker::Alpha::Opaque) {
+            out = Some((Color::Rgb(col.r(), col.g(), col.b()), true));
+        }
+    });
+    out
+}
+
+/// New `recolor` list once the original color `from` becomes `to` (the pair is dropped when `to` is the original again).
+fn recolor_with(list: &[(Color, Color)], from: Color, to: Color) -> Vec<(Color, Color)> {
+    let mut out: Vec<(Color, Color)> = list.iter().copied().filter(|(f, _)| *f != from).collect();
+    if to != from {
+        out.push((from, to));
+    }
+    out
+}
+
+/// Colors of the selected SVG image: one swatch per color of the file, to replace each one.
+fn recolor_section(app: &mut App, ui: &mut Ui, target: &Target, dark: bool) {
+    let [obj] = target.objs.as_slice() else { return };
+    let Kind::Image(img) = &obj.kind else { return };
+    if img.is_tinted() {
+        return;
+    }
+    let Some(asset) = app.ed.doc.assets.get(&img.asset).filter(|a| a.mime == "image/svg+xml") else { return };
+    // the panel is drawn every frame: scan the file only when the selected asset changes
+    thread_local!(static FOUND: std::cell::RefCell<Option<(inkboard_core::AssetId, Vec<Color>)>> = const { std::cell::RefCell::new(None) });
+    let found = FOUND.with_borrow_mut(|memo| match memo {
+        Some((a, found)) if *a == img.asset => found.clone(),
+        _ => {
+            let found: Vec<Color> = inkboard_core::svgcolor::svg_colors(&asset.data).into_iter().map(|(r, g, b)| Color::Rgb(r, g, b)).collect();
+            *memo = Some((img.asset.clone(), found.clone()));
+            found
+        }
+    });
+    if found.is_empty() {
+        return;
+    }
+    let (id, list) = (obj.id.clone(), img.recolor.clone());
+    let current = |c: Color| list.iter().find(|(f, _)| *f == c).map_or(c, |(_, t)| *t);
+    let set = |app: &mut App, new: Vec<(Color, Color)>, live: bool| {
+        if live {
+            app.live_apply(&move |o| {
+                if let Kind::Image(i) = &mut o.kind {
+                    i.recolor.clone_from(&new);
+                }
+            });
+        } else {
+            app.ed.update_many(std::slice::from_ref(&id), |o| {
+                if let Kind::Image(i) = &mut o.kind {
+                    i.recolor.clone_from(&new);
+                }
+            });
+        }
+    };
+    let mut change: Option<(Vec<(Color, Color)>, bool)> = None;
+    theme::field_label(ui, "Image colors");
+    ui.add_space(-2.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
+        for &from in found.iter().take(RECOLOR_MAX) {
+            let now = current(from);
+            let resp = swatch(ui, Some(now), false, dark).on_hover_text(tr!("Original color: {}", from.to_hex()));
+            let (r, g, b) = now.resolve(dark);
+            if let Some((to, live)) = recolor_popup(&resp, [r, g, b], dark) {
+                change = Some((recolor_with(&list, from, to), live));
+            }
+        }
+    });
+    if found.len() > RECOLOR_MAX {
+        ui.weak(tr!("+ {} more colors", found.len() - RECOLOR_MAX));
+    }
+    ui.horizontal_wrapped(|ui| {
+        let all = ui.button(t("All one color"));
+        if let Some((to, live)) = recolor_popup(&all, [0x4f, 0x6d, 0xf5], dark) {
+            change = Some((found.iter().map(|&f| (f, to)).collect(), live));
+        }
+        if !list.is_empty() && ui.button(t("Original colors")).clicked() {
+            change = Some((Vec::new(), false));
+        }
+    });
+    if let Some((new, live)) = change {
+        set(app, new, live);
+    }
+    ui.add_space(6.0);
+}
+
 /// Thickness and stroke style.
 fn stroke_section(app: &mut App, ui: &mut Ui, target: &Target) {
     let highlighter = target.highlighter(app.tool);
@@ -370,13 +473,35 @@ fn corners_section(app: &mut App, ui: &mut Ui, target: &Target) {
     });
 }
 
+/// Drop shadow on or off.
+fn shadow_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    row(ui, "Shadow", |ui| {
+        let on = target.style.shadow;
+        if theme::seg_button(ui, on, "Drop shadow", |p, r, c| {
+            let body = ERect::from_center_size(r.center() + vec2(-2.0, -2.0), vec2(14.0, 11.0));
+            p.rect_filled(body.translate(vec2(3.0, 3.0)), 2.0, c.gamma_multiply(0.35));
+            p.rect_stroke(body, 2.0, Stroke::new(1.8_f32, c), egui::StrokeKind::Middle);
+        })
+        .clicked()
+        {
+            set_shadow(app, &target.ids, !on);
+        }
+    });
+}
+
+/// Turns the drop shadow of the objects among `ids` on or off (and of the next ones drawn), as one undo step.
+pub(crate) fn set_shadow(app: &mut App, ids: &[Id], on: bool) {
+    app.style.shadow = on;
+    app.ed.update_many(ids, |o| o.style.shadow = on);
+}
+
 /// Path and arrowheads of the connectors.
 fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
     let cur = target.objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
     row(ui, "Path", |ui| {
         for (r, name) in [(Route::Straight, "Straight"), (Route::Elbow, "Elbow"), (Route::Curve, "Curve")] {
             let on = cur.as_ref().map_or(app.route == r, |c| c.route == r);
-            if ui.selectable_label(on, name).clicked() {
+            if ui.selectable_label(on, t(name)).clicked() {
                 app.route = r;
                 app.ed.update_many(&target.ids, |o| {
                     if let Kind::Connector(c) = &mut o.kind {
@@ -413,8 +538,30 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
                 }
             });
         }
+        row(ui, "Arrowhead size", |ui| {
+            for (scale, name, tip) in HEAD_SIZES {
+                if theme::seg_button(ui, (c.head_scale - scale).abs() < 0.05, tip, |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(13.0)))
+                    .clicked()
+                {
+                    set_head_scale(app, &target.ids, scale);
+                }
+            }
+        });
     }
 }
+
+/// Sets the arrowhead size of the connectors among `ids`, as one undo step.
+pub(crate) fn set_head_scale(app: &mut App, ids: &[Id], scale: f32) {
+    app.ed.update_many(ids, |o| {
+        if let Kind::Connector(c) = &mut o.kind {
+            c.set_head_scale(scale);
+        }
+    });
+}
+
+/// Steps of the arrowhead size: size factor, label and tooltip.
+pub(crate) const HEAD_SIZES: [(f32, &str, &str); 4] =
+    [(0.6, "S", "Small arrowheads"), (1.0, "M", "Medium arrowheads"), (1.6, "L", "Large arrowheads"), (2.4, "XL", "Extra large arrowheads")];
 
 /// Tooltip of the button of an extended arrowhead (translated by the button).
 fn head_ext_tip(e: HeadExt) -> &'static str {
@@ -493,11 +640,15 @@ fn props(app: &mut App, ui: &mut Ui) {
     if has_sel || drawing {
         code_lang_section(app, ui, &target);
         color_section(app, ui, &target, dark);
+        recolor_section(app, ui, &target, dark);
         if !target.only_text() {
             stroke_section(app, ui, &target);
         }
         if target.shapes() || matches!(app.tool, Tool::Shape(BoxGeom::Rect) | Tool::Sticky) {
             corners_section(app, ui, &target);
+        }
+        if !target.only_pen() && !target.highlighter(app.tool) && !matches!(app.tool, Tool::Pen) {
+            shadow_section(app, ui, &target);
         }
     }
     if target.connectors() || matches!(app.tool, Tool::Line | Tool::Arrow) {

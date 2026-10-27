@@ -470,6 +470,33 @@ mod tests {
         assert!(svg_to_pdf("<svg").is_err());
     }
 
+    /// SVG of a red rectangle without outline, with or without a drop shadow, on a transparent background.
+    fn rect_svg(shadow: bool) -> String {
+        use inkboard_core::svg::{SvgOptions, export};
+        use inkboard_core::{BoxGeom, Color, Document, Frame, Label, Object, Style};
+        let style = Style { fill: Some(Color::rgb(255, 0, 0)), width: 0.0, shadow, ..Style::default() };
+        let mut doc = Document::default();
+        doc.pages[0].objects = vec![Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 100.0, 60.0), style, Label::default())];
+        export(&doc, &doc.pages[0], None, &inkboard_core::ApproxMeasurer, &SvgOptions { padding: 10.0, transparent: true }).unwrap()
+    }
+
+    /// Pixels of the shadow: black, translucent (the red of the rectangle has a red channel).
+    fn shadow_pixels(svg: &str) -> usize {
+        let r = svg_to_raster(svg, 1.0, false).unwrap();
+        r.rgba_premultiplied.as_chunks::<4>().0.iter().filter(|p| p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] > 20 && p[3] < 120).count()
+    }
+
+    #[test]
+    fn a_drop_shadow_is_drawn_by_the_png_and_the_pdf_export_and_only_when_asked() {
+        let svg = rect_svg(true);
+        assert_eq!(svg.matches("<filter").count(), 1, "one filter for the one shadowed object");
+        assert!(svg.contains("feDropShadow") && svg.contains("filter=\"url(#ink-shadow-0)\""), "{svg}");
+        assert!(shadow_pixels(&svg) > 200, "a translucent black band shows right of and under the rectangle");
+        assert_eq!(shadow_pixels(&rect_svg(false)), 0);
+        assert!(!rect_svg(false).contains("filter"));
+        assert_eq!(&svg_to_pdf(&svg).unwrap()[..5], b"%PDF-");
+    }
+
     const TEXT_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40" viewBox="0 0 200 40"><rect width="200" height="40" fill="#ffffff"/><g font-family="'Segoe UI', system-ui, Roboto, Helvetica, Arial, sans-serif" font-size="24" fill="#000000"><text x="4" y="30">Rectangle</text></g></svg>"##;
 
     fn without_text(svg: &str) -> String {

@@ -669,6 +669,105 @@ fn a_single_click_on_a_tool_does_not_lock_it_and_other_tools_have_no_lock() {
 }
 
 #[test]
+fn the_arrowhead_size_steps_resize_the_selected_connectors_in_one_undo_step() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    let b = t.add_rect(400.0, 100.0, 80.0, 50.0);
+    let id = t.app().ed.insert(Object::new(Kind::Connector(Connector::new(End::bound(a), End::bound(b))), Style::default()));
+    // the panel draws its size row for the selected connector
+    t.app().sel = vec![id.clone()];
+    t.h.step();
+    t.h.step();
+    let scale = |t: &mut T| match &t.app().ed.page().get(&id).expect("connector").kind {
+        Kind::Connector(c) => c.head_scale,
+        _ => panic!("connector"),
+    };
+    assert!((scale(&mut t) - 1.0).abs() < 1e-6);
+    assert!(crate::panel::HEAD_SIZES.iter().any(|s| (s.0 - 1.0).abs() < 1e-6), "the usual size is one of the steps");
+    crate::panel::set_head_scale(t.app(), std::slice::from_ref(&id), 1.6);
+    assert!((scale(&mut t) - 1.6).abs() < 1e-6);
+    crate::panel::set_head_scale(t.app(), std::slice::from_ref(&id), 0.6);
+    assert!((scale(&mut t) - 0.6).abs() < 1e-6);
+    t.h.step();
+    t.app().ed.undo();
+    assert!((scale(&mut t) - 1.6).abs() < 1e-6, "one step per change");
+    t.app().ed.undo();
+    assert!((scale(&mut t) - 1.0).abs() < 1e-6);
+    set_for_thread(Some(Lang::Fr));
+    for en in ["Arrowhead size", "Small arrowheads", "Medium arrowheads", "Large arrowheads", "Extra large arrowheads"] {
+        assert_ne!(crate::i18n::t(en), en, "{en} is not translated");
+    }
+    set_for_thread(None);
+}
+
+#[test]
+fn the_shadow_toggle_applies_to_the_selection_in_one_undo_step_and_every_kind_is_drawn_with_it() {
+    set_for_thread(Some(Lang::En));
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    let b = t.add_rect(400.0, 100.0, 80.0, 50.0);
+    let c = t.app().ed.insert(Object::new(Kind::Connector(Connector::new(End::bound(a.clone()), End::bound(b.clone()))), Style::default()));
+    let table = t.app().ed.insert(Object::new(Kind::Table(Table::new(Pt::new(100.0, 300.0), 2, 2)), Style::default()));
+    let ids = vec![a.clone(), b, c, table];
+    let shadows = |t: &mut T| t.objects().iter().filter(|o| o.style.shadow).count();
+    assert_eq!(shadows(&mut t), 0);
+    // the panel shows its row for the selection
+    t.app().sel = ids.clone();
+    t.h.step();
+    t.h.step();
+    crate::panel::set_shadow(t.app(), &ids, true);
+    assert_eq!(shadows(&mut t), 4);
+    assert!(t.app().style.shadow, "the next objects drawn get it too");
+    // drawn on screen, close up and far away (no shadow below the detail threshold)
+    for zoom in [1.0, 0.1] {
+        t.app().set_view(View { x: 0.0, y: 0.0, zoom });
+        t.h.step();
+    }
+    t.app().ed.undo();
+    assert_eq!(shadows(&mut t), 0, "one step for the whole selection");
+    t.app().ed.redo();
+    assert_eq!(shadows(&mut t), 4);
+    set_for_thread(Some(Lang::Fr));
+    for en in ["Shadow", "Drop shadow"] {
+        assert_ne!(crate::i18n::t(en), en, "{en} is not translated");
+    }
+    set_for_thread(None);
+}
+
+#[test]
+fn the_connector_path_buttons_are_translated() {
+    set_for_thread(Some(Lang::Fr));
+    let mut t = T::new();
+    let a = t.add_rect(100.0, 100.0, 80.0, 50.0);
+    let b = t.add_rect(400.0, 100.0, 80.0, 50.0);
+    let c = t.app().ed.insert(Object::new(Kind::Connector(Connector::new(End::bound(a), End::bound(b))), Style::default()));
+    t.app().sel = vec![c];
+    t.h.step();
+    t.h.step();
+    for en in ["Straight", "Elbow", "Curve"] {
+        assert_ne!(crate::i18n::t(en), en, "{en} is not translated");
+        t.h.get_by_label(&crate::i18n::t(en));
+    }
+    set_for_thread(None);
+}
+
+#[test]
+fn a_shadowed_image_is_drawn_at_every_zoom_with_a_shadow_that_follows_its_silhouette() {
+    let mut t = T::new();
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#ff0000"/></svg>"##;
+    let asset = t.app().ed.doc.add_asset("image/svg+xml", svg.to_vec());
+    let img = ImageObj { frame: Frame::new(100.0, 100.0, 24.0, 24.0), asset, latex: None, mono: false, recolor: Vec::new() };
+    t.app().ed.insert(Object::new(Kind::Image(img), Style { shadow: true, ..Style::default() }));
+    // full size (silhouette shadow), a few pixels wide (flat quad, rectangular shadow), below the shadow threshold
+    for zoom in [1.0, 0.3, 0.1] {
+        t.app().set_view(View { x: 0.0, y: 0.0, zoom });
+        t.h.step();
+        t.h.step();
+    }
+}
+
+#[test]
 fn the_lock_button_toggles_and_the_tool_tips_are_translated() {
     set_for_thread(Some(Lang::En));
     let mut t = T::new();

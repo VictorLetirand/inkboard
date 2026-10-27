@@ -5,13 +5,18 @@
 //! Standard output (one line each): `LINK <link>` (edit), `LINK_READ <link>` (read-only), `OBJECTS <n>`, `MEMBER <name> <role>` (a request
 //! to join, accepted with what its link allows), `ADDED <n>`, `COUNT <n>` (objects), `IMAGES <n>`, `PEOPLE <names>` (connected guests,
 //! comma separated), `AGENT` (an agent event was sent). Standard input: `add` (adds an object), `count`, `images`, `people`, `agent` (the
-//! MCP agent "Claude" acts on the first object: guests see its cursor), `quit`.
+//! MCP agent "Claude" acts on the first object: guests see its cursor), `rich` (adds a shape with a shadow, a recolored SVG and a connector
+//! with enlarged heads, protocol v4 fields; answers `RICH <shape> <image> <connector>`), `fields` (answers `FIELDS <json>`: those three
+//! objects' shadow, head scale, recolor pairs and frame as the host holds them now), `quit`.
 
 use crate::i18n::{Lang, set_for_thread};
 use crate::presence::{Action, AgentEvent, Target};
 use crate::session_net::IrohHostNet;
 use crate::tests::T;
-use inkboard_core::geom::Pt;
+use inkboard_core::connector::{Connector, End};
+use inkboard_core::geom::{Frame, Pt};
+use inkboard_core::model::{BoxGeom, Id, ImageObj, Kind, Label, Object};
+use inkboard_core::style::{Color, Style};
 use inkboard_net::NetConfig;
 use inkboard_session::proto::Role;
 use std::io::BufRead;
@@ -54,6 +59,7 @@ fn web_bench_host() {
         let _ = tx.send("quit".to_owned());
     });
     let mut added = 0;
+    let mut rich: Option<[Id; 3]> = None;
     loop {
         host.h.step();
         let session = host.app().share.host.as_mut().expect("a session");
@@ -90,10 +96,94 @@ fn web_bench_host() {
                 host.app().agent.record(event, Pt::ZERO, now);
                 println!("AGENT");
             }
+            Ok("rich") => {
+                let first = host.app().ed.page().objects[0].id.clone();
+                let shape = Object::new_box(
+                    BoxGeom::Rect,
+                    Frame::new(200.0, 180.0, 160.0, 100.0),
+                    Style { fill: Some(Color::rgb(255, 230, 150)), shadow: true, ..Style::default() },
+                    Label::default(),
+                );
+                let shape = host.app().ed.insert(shape);
+                let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20"><rect width="10" height="20" fill="#ff0000"/><rect x="10" width="10" height="20" fill="#00ff00"/></svg>"##;
+                let asset = host.app().ed.doc.add_asset("image/svg+xml", svg.to_vec());
+                let image = ImageObj {
+                    frame: Frame::new(420.0, 180.0, 100.0, 100.0),
+                    asset,
+                    latex: None,
+                    mono: false,
+                    recolor: vec![(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)), (Color::rgb(0, 255, 0), Color::Ink)],
+                };
+                let image = host.app().ed.insert(Object::new(Kind::Image(image), Style { width: 0.0, fill: None, ..Style::default() }));
+                let mut connector = Connector::new(End::bound(first), End::bound(shape.clone()));
+                connector.set_head_scale(3.0);
+                let connector = host.app().ed.insert(Object::new(Kind::Connector(connector), Style::default()));
+                println!("RICH {} {} {}", shape.0, image.0, connector.0);
+                rich = Some([shape, image, connector]);
+            }
+            Ok("fields") => {
+                let page = host.app().ed.page();
+                let of = |id: &Id| {
+                    page.get(id).map(|o| {
+                        let f = page.bounds(o);
+                        let (head_scale, recolor) = match &o.kind {
+                            Kind::Connector(c) => (Some(c.head_scale), Vec::new()),
+                            Kind::Image(i) => (None, i.recolor.clone()),
+                            _ => (None, Vec::new()),
+                        };
+                        serde_json::json!({ "shadow": o.style.shadow, "head_scale": head_scale, "recolor": recolor, "frame": [f.x, f.y, f.w, f.h] })
+                    })
+                };
+                let [shape, image, connector] = rich.clone().expect("`rich` first");
+                println!("FIELDS {}", serde_json::json!({ "shape": of(&shape), "image": of(&image), "connector": of(&connector) }));
+            }
             Ok("quit") => break,
             _ => {}
         }
         std::thread::sleep(Duration::from_millis(5));
     }
     crate::share_ui::stop(host.app());
+}
+
+/// A host of the previous protocol (v3) as an older application would behave toward a v4 guest: it answers the first message of every
+/// connection with `Refused(Version)`. Prints `OLD_TICKET <ticket>` (the part of the link after `#`); `quit` on the standard input stops it.
+#[test]
+#[ignore = "host process of the browser bench (web/test/e2e.mjs); needs Internet"]
+fn web_bench_old_host() {
+    use inkboard_net::IrohTransport;
+    use inkboard_session::JsonCodec;
+    use inkboard_session::crypto::{HostKeys, SecureChannel, SeededEntropy};
+    use inkboard_session::proto::{Message, RefuseReason};
+    use inkboard_session::transport::{Connection, Transport};
+
+    let keys = HostKeys::generate(&mut SeededEntropy::new(8)).unwrap();
+    let mut old_host = IrohTransport::host(NetConfig { ready_timeout: Duration::from_secs(15), ..NetConfig::default() }).unwrap();
+    let ticket = old_host.ticket(&keys, Role::Edit).unwrap();
+    println!("OLD_TICKET {}", ticket.encode());
+    let (tx, commands) = channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+            let _ = tx.send(line.trim().to_owned());
+        }
+        let _ = tx.send("quit".to_owned());
+    });
+    let mut conns: Vec<(Box<dyn Connection>, bool)> = Vec::new();
+    while commands.try_recv().as_deref() != Ok("quit") {
+        if let Some(c) = old_host.accept() {
+            conns.push((Box::new(c), false));
+        }
+        for (c, answered) in &mut conns {
+            if *answered {
+                continue;
+            }
+            if let Some(frame) = c.recv() {
+                let (_, cipher, _) = keys.open_first(&frame).expect("the guest's first frame");
+                let mut chan = SecureChannel::new(cipher, Box::new(JsonCodec), Box::new(SeededEntropy::new(9)), 1 << 20);
+                c.send(&chan.seal(&Message::Refused { reason: RefuseReason::Version { host_proto: 3 } }).unwrap()).unwrap();
+                *answered = true;
+                println!("REFUSED");
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }

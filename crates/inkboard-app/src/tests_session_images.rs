@@ -88,7 +88,10 @@ fn insert_raw(t: &mut T, mime: &str, bytes: Vec<u8>) -> Id {
     let app = t.app();
     let aid = app.ed.doc.add_asset(mime, bytes);
     let style = Style { width: 0.0, fill: None, ..Style::default() };
-    app.ed.insert(Object::new(Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 100.0, 80.0), asset: aid, latex: None, mono: false }), style))
+    app.ed.insert(Object::new(
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 100.0, 80.0), asset: aid, latex: None, mono: false, recolor: Vec::new() }),
+        style,
+    ))
 }
 
 fn toast(t: &mut T) -> String {
@@ -401,7 +404,7 @@ fn an_image_the_host_already_has_is_not_sent_again() {
     // the host's own image (an identifier that is not a hash)
     let aid = r.ed.doc.add_asset("image/png", png.clone());
     let obj = Object::new(
-        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 60.0, 50.0), asset: aid.clone(), latex: None, mono: false }),
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 60.0, 50.0), asset: aid.clone(), latex: None, mono: false, recolor: Vec::new() }),
         Style { width: 0.0, fill: None, ..Style::default() },
     );
     r.ed.insert(obj);
@@ -424,7 +427,7 @@ fn an_image_the_host_adds_after_the_guest_joined_reaches_it_without_a_new_snapsh
     // the host places an image (an identifier that is not a hash) once everybody is in
     let aid = r.ed.doc.add_asset("image/png", png.clone());
     let obj = Object::new(
-        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 60.0, 50.0), asset: aid, latex: None, mono: false }),
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 0.0, 60.0, 50.0), asset: aid, latex: None, mono: false, recolor: Vec::new() }),
         Style { width: 0.0, fill: None, ..Style::default() },
     );
     r.ed.insert(obj);
@@ -446,7 +449,7 @@ fn the_images_of_a_board_that_arrives_compressed_reach_a_late_guest() {
         r.ed.insert(o);
     }
     r.ed.insert(Object::new(
-        Kind::Image(ImageObj { frame: Frame::new(0.0, 100.0, 60.0, 50.0), asset: aid, latex: None, mono: false }),
+        Kind::Image(ImageObj { frame: Frame::new(0.0, 100.0, 60.0, 50.0), asset: aid, latex: None, mono: false, recolor: Vec::new() }),
         Style { width: 0.0, fill: None, ..Style::default() },
     ));
     r.rounds(3);

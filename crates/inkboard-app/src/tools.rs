@@ -716,7 +716,7 @@ impl App {
             let off = 24.0 * num::f64_of(i);
             let frame = Frame::new(at.x - w * k / 2.0 + off, at.y - h * k / 2.0 + off, w * k, h * k);
             ids.push(self.ed.insert(Object::new(
-                Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: false }),
+                Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: false, recolor: Vec::new() }),
                 Style { width: 0.0, fill: None, ..Style::default() },
             )));
         }

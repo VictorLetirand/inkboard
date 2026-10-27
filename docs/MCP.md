@@ -206,6 +206,9 @@ The existing parameters (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stroke
 | `arrow` | `end`, `start`, `both`, `none` | connectors |
 | `head_start`, `head_end` | an [arrowhead](#arrowheads) name; replaces what `arrow` gave that end | connectors |
 | `from`, `to` | id of a shape, table or image: reconnects that end (same rules as `add_connector`) | connectors |
+| `head_scale` | 0.5 to 4, size of the arrowheads (1: default; the panel's S / M / L / XL are 0.6 / 1 / 1.6 / 2.4); also on `add_connector` | connectors |
+| `shadow` | `true` / `false`: drop shadow; also on `add_shape` | shapes, images, tables, connectors |
+| `recolor` | replaces colors of an SVG image: `{"#e34f26": "#0055ff"}` or `[["#e34f26", "#0055ff"]]`; replaces the previous list, `{}` restores the original colors (at most 256 pairs). `describe_board` with `detail: "full"` lists the colors found in the file | SVG images (not monochrome icons or formulas) |
 | `cell` + `text` | `[row, column]` from 0: the new text of that table cell (`markdown` works as everywhere); the column widens if needed | tables |
 
 - **All or nothing**: every parameter is validated first; an unknown or out-of-range value is an error that names the parameter and the allowed values, and nothing is modified.

@@ -81,7 +81,7 @@ impl std::fmt::Debug for JoinUi {
 const AMBER: Color32 = Color32::from_rgb(0xb2, 0x6a, 0x00);
 const RED: Color32 = Color32::from_rgb(0xc9, 0x2a, 0x2a);
 
-fn end_message(r: &EndReason) -> String {
+pub(crate) fn end_message(r: &EndReason) -> String {
     match r {
         EndReason::HostLeft => t("The host has ended the session."),
         EndReason::Kicked => t("You were removed from the session."),

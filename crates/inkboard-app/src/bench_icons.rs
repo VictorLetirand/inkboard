@@ -54,7 +54,7 @@ pub fn document(lib: &Library, count: usize, distinct: usize) -> Document {
         let k = (64.0 + f64::from(u8::try_from(rnd() % 64).expect("below 64"))) / w.max(*h);
         let frame = Frame::new(num::f64_of(i % cols) * 150.0, num::f64_of(i / cols) * 150.0, w * k, h * k);
         objs.push(Object::new(
-            Kind::Image(ImageObj { frame, asset: aid.clone(), latex: None, mono: *mono }),
+            Kind::Image(ImageObj { frame, asset: aid.clone(), latex: None, mono: *mono, recolor: Vec::new() }),
             Style { width: 0.0, fill: None, ..Style::default() },
         ));
     }

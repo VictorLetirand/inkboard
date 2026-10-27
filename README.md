@@ -76,6 +76,8 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
 
 - **Drawing:** pen with pressure, highlighter, eraser, rectangles, ellipses, diamonds, triangles, lines, arrows, sticky notes, text, images, tables, vote dots, laser pointer. Infinite canvas, pages, layers, groups, alignment and distribution, snapping, undo/redo.
 - **Smart connectors:** arrows are *bound* to shapes and follow them; elbow connectors route around other shapes; drag a midpoint handle to add a waypoint.
+- **Style:** drop shadow, arrowhead size, and any color of an imported SVG replaced by another (multicolor logos included).
+- **Paste from a spreadsheet:** a range copied from Excel, LibreOffice or Google Sheets becomes a table.
 - **Rich text:** select words inside any shape, table cell or arrow label and make them bold, italic, underlined, struck, coloured or highlighted.
 - **Icon library:** about 28,800 icons and shapes, offline — AWS, Azure, Google Cloud, Cisco, IBM, Kubernetes, flowchart / BPMN / UML-style shapes, electrical and process symbols, mockup widgets, 3,400 brand logos and 14,500 general-purpose icons — searchable from the toolbar ([details and licenses](docs/ICONS.md)).
 - **Formulas and code:** LaTeX typeset with the STIX Two Math font (fractions, roots, sums, integrals, matrices…), editable by double-click; syntax-coloured code blocks with a language picker (Rust, JavaScript/TypeScript, Python, C/C++, C#, Java, Go, Shell, SQL, JSON, HTML, CSS, YAML).

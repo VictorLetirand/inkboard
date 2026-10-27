@@ -56,6 +56,8 @@ pub struct Limits {
     pub max_id_len: usize,
     pub max_pen_points: usize,
     pub max_table_dim: usize,
+    /// Color replacements of one SVG image.
+    pub max_recolor_pairs: usize,
     pub max_pages: usize,
     pub max_layers: usize,
     pub max_image_bytes: u64,
@@ -115,6 +117,7 @@ impl Default for Limits {
             max_id_len: 64,
             max_pen_points: 50_000,
             max_table_dim: 200,
+            max_recolor_pairs: 256,
             max_pages: 100,
             max_layers: 100,
             max_image_bytes: 15 << 20,
@@ -245,6 +248,7 @@ pub fn check_object(l: &Limits, o: &Object) -> Result<(), Violation> {
         Kind::Image(i) => {
             check_frame(l, &i.frame)?;
             check_id(l, &i.asset)?;
+            too_many("color replacements", i.recolor.len(), l.max_recolor_pairs)?;
         }
         Kind::Pen(p) => {
             too_many("points", p.pts.len(), l.max_pen_points)?;
@@ -271,7 +275,11 @@ pub fn check_object(l: &Limits, o: &Object) -> Result<(), Violation> {
             }
             check_len("font size", t.size, l.max_font_size, false)?;
         }
-        Kind::Connector(_) => {}
+        Kind::Connector(c) => {
+            if !c.head_scale.is_finite() || !inkboard_core::Connector::HEAD_SCALE_RANGE.contains(&c.head_scale) {
+                return Err(Violation::OutOfBounds { field: "arrowhead size", max: 4 });
+            }
+        }
     }
     let v = serde_json::to_value(o).map_err(|_| Violation::Malformed("object cannot be serialized"))?;
     walk(l, &v, "", 0, &mut 0)?;
