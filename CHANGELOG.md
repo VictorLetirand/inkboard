@@ -5,6 +5,15 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Fixed
+
+- **Paste:** when the clipboard holds both text and a picture, the text wins: a single Excel cell now becomes a text box instead of a picture. A picture alone (a screenshot, an image copied from a browser) is still pasted as a picture. A trailing line break is no longer kept in a pasted text box.
+- **Drop shadow:** turning the shadow on applies to the selection only; the next objects you draw no longer inherit it.
+- **Drop shadow in the PDF export:** shadows are now drawn, as a soft vector shadow (the converter ignores SVG filters). In the PDF, the shadow of an image follows its rectangle rather than its transparency.
+- **Arrowheads:** on a very short connector, heads are shortened (at most 40 % of the connector each) instead of overrunning its ends; other connectors are drawn as before.
+- **Recolor an SVG:** the color popups close after a palette color is picked, and *All one color* starts from the image's first color instead of a fixed blue.
+- **Browser end-to-end bench:** the three relay-blocked scenarios no longer fail with `puppeteer is not defined`.
+
 ## [0.2.0-beta.3] - 2026-10-27
 
 **Pre-release.** Four of the most requested whiteboard features, and live sharing moves to protocol v4: update every app that hosts or joins a session.

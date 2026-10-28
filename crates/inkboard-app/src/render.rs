@@ -758,7 +758,7 @@ impl Renderer<'_> {
         let st = &o.style;
         let color = col(st.stroke, self.dark, op);
         let pts: Vec<Pos2> = path.iter().map(|p| self.cam.s(*p)).collect();
-        let size = c.head_size(st.width);
+        let size = c.head_size_on(st.width, &path);
         if st.shadow && self.cam.zoom >= SHADOW_MIN_ZOOM {
             // the line and the heads once more, moved and translucent (the hollow parts of a head stay see-through)
             let (off, shade) = (vec2(SHADOW_OFFSET, SHADOW_OFFSET) * self.cam.zoom, self.shadow_color(op));

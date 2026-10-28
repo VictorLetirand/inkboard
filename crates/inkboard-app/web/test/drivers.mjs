@@ -71,8 +71,8 @@ export async function createDriver(engine, { headed, downloads, out }) {
     return {
       ...base,
       caps: { netEvents: true, clipboardRead: true, touch: true, phoneEmulation: true },
-      async launch({ mobile = false, blockRelays = false } = {}) {
-        const args = [...chromeArgs];
+      async launch({ mobile = false, blockRelays = false, extraArgs = [] } = {}) {
+        const args = [...chromeArgs, ...extraArgs];
         if (mobile) args.push('--force-device-scale-factor=2');
         // the relay names end with a dot in the links ("….iroh.link."): both spellings are refused, as a DNS that blocks the domain would
         if (blockRelays) args.push('--host-resolver-rules=MAP *.iroh.link ~NOTFOUND, MAP *.iroh.link. ~NOTFOUND');

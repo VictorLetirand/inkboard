@@ -322,6 +322,8 @@ fn recolor_popup(resp: &Response, current: [u8; 3], dark: bool) -> Option<(Color
             for c in PALETTE {
                 if swatch(ui, Some(c), false, dark).clicked() {
                     out = Some((c, false));
+                    // a palette swatch is a final choice: close the popup (a picker drag is live and keeps it open)
+                    ui.close();
                 }
             }
         });
@@ -399,7 +401,12 @@ fn recolor_section(app: &mut App, ui: &mut Ui, target: &Target, dark: bool) {
     }
     ui.horizontal_wrapped(|ui| {
         let all = ui.button(t("All one color"));
-        if let Some((to, live)) = recolor_popup(&all, [0x4f, 0x6d, 0xf5], dark) {
+        // starts from the first color as displayed (blue only if the list is empty)
+        let start = found.first().map_or((0x4f, 0x6d, 0xf5), |&f| {
+            let (r, g, b) = current(f).resolve(dark);
+            (r, g, b)
+        });
+        if let Some((to, live)) = recolor_popup(&all, [start.0, start.1, start.2], dark) {
             change = Some((found.iter().map(|&f| (f, to)).collect(), live));
         }
         if !list.is_empty() && ui.button(t("Original colors")).clicked() {
@@ -489,9 +496,8 @@ fn shadow_section(app: &mut App, ui: &mut Ui, target: &Target) {
     });
 }
 
-/// Turns the drop shadow of the objects among `ids` on or off (and of the next ones drawn), as one undo step.
+/// Turns the drop shadow of the objects among `ids` on or off, as one undo step. Never part of the current style: new objects are not shadowed.
 pub(crate) fn set_shadow(app: &mut App, ids: &[Id], on: bool) {
-    app.style.shadow = on;
     app.ed.update_many(ids, |o| o.style.shadow = on);
 }
 

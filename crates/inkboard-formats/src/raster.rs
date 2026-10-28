@@ -202,7 +202,9 @@ pub fn svg_to_pdf(svg: &str) -> Result<Vec<u8>, FormatError> {
 fn svg_to_pdf_with(svg: &str, fontdb: pdf_fontdb::Database) -> Result<Vec<u8>, FormatError> {
     use svg2pdf::usvg as pdf_usvg;
     let opt = sandboxed_options!(pdf_usvg, std::sync::Arc::new(fontdb));
-    let tree = pdf_usvg::Tree::from_str(svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
+    // svg2pdf ignores SVG filters: the drop shadows are drawn as shapes instead
+    let svg = inkboard_core::svg::with_soft_shadows(svg);
+    let tree = pdf_usvg::Tree::from_str(&svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
     svg2pdf::to_pdf(&tree, svg2pdf::ConversionOptions::default(), svg2pdf::PageOptions::default()).map_err(|e| FormatError::Invalid(format!("PDF : {e}")))
 }
 
@@ -495,6 +497,23 @@ mod tests {
         assert_eq!(shadow_pixels(&rect_svg(false)), 0);
         assert!(!rect_svg(false).contains("filter"));
         assert_eq!(&svg_to_pdf(&svg).unwrap()[..5], b"%PDF-");
+    }
+
+    #[test]
+    fn the_pdf_gets_a_soft_vector_shadow_and_the_other_exports_keep_the_filter() {
+        let svg = rect_svg(true);
+        let soft = inkboard_core::svg::with_soft_shadows(&svg);
+        assert!(!soft.contains("filter") && soft.contains("mask-type=\"alpha\""), "{soft}");
+        assert_eq!(soft.matches("<rect").count(), 11, "nine translucent copies, the object and its copy in the mask");
+        // what resvg draws of the PDF variant is a translucent black band like the filter's, in the same place
+        let (band, real) = (shadow_pixels(&soft), shadow_pixels(&svg));
+        assert!(band > 200 && band.abs_diff(real) < real / 2, "{band} {real}");
+        assert_eq!(inkboard_core::svg::with_soft_shadows(&rect_svg(false)), rect_svg(false), "no shadow, nothing changed");
+        // the PDF carries the soft masks, with no bitmap
+        let pdf = String::from_utf8_lossy(&svg_to_pdf(&svg).unwrap()).into_owned();
+        assert!(pdf.contains("/SMask") && !pdf.contains("/Subtype /Image"), "soft mask, no image");
+        // a shadow with nothing to mask stays valid
+        assert!(svg_to_pdf(&rect_svg(false)).is_ok());
     }
 
     const TEXT_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40" viewBox="0 0 200 40"><rect width="200" height="40" fill="#ffffff"/><g font-family="'Segoe UI', system-ui, Roboto, Helvetica, Arial, sans-serif" font-size="24" fill="#000000"><text x="4" y="30">Rectangle</text></g></svg>"##;

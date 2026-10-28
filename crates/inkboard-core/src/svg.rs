@@ -239,7 +239,7 @@ impl Ctx<'_> {
         let op = if st.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(st.opacity))) } else { String::new() };
         let d: Vec<String> = path.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
         let mut out = format!(r#"<path d="{}" fill="none" {}/>"#, d.join(""), self.stroke(st, false));
-        let size = c.head_size(st.width);
+        let size = c.head_size_on(st.width, &path);
         let col = self.col(st.stroke);
         let background = if self.dark { "#262b38" } else { "#ffffff" };
         let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
@@ -419,6 +419,93 @@ fn casts_shadow(o: &Object) -> bool {
     o.style.shadow && !matches!(&o.kind, Kind::Pen(_)) && !matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)
 }
 
+/// Value of the attribute `name` of the first tag in `tag`.
+fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let from = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+    tag[from..].split('"').next()
+}
+
+/// The SVG with each drop shadow filter replaced by a soft shadow made of plain shapes, for the PDF export: PDF converters ignore SVG
+/// filters. The shadow is a few black, nearly transparent copies of the object (its alpha channel, through a mask) around the
+/// offset (4, 4), which add up to the opacity of the filter; the PNG and SVG keep the filter.
+#[must_use]
+pub fn with_soft_shadows(svg: &str) -> String {
+    /// Offsets of the copies around the offset of the shadow: a 3 × 3 grid spanning the blur of the filter (2).
+    const SPREAD: [(f64, f64); 9] = [(-2.0, -2.0), (0.0, -2.0), (2.0, -2.0), (-2.0, 0.0), (0.0, 0.0), (2.0, 0.0), (-2.0, 2.0), (0.0, 2.0), (2.0, 2.0)];
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(i) = rest.find(&format!("<filter id=\"{SHADOW_FILTER}-")) {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let parsed = (|| {
+            let end = tail.find("</filter>")? + "</filter>".len();
+            let filter = &tail[..end];
+            let id = attr(filter, "id")?;
+            let after = tail[end..].strip_prefix(&format!("<g filter=\"url(#{id})\">"))?;
+            let (mut depth, mut pos) = (1, 0);
+            while depth > 0 {
+                let open = after[pos..].find("<g").filter(|&o| after[pos + o + 2..].starts_with([' ', '>', '/']));
+                let close = after[pos..].find("</g>")?;
+                match open {
+                    Some(o) if o < close => (depth, pos) = (depth + 1, pos + o + 2),
+                    _ => (depth, pos) = (depth - 1, pos + close + 4),
+                }
+            }
+            let inner = &after[..pos - 4];
+            let region: Vec<&str> = ["x", "y", "width", "height"].iter().map(|a| attr(filter, a)).collect::<Option<_>>()?;
+            let total: f64 = attr(filter, "flood-opacity")?.parse().ok()?;
+            Some((id, inner, region, total, tail.len() - after[pos..].len()))
+        })();
+        let Some((id, inner, region, total, used)) = parsed else {
+            // not what `object` writes: leave the rest as it is
+            out.push_str(tail);
+            return out;
+        };
+        let (x, y, w, h) = (region[0], region[1], region[2], region[3]);
+        // the nine copies stack up to `total`: 1 - (1 - each)^9 = total
+        let each = 1.0 - (1.0 - total).powf(1.0 / 9.0);
+        let mask = image_frames(inner);
+        let _ = write!(out, r#"<mask id="{id}" mask-type="alpha" maskUnits="userSpaceOnUse" x="{x}" y="{y}" width="{w}" height="{h}">{mask}</mask>"#);
+        for (dx, dy) in SPREAD {
+            let _ = write!(
+                out,
+                r##"<g transform="translate({} {})"><rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#000000" opacity="{:.4}" mask="url(#{id})"/></g>"##,
+                n(4.0 + dx),
+                n(4.0 + dy),
+                each
+            );
+        }
+        out.push_str(inner);
+        rest = &tail[used..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `inner` with each embedded image replaced by its frame: the PDF converter copies an image into every mask that uses it, so the
+/// shadow of an image follows its rectangle rather than its transparency (a shadowed photo would otherwise be embedded ten times).
+fn image_frames(inner: &str) -> std::borrow::Cow<'_, str> {
+    if !inner.contains("<image ") {
+        return inner.into();
+    }
+    let mut out = String::with_capacity(inner.len());
+    let mut rest = inner;
+    while let Some(i) = rest.find("<image ") {
+        out.push_str(&rest[..i]);
+        let Some(end) = rest[i..].find("/>").map(|e| i + e + 2) else {
+            out.push_str(&rest[i..]);
+            return out.into();
+        };
+        let tag = &rest[i..end];
+        if let [Some(x), Some(y), Some(w), Some(h)] = ["x", "y", "width", "height"].map(|a| attr(tag, a)) {
+            let _ = write!(out, r#"<rect x="{x}" y="{y}" width="{w}" height="{h}"/>"#);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out.into()
+}
+
 /// Exports a page (or only `ids`) to SVG. `None` when there is nothing to export.
 pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer, opts: &SvgOptions) -> Option<String> {
     let objs: Vec<&Object> = page.objects.iter().filter(|o| page.is_visible(o) && ids.is_none_or(|ids| ids.contains(&o.id))).collect();
@@ -579,6 +666,19 @@ mod tests {
         let width_of = |svg: &str| svg.split("width=\"").nth(1).and_then(|s| s.split('"').next()).and_then(|w| w.parse::<f64>().ok()).unwrap();
         let (with, without) = (width_of(&export_approx(&shadow_only, &shadow_only.pages[0]).unwrap()), width_of(&plain_svg));
         assert!((with - without - 20.0).abs() < 1.5, "room left for the shadow: {with} {without}");
+    }
+
+    #[test]
+    fn the_soft_shadow_of_an_image_masks_its_frame_and_keeps_one_copy_of_the_image() {
+        let svg = concat!(
+            r##"<svg><filter id="ink-shadow-0" x="0" y="0" width="60" height="60"><feDropShadow flood-opacity="0.25"/></filter>"##,
+            r##"<g filter="url(#ink-shadow-0)"><g transform="translate(10 10)"><image x="-5" y="-5" width="10" height="10" "##,
+            r#"preserveAspectRatio="none" href="data:image/png;base64,AAAA"/></g></g></svg>"#
+        );
+        let soft = with_soft_shadows(svg);
+        assert_eq!(soft.matches("<image ").count(), 1, "{soft}");
+        assert!(soft.contains(r#"<mask id="ink-shadow-0""#) && soft.contains(r#"<rect x="-5" y="-5" width="10" height="10"/>"#), "{soft}");
+        assert_eq!(image_frames("<g><image x=\"1\""), "<g><image x=\"1\"", "a cut tag is left as it is");
     }
 
     #[test]
