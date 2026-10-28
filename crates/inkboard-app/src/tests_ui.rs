@@ -718,7 +718,21 @@ fn the_shadow_toggle_applies_to_the_selection_in_one_undo_step_and_every_kind_is
     t.h.step();
     crate::panel::set_shadow(t.app(), &ids, true);
     assert_eq!(shadows(&mut t), 4);
-    assert!(t.app().style.shadow, "the next objects drawn get it too");
+    assert!(!t.app().style.shadow, "the shadow is never part of the current style");
+    // the next shape drawn has none, a copy of a shadowed one keeps its own
+    t.app().sel.clear();
+    t.tool(Tool::Shape(BoxGeom::Rect));
+    t.drag((600.0, 400.0), (700.0, 460.0));
+    let drawn = t.app().sel.clone();
+    assert_eq!(drawn.len(), 1);
+    assert_eq!(shadows(&mut t), 4, "the new shape is not shadowed");
+    t.app().sel = vec![a];
+    t.app().run_action(Action::Duplicate);
+    assert_eq!(shadows(&mut t), 5, "the copy keeps the shadow of the original");
+    t.app().ed.undo();
+    t.app().ed.undo();
+    assert_eq!(shadows(&mut t), 4);
+    t.app().sel = ids.clone();
     // drawn on screen, close up and far away (no shadow below the detail threshold)
     for zoom in [1.0, 0.1] {
         t.app().set_view(View { x: 0.0, y: 0.0, zoom });
