@@ -299,10 +299,10 @@ const quickNet = (p) => p.evaluate(() => window.__inkboard_test.set_timeouts?.(8
 const extraBrowsers = [];
 /** Joins with `ticket` in a new browser started with `args` and returns the failure window's state (screenshot `shotName`). */
 async function failedJoin(label, args, ticket, { french = false, shotName, mobile = false } = {}) {
-  const b = await puppeteer.launch({ executablePath: chrome, headless: !headed, args: [...(mobile ? phoneArgs : chromeArgs), ...args] });
+  const b = await drv.launch({ mobile, extraArgs: args });
   extraBrowsers.push(b);
-  const ctx = b.defaultBrowserContext();
-  await ctx.overridePermissions(origin, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
+  const ctx = b.defaultContext();
+  await drv.grant(ctx, origin);
   const P = await newPage(ctx, label, { french, mobile });
   await open(P, ticket);
   await quickNet(P);
