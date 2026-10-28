@@ -419,6 +419,68 @@ fn casts_shadow(o: &Object) -> bool {
     o.style.shadow && !matches!(&o.kind, Kind::Pen(_)) && !matches!(&o.kind, Kind::Box(b) if b.geom == BoxGeom::Sticky)
 }
 
+/// Value of the attribute `name` of the first tag in `tag`.
+fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let from = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+    tag[from..].split('"').next()
+}
+
+/// The SVG with each drop shadow filter replaced by a soft shadow made of plain shapes, for the PDF export: PDF converters ignore SVG
+/// filters. The shadow is a few black, nearly transparent copies of the object (its alpha channel, through a mask) around the
+/// offset (4, 4), which add up to the opacity of the filter; the PNG and SVG keep the filter.
+#[must_use]
+pub fn with_soft_shadows(svg: &str) -> String {
+    /// Offsets of the copies around the offset of the shadow (the blur of the filter, 2, reached by the corners).
+    const SPREAD: [(f64, f64); 5] = [(0.0, 0.0), (-2.0, -2.0), (2.0, -2.0), (-2.0, 2.0), (2.0, 2.0)];
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(i) = rest.find(&format!("<filter id=\"{SHADOW_FILTER}-")) {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let parsed = (|| {
+            let end = tail.find("</filter>")? + "</filter>".len();
+            let filter = &tail[..end];
+            let id = attr(filter, "id")?;
+            let after = tail[end..].strip_prefix(&format!("<g filter=\"url(#{id})\">"))?;
+            let (mut depth, mut pos) = (1, 0);
+            while depth > 0 {
+                let open = after[pos..].find("<g").filter(|&o| after[pos + o + 2..].starts_with([' ', '>', '/']));
+                let close = after[pos..].find("</g>")?;
+                match open {
+                    Some(o) if o < close => (depth, pos) = (depth + 1, pos + o + 2),
+                    _ => (depth, pos) = (depth - 1, pos + close + 4),
+                }
+            }
+            let inner = &after[..pos - 4];
+            let region: Vec<&str> = ["x", "y", "width", "height"].iter().map(|a| attr(filter, a)).collect::<Option<_>>()?;
+            let total: f64 = attr(filter, "flood-opacity")?.parse().ok()?;
+            Some((id, inner, region, total, tail.len() - after[pos..].len()))
+        })();
+        let Some((id, inner, region, total, used)) = parsed else {
+            // not what `object` writes: leave the rest as it is
+            out.push_str(tail);
+            return out;
+        };
+        let (x, y, w, h) = (region[0], region[1], region[2], region[3]);
+        // the five copies stack up to `total`: 1 - (1 - each)^5 = total
+        let each = 1.0 - (1.0 - total).powf(1.0 / 5.0);
+        let _ = write!(out, r#"<mask id="{id}" mask-type="alpha" maskUnits="userSpaceOnUse" x="{x}" y="{y}" width="{w}" height="{h}">{inner}</mask>"#);
+        for (dx, dy) in SPREAD {
+            let _ = write!(
+                out,
+                r##"<g transform="translate({} {})"><rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#000000" opacity="{:.4}" mask="url(#{id})"/></g>"##,
+                n(4.0 + dx),
+                n(4.0 + dy),
+                each
+            );
+        }
+        out.push_str(inner);
+        rest = &tail[used..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Exports a page (or only `ids`) to SVG. `None` when there is nothing to export.
 pub fn export(doc: &Document, page: &Page, ids: Option<&[Id]>, m: &dyn Measurer, opts: &SvgOptions) -> Option<String> {
     let objs: Vec<&Object> = page.objects.iter().filter(|o| page.is_visible(o) && ids.is_none_or(|ids| ids.contains(&o.id))).collect();
