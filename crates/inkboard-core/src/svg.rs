@@ -430,8 +430,8 @@ fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
 /// offset (4, 4), which add up to the opacity of the filter; the PNG and SVG keep the filter.
 #[must_use]
 pub fn with_soft_shadows(svg: &str) -> String {
-    /// Offsets of the copies around the offset of the shadow (the blur of the filter, 2, reached by the corners).
-    const SPREAD: [(f64, f64); 5] = [(0.0, 0.0), (-2.0, -2.0), (2.0, -2.0), (-2.0, 2.0), (2.0, 2.0)];
+    /// Offsets of the copies around the offset of the shadow: a 3 × 3 grid spanning the blur of the filter (2).
+    const SPREAD: [(f64, f64); 9] = [(-2.0, -2.0), (0.0, -2.0), (2.0, -2.0), (-2.0, 0.0), (0.0, 0.0), (2.0, 0.0), (-2.0, 2.0), (0.0, 2.0), (2.0, 2.0)];
     let mut out = String::with_capacity(svg.len());
     let mut rest = svg;
     while let Some(i) = rest.find(&format!("<filter id=\"{SHADOW_FILTER}-")) {
@@ -462,8 +462,8 @@ pub fn with_soft_shadows(svg: &str) -> String {
             return out;
         };
         let (x, y, w, h) = (region[0], region[1], region[2], region[3]);
-        // the five copies stack up to `total`: 1 - (1 - each)^5 = total
-        let each = 1.0 - (1.0 - total).powf(1.0 / 5.0);
+        // the nine copies stack up to `total`: 1 - (1 - each)^9 = total
+        let each = 1.0 - (1.0 - total).powf(1.0 / 9.0);
         let _ = write!(out, r#"<mask id="{id}" mask-type="alpha" maskUnits="userSpaceOnUse" x="{x}" y="{y}" width="{w}" height="{h}">{inner}</mask>"#);
         for (dx, dy) in SPREAD {
             let _ = write!(

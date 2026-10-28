@@ -504,7 +504,7 @@ mod tests {
         let svg = rect_svg(true);
         let soft = inkboard_core::svg::with_soft_shadows(&svg);
         assert!(!soft.contains("filter") && soft.contains("mask-type=\"alpha\""), "{soft}");
-        assert_eq!(soft.matches("<rect").count(), 7, "five translucent copies, the object and its copy in the mask");
+        assert_eq!(soft.matches("<rect").count(), 11, "nine translucent copies, the object and its copy in the mask");
         // what resvg draws of the PDF variant is a translucent black band like the filter's, in the same place
         let (band, real) = (shadow_pixels(&soft), shadow_pixels(&svg));
         assert!(band > 200 && band.abs_diff(real) < real / 2, "{band} {real}");
