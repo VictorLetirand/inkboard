@@ -125,6 +125,17 @@ fn head_scale_out_of_range_is_brought_back_and_a_non_finite_one_is_ignored() {
 }
 
 #[test]
+fn heads_are_shortened_on_a_short_connector_only() {
+    let mut c = connector(|_| {});
+    c.set_head_scale(2.4);
+    let line = |len: f64| [Pt::new(0.0, 0.0), Pt::new(len, 0.0)];
+    assert!((c.head_size_on(3.0, &line(500.0)) - c.head_size(3.0)).abs() < 1e-9, "a long connector keeps its size");
+    let short = c.head_size_on(3.0, &line(30.0));
+    assert!((4.0..15.0).contains(&short), "{short}");
+    assert!(c.head_size_on(3.0, &line(1.0)) >= 4.0, "a head stays visible");
+}
+
+#[test]
 fn names_are_unique_and_read_back() {
     let mut seen = std::collections::HashSet::new();
     for e in HeadExt::ALL {

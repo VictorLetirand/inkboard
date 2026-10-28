@@ -239,7 +239,7 @@ impl Ctx<'_> {
         let op = if st.opacity < 1.0 { format!(r#" opacity="{}""#, n(f64::from(st.opacity))) } else { String::new() };
         let d: Vec<String> = path.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
         let mut out = format!(r#"<path d="{}" fill="none" {}/>"#, d.join(""), self.stroke(st, false));
-        let size = c.head_size(st.width);
+        let size = c.head_size_on(st.width, &path);
         let col = self.col(st.stroke);
         let background = if self.dark { "#262b38" } else { "#ffffff" };
         let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];

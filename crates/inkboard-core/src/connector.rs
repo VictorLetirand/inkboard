@@ -243,6 +243,14 @@ impl Connector {
         let scale = if self.head_scale.is_finite() { self.head_scale } else { 1.0 };
         (width * 4.5).max(12.0) * f64::from(scale.clamp(*Self::HEAD_SCALE_RANGE.start(), *Self::HEAD_SCALE_RANGE.end()))
     }
+    /// Size of the heads as drawn on the given routed path: `head_size`, but at most 40% of the path length (so that two heads never overlap
+    /// nor overrun the other end of a short connector), with a floor of 4 so that a head stays visible. A usual connector is unchanged.
+    #[must_use]
+    pub fn head_size_on(&self, width: f64, path: &[Pt]) -> f64 {
+        let len: f64 = path.windows(2).map(|w| w[0].dist(w[1])).sum();
+        let size = self.head_size(width);
+        size.min((len * 0.4).max(4.0))
+    }
     #[must_use]
     pub fn new(start: End, end: End) -> Self {
         Self {
