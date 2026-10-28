@@ -464,7 +464,8 @@ pub fn with_soft_shadows(svg: &str) -> String {
         let (x, y, w, h) = (region[0], region[1], region[2], region[3]);
         // the nine copies stack up to `total`: 1 - (1 - each)^9 = total
         let each = 1.0 - (1.0 - total).powf(1.0 / 9.0);
-        let _ = write!(out, r#"<mask id="{id}" mask-type="alpha" maskUnits="userSpaceOnUse" x="{x}" y="{y}" width="{w}" height="{h}">{inner}</mask>"#);
+        let mask = image_frames(inner);
+        let _ = write!(out, r#"<mask id="{id}" mask-type="alpha" maskUnits="userSpaceOnUse" x="{x}" y="{y}" width="{w}" height="{h}">{mask}</mask>"#);
         for (dx, dy) in SPREAD {
             let _ = write!(
                 out,
@@ -479,6 +480,30 @@ pub fn with_soft_shadows(svg: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// `inner` with each embedded image replaced by its frame: the PDF converter copies an image into every mask that uses it, so the
+/// shadow of an image follows its rectangle rather than its transparency (a shadowed photo would otherwise be embedded ten times).
+fn image_frames(inner: &str) -> std::borrow::Cow<'_, str> {
+    if !inner.contains("<image ") {
+        return inner.into();
+    }
+    let mut out = String::with_capacity(inner.len());
+    let mut rest = inner;
+    while let Some(i) = rest.find("<image ") {
+        out.push_str(&rest[..i]);
+        let Some(end) = rest[i..].find("/>").map(|e| i + e + 2) else {
+            out.push_str(&rest[i..]);
+            return out.into();
+        };
+        let tag = &rest[i..end];
+        if let [Some(x), Some(y), Some(w), Some(h)] = ["x", "y", "width", "height"].map(|a| attr(tag, a)) {
+            let _ = write!(out, r#"<rect x="{x}" y="{y}" width="{w}" height="{h}"/>"#);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out.into()
 }
 
 /// Exports a page (or only `ids`) to SVG. `None` when there is nothing to export.
@@ -641,6 +666,19 @@ mod tests {
         let width_of = |svg: &str| svg.split("width=\"").nth(1).and_then(|s| s.split('"').next()).and_then(|w| w.parse::<f64>().ok()).unwrap();
         let (with, without) = (width_of(&export_approx(&shadow_only, &shadow_only.pages[0]).unwrap()), width_of(&plain_svg));
         assert!((with - without - 20.0).abs() < 1.5, "room left for the shadow: {with} {without}");
+    }
+
+    #[test]
+    fn the_soft_shadow_of_an_image_masks_its_frame_and_keeps_one_copy_of_the_image() {
+        let svg = concat!(
+            r##"<svg><filter id="ink-shadow-0" x="0" y="0" width="60" height="60"><feDropShadow flood-opacity="0.25"/></filter>"##,
+            r##"<g filter="url(#ink-shadow-0)"><g transform="translate(10 10)"><image x="-5" y="-5" width="10" height="10" "##,
+            r#"preserveAspectRatio="none" href="data:image/png;base64,AAAA"/></g></g></svg>"#
+        );
+        let soft = with_soft_shadows(svg);
+        assert_eq!(soft.matches("<image ").count(), 1, "{soft}");
+        assert!(soft.contains(r#"<mask id="ink-shadow-0""#) && soft.contains(r#"<rect x="-5" y="-5" width="10" height="10"/>"#), "{soft}");
+        assert_eq!(image_frames("<g><image x=\"1\""), "<g><image x=\"1\"", "a cut tag is left as it is");
     }
 
     #[test]
