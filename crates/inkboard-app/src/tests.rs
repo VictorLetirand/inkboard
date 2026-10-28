@@ -2312,6 +2312,28 @@ fn spreadsheet_data_wins_over_the_picture_excel_puts_in_the_clipboard() {
 }
 
 #[test]
+fn text_wins_over_the_picture_of_a_single_excel_cell() {
+    let mut t = T::new();
+    t.app().system_image = || Some((4, 2, vec![200; 4 * 2 * 4]));
+    t.app().paste_event("value\r\n");
+    let b = t.boxes();
+    assert_eq!(b.len(), 1);
+    assert_eq!(b[0].1.label.text.to_plain(), "value");
+    assert_eq!(t.objects().len(), 1);
+    assert!(t.app().ed.doc.assets.is_empty(), "no image asset added");
+}
+
+#[test]
+fn image_is_pasted_when_the_text_is_blank() {
+    let mut t = T::new();
+    t.app().system_image = || Some((4, 2, vec![200; 4 * 2 * 4]));
+    t.app().paste_event(" \r\n");
+    let objs = t.objects();
+    assert_eq!(objs.len(), 1);
+    assert!(matches!(objs[0].kind, Kind::Image(_)));
+}
+
+#[test]
 fn pasting_tab_separated_data_creates_a_table() {
     let mut t = T::new();
     let tb = pasted_table(&mut t, "a\tb\tc\r\nd\te\tf\r\n");

@@ -76,27 +76,23 @@ impl App {
         }
     }
 
-    /// Paste: internal objects, otherwise the system image, otherwise text (a new text box).
+    /// Paste: internal objects, otherwise a table or text (a new text box), otherwise the system image.
     pub fn paste_event(&mut self, text: &str) {
         if text == MARKER && !self.clipboard.is_empty() {
             return self.paste();
         }
-        // Excel also puts a picture of the cells in the clipboard: the table wins over it
-        if let Some(grid) = parse_tsv(text) {
-            let at = self.view_center();
-            return self.paste_table(grid, at);
+        // Excel also puts a picture of the cells in the clipboard: the text (table or single cell) wins over it
+        if !text.trim().is_empty() {
+            return self.paste_text(text);
         }
         if let Some((w, h, rgba)) = (self.system_image)() {
             let at = self.view_center();
             return self.insert_rgba(w, h, &rgba, at);
         }
-        if !text.trim().is_empty() {
-            return self.paste_text(text);
-        }
         self.paste();
     }
 
-    /// The "Paste" of the menus: like Ctrl+V (objects of the board, a system image, then the text of the clipboard).
+    /// The "Paste" of the menus: like Ctrl+V (objects of the board, the text of the clipboard, then a system image).
     pub fn paste_from_menu(&mut self) {
         let text = crate::platform::system_text().unwrap_or_default();
         self.paste_event(&text);
@@ -107,7 +103,8 @@ impl App {
         if let Some(grid) = parse_tsv(text) {
             return self.paste_table(grid, at);
         }
-        let text: String = text.chars().take(MAX_CELL_CHARS).collect();
+        // a single spreadsheet cell comes with its line break
+        let text: String = text.trim_end_matches(['\r', '\n']).chars().take(MAX_CELL_CHARS).collect();
         let mut o = Object::new_box(
             BoxGeom::Text,
             Frame::new(at.x, at.y, 10.0, 10.0),
