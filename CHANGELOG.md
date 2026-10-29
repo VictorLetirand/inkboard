@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+## [0.2.0-beta.4] - 2026-10-29
+
+**Pre-release.** Fixes for the 0.2.0-beta.3 features, and an AppImage that starts for every user.
+
 ### Fixed
 
 - **Paste:** when the clipboard holds both text and a picture, the text wins: a single Excel cell now becomes a text box instead of a picture. A picture alone (a screenshot, an image copied from a browser) is still pasted as a picture. A trailing line break is no longer kept in a pasted text box.
@@ -93,7 +97,8 @@ has been tried by hand on a few devices and networks, but not widely. See the kn
   private address (S-06), and a single frame over 1 MiB from the host (S-04, recovered by a snapshot).
 - Linux and macOS builds pass CI but have not been used by hand yet.
 
-[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-beta.3...HEAD
+[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-beta.4...HEAD
+[0.2.0-beta.4]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.4
 [0.2.0-beta.3]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.1
