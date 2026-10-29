@@ -91,6 +91,27 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo packager --release -c Packager.toml --formats all
 
+      # cargo-packager writes the AppDir with owner-only permissions (directories 700, AppRun 744) and the squashfs is owned by root:
+      # any other user (e.g. the AppImage catalog test, run under firejail) gets "AppRun: Permission denied".
+      # The squashfs is rebuilt with readable permissions behind the same runtime.
+      - name: AppImage permissions (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y squashfs-tools
+          cd dist
+          img=$(ls *.AppImage)
+          chmod +x "$img"
+          off=$(./"$img" --appimage-offset)
+          unsquashfs -q -o "$off" -d root "$img"
+          chmod -R u+rwX,go+rX,go-w root
+          head -c "$off" "$img" > fixed.AppImage
+          mksquashfs root fs.sqfs -root-owned -noappend -comp zstd -b 131072 -quiet
+          cat fs.sqfs >> fixed.AppImage
+          mv fixed.AppImage "$img" && chmod +x "$img"
+          rm -rf root fs.sqfs
+          bad=$(unsquashfs -o "$off" -lln "$img" | awk 'NR>3' | grep -vE '^(l|[d-]r.xr.xr.x|-r..r..r..)' || true)
+          [ -z "$bad" ] || { echo "::error::AppImage entries not readable by other users:"; echo "$bad"; exit 1; }
+
       - name: Package with Installway (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
