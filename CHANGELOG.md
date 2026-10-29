@@ -13,6 +13,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 - **Arrowheads:** on a very short connector, heads are shortened (at most 40 % of the connector each) instead of overrunning its ends; other connectors are drawn as before.
 - **Recolor an SVG:** the color popups close after a palette color is picked, and *All one color* starts from the image's first color instead of a fixed blue.
 - **Browser end-to-end bench:** the three relay-blocked scenarios no longer fail with `puppeteer is not defined`.
+- **AppImage:** the image is readable and runnable by every user (`AppRun` and folders were owner-only), so it starts under firejail and in the AppImage catalog test.
 
 ## [0.2.0-beta.3] - 2026-10-27
 
