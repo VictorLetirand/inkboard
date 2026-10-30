@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+## [0.2.0-rc.2] - 2026-10-30
+
+**Release candidate.** Fixes the Linux AppImage, which stopped at startup on a system without `libxkbcommon-x11`; the macOS Apple Silicon installer is now built on `macos-15`.
+
 ### Fixed
 
 - **Linux:** Inkboard no longer stops at startup on an X11 desktop without `libxkbcommon-x11` ("Library libxkbcommon-x11.so could not be loaded"): the AppImage now bundles it, and the .deb depends on `libxkbcommon-x11-0`.
@@ -106,7 +110,8 @@ has been tried by hand on a few devices and networks, but not widely. See the kn
   private address (S-06), and a single frame over 1 MiB from the host (S-04, recovered by a snapshot).
 - Linux and macOS builds pass CI but have not been used by hand yet.
 
-[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.1
 [0.2.0-beta.4]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.4
 [0.2.0-beta.3]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.3
