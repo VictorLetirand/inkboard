@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux:** Inkboard no longer stops at startup on an X11 desktop without `libxkbcommon-x11` ("Library libxkbcommon-x11.so could not be loaded"): the AppImage now bundles it, and the .deb depends on `libxkbcommon-x11-0`.
+
 ## [0.2.0-rc.1] - 2026-10-30
 
 **Release candidate.** Same code as 0.2.0-beta.4: the 0.2.0 features are complete and now being stabilized. Following versions are named
