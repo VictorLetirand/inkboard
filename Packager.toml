@@ -4,7 +4,7 @@
 # Prerequisite: cargo build --release -p inkboard-app -p inkboard-cli -p inkboard-mcp (the .github/workflows/release.yml workflow does it).
 name = "inkboard"
 product-name = "Inkboard"
-version = "0.2.0-beta.4"
+version = "0.2.0-rc.1"
 identifier = "org.inkboard.app"
 description = "Inkboard, an infinite, offline and free whiteboard."
 long-description = "Inkboard is a 100% offline infinite whiteboard: drawing, shapes, bound connectors, rich text, LaTeX formulas, draw.io / Excalidraw / JSON Canvas / Mermaid import and export, presentation mode, and an MCP server to drive the board from an agent."
