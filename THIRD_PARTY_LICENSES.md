@@ -20,6 +20,13 @@ Inkboard embeds a library of about 28,000 icons (`crates/inkboard-app/assets/ico
 - **Tabler Icons**: MIT. **Lucide**: ISC. **Material Design Icons** (Pictogrammers): Apache License 2.0.
 - Product icons and logos (AWS, Azure, Google Cloud, Cisco, IBM, brand logos…) are trademarks or property of their respective owners and are only provided to label diagrams; Inkboard is not affiliated with or endorsed by them.
 
+## System libraries in the Linux AppImage
+
+The AppImage also carries two Ubuntu 22.04 libraries that the window layer loads at runtime, with their Debian copyright files (`usr/share/doc/<package>/copyright`):
+
+- **libxkbcommon-x11** (`libxkbcommon-x11.so.0`, xkbcommon project): MIT.
+- **libxcb-xkb** (`libxcb-xkb.so.1`, X.Org / XCB project): MIT (X11).
+
 ## Libraries (601)
 
 | Crate | Version | License | Repository |

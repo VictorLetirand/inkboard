@@ -107,6 +107,10 @@ jobs:
           unsquashfs -q -o "$off" -d root "$img"
           mkdir -p root/usr/lib
           for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do cp -L "/usr/lib/x86_64-linux-gnu/$lib" root/usr/lib/; done
+          # their MIT notices (listed in THIRD_PARTY_LICENSES.md)
+          for pkg in libxkbcommon-x11-0 libxcb-xkb1; do
+            mkdir -p "root/usr/share/doc/$pkg" && cp "/usr/share/doc/$pkg/copyright" "root/usr/share/doc/$pkg/"
+          done
           chmod -R u+rwX,go+rX,go-w root
           head -c "$off" "$img" > fixed.AppImage
           mksquashfs root fs.sqfs -root-owned -noappend -comp zstd -b 131072 -quiet
