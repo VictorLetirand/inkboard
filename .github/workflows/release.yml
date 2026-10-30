@@ -94,15 +94,19 @@ jobs:
       # cargo-packager writes the AppDir with owner-only permissions (directories 700, AppRun 744) and the squashfs is owned by root:
       # any other user (e.g. the AppImage catalog test, run under firejail) gets "AppRun: Permission denied".
       # The squashfs is rebuilt with readable permissions behind the same runtime.
-      - name: AppImage permissions (Linux)
+      # winit loads libxkbcommon-x11 at runtime (dlopen, so cargo-packager does not bundle it) and panics without it: the library and
+      # its dependency libxcb-xkb go into usr/lib, which AppRun puts in LD_LIBRARY_PATH.
+      - name: AppImage permissions and libraries (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y squashfs-tools
+          sudo apt-get install -y squashfs-tools libxkbcommon-x11-0
           cd dist
           img=$(ls *.AppImage)
           chmod +x "$img"
           off=$(./"$img" --appimage-offset)
           unsquashfs -q -o "$off" -d root "$img"
+          mkdir -p root/usr/lib
+          for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do cp -L "/usr/lib/x86_64-linux-gnu/$lib" root/usr/lib/; done
           chmod -R u+rwX,go+rX,go-w root
           head -c "$off" "$img" > fixed.AppImage
           mksquashfs root fs.sqfs -root-owned -noappend -comp zstd -b 131072 -quiet
@@ -220,7 +224,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p installer-check
-          sudo apt-get update && sudo apt-get install -y xvfb mesa-utils libgl1-mesa-dri libxkbcommon-x11-0 mesa-vulkan-drivers
+          # libxkbcommon-x11-0 is not installed here: the .deb must pull it, the AppImage must bring it
+          sudo apt-get update && sudo apt-get install -y xvfb mesa-utils libgl1-mesa-dri mesa-vulkan-drivers
           one() { # one <glob in dist/>: prints the single matching file
             local f=( dist/$1 )
             if [ ${#f[@]} -ne 1 ] || [ ! -e "${f[0]}" ]; then echo "expected exactly one $1 in dist/:" >&2; ls -l dist >&2; exit 1; fi
@@ -243,7 +248,8 @@ jobs:
           sudo apt-get remove -y "$pkg"
           if [ -e "$bin" ] || dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'; then echo "$pkg is still installed after apt-get remove" >&2; exit 1; fi
 
-          # AppImage: no FUSE needed with --appimage-extract-and-run
+          # AppImage: no FUSE needed with --appimage-extract-and-run; without the system libxkbcommon-x11, as on the catalog test machine
+          sudo apt-get remove -y libxkbcommon-x11-0
           img=$(one '*.AppImage')
           chmod +x "$img"
           # absolute output path: the AppImage may change directory before running the application

@@ -55,7 +55,7 @@ path = "inkboard-mcp"
 
 # Linux (.deb): libraries loaded at runtime by egui/winit (untested: no Linux machine was available during development).
 [deb]
-depends = ["libgl1", "libxkbcommon0"]
+depends = ["libgl1", "libxkbcommon0", "libxkbcommon-x11-0"]
 # declares the application/x-inkboard type (the desktop file only lists it): maps *.inkboard to it
 files = { "packaging/linux/inkboard.xml" = "usr/share/mime/packages/inkboard.xml" }
 
