@@ -2611,7 +2611,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-app"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "arboard",
  "base64 0.23.1",
@@ -2644,7 +2644,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-cli"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -2655,7 +2655,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-core"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "base64 0.23.1",
  "proptest",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-crowd"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "inkboard-core",
  "inkboard-net",
@@ -2679,7 +2679,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-fonts"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "egui",
  "epaint_default_fonts",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-formats"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "base64 0.23.1",
  "epaint_default_fonts",
@@ -2707,7 +2707,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-icons"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "miniz_oxide 0.8.9",
  "serde",
@@ -2716,7 +2716,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-mcp"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "base64 0.23.1",
  "embed-resource",
@@ -2731,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "inkboard-net"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "getrandom 0.3.4",
  "inkboard-session",
@@ -2748,14 +2748,14 @@ dependencies = [
 
 [[package]]
 name = "inkboard-pen"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "inkboard-session"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
