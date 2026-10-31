@@ -12,7 +12,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 ### Changed
 
 - **Shapes:** a shape opens its text right after it is drawn, ready to type (Escape or a click elsewhere leaves it empty).
-- **Color palette:** the tooltip of the first swatch now says what it does: black, white on a dark background.
+- **Tooltips:** every color swatch and every arrowhead button now has a name in its tooltip (English and French); no more empty tooltip bubble.
 
 ## [0.2.0-rc.2] - 2026-10-30
 

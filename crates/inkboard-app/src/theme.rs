@@ -256,7 +256,7 @@ pub fn seg_button_raw(ui: &mut Ui, on: bool, tip: &str, content: impl FnOnce(&eg
     };
     ui.painter().rect(r, 7.0, fill, Stroke::new(1.0_f32, if on { p.ac } else { p.bd }), egui::StrokeKind::Inside);
     content(ui.painter(), r, if on { p.ac } else { p.tx });
-    resp.on_hover_text(tip)
+    if tip.is_empty() { resp } else { resp.on_hover_text(tip) }
 }
 
 /// 22 × 22 color swatch (`.sw .c`), accent outline when selected.

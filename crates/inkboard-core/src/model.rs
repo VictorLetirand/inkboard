@@ -293,18 +293,43 @@ fn is_no_head(h: &Arrowhead) -> bool {
 }
 
 impl PenObj {
-    /// Arrowhead at the end of the stroke as `(tip, from, size)`: `from` is the last point at least one head length from the tip (the direction
-    /// is taken over that stretch, not the last segment, which wobbles in hand-drawn strokes). `None` without head or with a degenerate stroke.
+    /// Arrowhead at the end of the stroke as `(tip, from, size)`, placed on the line as drawn (the smoothed path, see [`PenObj::head_on`]).
     #[must_use]
     pub fn head_at_end(&self, width: f64) -> Option<(Pt, Pt, f64)> {
-        if self.head_end == Arrowhead::None || self.pts.len() < 2 {
+        if self.head_end == Arrowhead::None {
             return None;
         }
-        let tip = *self.pts.last()?;
-        let len: f64 = self.pts.windows(2).map(|w| w[0].dist(w[1])).sum();
+        self.head_on(&crate::pen::smooth(&self.pts, None, 4).0, width)
+    }
+
+    /// Arrowhead at the end of `drawn` (the path actually drawn: the screen and the export both end on the last raw point) as
+    /// `(tip, from, size)`, with `from` at one head length behind the tip along the direction of the stroke. That direction is the chord of the
+    /// stretch from 3.5 to 0.5 head lengths before the end, measured along the path: the jitter averages out and the hook of a hand lifting the pen
+    /// (the last half head length) is ignored. `None` without head or with a degenerate stroke.
+    #[must_use]
+    pub fn head_on(&self, drawn: &[Pt], width: f64) -> Option<(Pt, Pt, f64)> {
+        if self.head_end == Arrowhead::None || drawn.len() < 2 {
+            return None;
+        }
+        let tip = *drawn.last()?;
+        let mut cum = vec![0.0];
+        for w in drawn.windows(2) {
+            cum.push(cum[cum.len() - 1] + w[0].dist(w[1]));
+        }
+        let len = cum[cum.len() - 1];
+        if len <= 0.0 {
+            return None;
+        }
         let size = base_head_size(width).min((len * 0.4).max(4.0));
-        let from = self.pts.iter().rev().find(|q| q.dist(tip) >= size).copied().unwrap_or(self.pts[0]);
-        (from.dist(tip) > 0.0).then_some((tip, from, size))
+        let at = |s: f64| {
+            let s = s.clamp(0.0, len);
+            let i = cum.partition_point(|c| *c < s).clamp(1, drawn.len() - 1);
+            let (a, b) = (cum[i - 1], cum[i]);
+            drawn[i - 1].lerp(drawn[i], if b > a { (s - a) / (b - a) } else { 0.0 })
+        };
+        let chord = at(len - size * 0.5) - at(len - size * 3.5);
+        let dir = if chord.dist(Pt::new(0.0, 0.0)) > 1e-9 { chord } else { tip - drawn[0] };
+        (dir.dist(Pt::new(0.0, 0.0)) > 1e-9).then(|| (tip, tip - dir.normalized() * size, size))
     }
 }
 
@@ -922,15 +947,33 @@ mod tests {
     }
 
     #[test]
-    fn pen_head_follows_the_last_stretch_not_the_last_segment() {
-        let mut pts: Vec<Pt> = (0..=20).map(|i| Pt::new(f64::from(i) * 5.0, 0.0)).collect();
-        pts.push(Pt::new(100.0, 1.0)); // the end wobbles sideways
+    fn pen_head_of_a_straight_stroke_is_exact() {
+        let pts: Vec<Pt> = (0..=20).map(|i| Pt::new(f64::from(i) * 5.0, 0.0)).collect();
         let Kind::Pen(mut p) = Object::new_pen(pts, false, Style::default()).kind else { unreachable!() };
         assert!(p.head_at_end(2.0).is_none());
         p.head_end = Arrowhead::Triangle;
         let (tip, from, size) = p.head_at_end(2.0).unwrap();
-        assert_eq!(tip, Pt::new(100.0, 1.0));
+        assert_eq!(tip, Pt::new(100.0, 0.0));
         assert!((size - 12.0).abs() < 1e-9);
-        assert!(from.x < 90.0 && from.y.abs() < 1e-9, "{from:?}");
+        assert!((from.x - 88.0).abs() < 1e-9 && from.y.abs() < 1e-9, "{from:?}");
+    }
+
+    #[test]
+    fn pen_head_ignores_jitter_and_the_final_hook() {
+        // main direction 20 degrees below the x axis, with jitter, then a hook at the end
+        let a = 20f64.to_radians();
+        let mut pts: Vec<Pt> = (0..=40)
+            .map(|i| {
+                let (t, j) = (f64::from(i) * 4.0, if i % 2 == 0 { 1.2 } else { -1.2 });
+                Pt::new(t * a.cos() - j * a.sin(), t * a.sin() + j * a.cos())
+            })
+            .collect();
+        let last = *pts.last().unwrap();
+        pts.extend([Pt::new(last.x + 2.0, last.y + 4.0), Pt::new(last.x + 1.0, last.y + 8.0)]); // the pen is lifted with a hook
+        let Kind::Pen(mut p) = Object::new_pen(pts, false, Style::default()).kind else { unreachable!() };
+        p.head_end = Arrowhead::Arrow;
+        let (tip, from, _) = p.head_at_end(3.0).unwrap();
+        let d = tip - from;
+        assert!((d.y.atan2(d.x) - a).abs().to_degrees() < 6.0, "{}", d.y.atan2(d.x).to_degrees());
     }
 }
