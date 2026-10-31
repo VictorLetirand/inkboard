@@ -28,6 +28,7 @@ CI runs the same checks on Windows, Linux and macOS with the latest stable Rust.
 ## Reporting bugs
 
 Please include your system (Windows/Linux/macOS and version), how you installed Inkboard (installer or source), and — for drawing problems — the `.inkboard` file if you can share it.
+Just trying Inkboard out? The [10-minute testing guide](docs/TESTING.md) lists what to try and has a "Test report" issue form.
 Pen problems: attach the report from `inkboard --pen-test` ([guide](docs/STYLET.md)).
 
 ## Security
