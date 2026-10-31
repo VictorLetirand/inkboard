@@ -186,9 +186,10 @@ impl Ctx<'_> {
     }
 
     /// Pen-pressure stroke: a filled polygon whose width follows the pressure.
-    fn pressure_pen(&self, o: &Object, pts: &[Pt], pressures: &[f32]) -> String {
+    fn pressure_pen(&self, o: &Object, pts: &[Pt], pressures: &[f32], head: &crate::model::PenObj) -> String {
         let st = &o.style;
         let (p, smooth_pressures) = crate::pen::smooth(pts, Some(pressures), 4);
+        let (p, smooth_pressures) = crate::pen::trim_end(&p, &smooth_pressures, head.head_cut(&p, st.width));
         let widths: Vec<f64> = smooth_pressures.iter().map(|v| crate::pen::pressure_width(st.width, *v)).collect();
         let (left, right) = crate::pen::stroke_sides(&p, &widths);
         let color = self.col(st.stroke);
@@ -388,8 +389,11 @@ impl Ctx<'_> {
             Kind::Box(b) => self.boxed(o, b),
             Kind::Pen(p) => {
                 let mut out = match &p.pressures {
-                    Some(pr) if !p.highlighter && p.pts.len() >= 2 => self.pressure_pen(o, &p.pts, pr),
-                    _ => self.pen(o, &p.pts, p.highlighter),
+                    Some(pr) if !p.highlighter && p.pts.len() >= 2 => self.pressure_pen(o, &p.pts, pr, p),
+                    _ => {
+                        let cut = p.head_cut(&crate::pen::smooth(&p.pts, None, 4).0, o.style.width);
+                        self.pen(o, &crate::pen::trim_end(&p.pts, &[], cut).0, p.highlighter)
+                    }
                 };
                 if let Some((tip, from, size)) = p.head_at_end(o.style.width) {
                     let head = self.head(&o.style, head_glyph(tip, from, size, p.head_end, None));
@@ -631,6 +635,19 @@ mod tests {
         p.head_end = Arrowhead::Triangle;
         let doc = doc_with(vec![pen]);
         assert!(export_approx(&doc, &doc.pages[0]).unwrap().contains("<polygon"));
+    }
+
+    #[test]
+    fn pen_line_does_not_reach_the_tip_of_its_head() {
+        let pts: Vec<Pt> = (0..=20).map(|i| Pt::new(f64::from(i) * 5.0, 0.0)).collect();
+        let mut pen = Object::new_pen(pts, false, Style::default());
+        let doc = doc_with(vec![pen.clone()]);
+        assert!(export_approx(&doc, &doc.pages[0]).unwrap().contains("L100 0"), "no head: the line ends on the last point");
+        let Kind::Pen(p) = &mut pen.kind else { unreachable!() };
+        p.head_end = Arrowhead::Triangle;
+        let doc = doc_with(vec![pen]);
+        let svg = export_approx(&doc, &doc.pages[0]).unwrap();
+        assert!(!svg.contains("L100 0\"") && svg.contains("L89.88 0"), "{svg}");
     }
 
     #[test]

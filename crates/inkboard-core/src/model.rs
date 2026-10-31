@@ -331,6 +331,19 @@ impl PenObj {
         let dir = if chord.dist(Pt::new(0.0, 0.0)) > 1e-9 { chord } else { tip - drawn[0] };
         (dir.dist(Pt::new(0.0, 0.0)) > 1e-9).then(|| (tip, tip - dir.normalized() * size, size))
     }
+
+    /// Length of the end of `drawn` that the head hides and that is therefore not drawn (see [`crate::pen::trim_end`]): the line stops under the
+    /// head, not at its tip. Triangle: a little inside its base; open arrow: its round cap stops at the apex; dot: its center; bar: nothing.
+    #[must_use]
+    pub fn head_cut(&self, drawn: &[Pt], width: f64) -> f64 {
+        let Some((_, _, size)) = self.head_on(drawn, width) else { return 0.0 };
+        match self.head_end {
+            Arrowhead::Triangle => size * 0.75,
+            Arrowhead::Arrow => width * 0.5,
+            Arrowhead::Dot => size * 0.4,
+            Arrowhead::Bar | Arrowhead::None => 0.0,
+        }
+    }
 }
 
 /// Table of cells (rows × columns), each cell containing rich text.
@@ -956,6 +969,29 @@ mod tests {
         assert_eq!(tip, Pt::new(100.0, 0.0));
         assert!((size - 12.0).abs() < 1e-9);
         assert!((from.x - 88.0).abs() < 1e-9 && from.y.abs() < 1e-9, "{from:?}");
+    }
+
+    #[test]
+    fn pen_line_stops_under_its_head() {
+        let pts: Vec<Pt> = (0..=20).map(|i| Pt::new(f64::from(i) * 5.0, 0.0)).collect();
+        let Kind::Pen(mut p) = Object::new_pen(pts, false, Style::default()).kind else { unreachable!() };
+        let pr = vec![0.5f32; 21];
+        let end_of = |p: &PenObj| {
+            let (sm, pr) = crate::pen::smooth(&p.pts, Some(&pr), 4);
+            let (t, tp) = crate::pen::trim_end(&sm, &pr, p.head_cut(&sm, 2.0));
+            (t.last().unwrap().x, tp.len() == t.len())
+        };
+        assert!((end_of(&p).0 - 100.0).abs() < 1e-9, "no head: untouched");
+        p.head_end = Arrowhead::Bar;
+        assert!((end_of(&p).0 - 100.0).abs() < 1e-9, "bar: untouched");
+        p.head_end = Arrowhead::Triangle; // size 12: ends inside the base (tip - size)
+        let (x, ok) = end_of(&p);
+        assert!(x < 100.0 - 12.0 + 3.1 && x > 100.0 - 12.0, "{x}");
+        assert!(ok, "pressures follow the cut");
+        p.head_end = Arrowhead::Dot; // center of the dot: tip - 0.4 size
+        assert!((end_of(&p).0 - (100.0 - 4.8)).abs() < 1e-9);
+        p.head_end = Arrowhead::Arrow;
+        assert!((end_of(&p).0 - 99.0).abs() < 1e-9);
     }
 
     #[test]

@@ -9,6 +9,33 @@ pub fn pressure_width(base: f64, p: f32) -> f64 {
     base * (0.3 + 1.3 * f64::from(p.clamp(0.0, 1.0)))
 }
 
+/// The stroke without its last `cut` units (measured along the path, the cut point interpolated, pressures included; `pressures` may be empty).
+/// A cut longer than half the stroke is limited to half of it.
+#[must_use]
+pub fn trim_end(pts: &[Pt], pressures: &[f32], cut: f64) -> (Vec<Pt>, Vec<f32>) {
+    let mut cum = vec![0.0];
+    for w in pts.windows(2) {
+        cum.push(cum[cum.len() - 1] + w[0].dist(w[1]));
+    }
+    let len = cum[cum.len() - 1];
+    let cut = cut.min(len * 0.5);
+    if pts.len() < 2 || cut <= 0.0 {
+        return (pts.to_vec(), pressures.to_vec());
+    }
+    let target = len - cut;
+    let i = cum.partition_point(|c| *c < target).clamp(1, pts.len() - 1);
+    let (a, b) = (cum[i - 1], cum[i]);
+    let t = if b > a { (target - a) / (b - a) } else { 0.0 };
+    let mut out = pts[..i].to_vec();
+    out.push(pts[i - 1].lerp(pts[i], t));
+    let mut out_p = Vec::new();
+    if pressures.len() == pts.len() {
+        out_p = pressures[..i].to_vec();
+        out_p.push(pressures[i - 1] + (pressures[i] - pressures[i - 1]) * num::f32(t));
+    }
+    (out, out_p)
+}
+
 /// Smoothing with quadratic curves through the segment midpoints. Returns the sampled points
 /// (`steps` per segment) and the interpolated pressure (0.5 when no pressure is provided).
 #[must_use]
