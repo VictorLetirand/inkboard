@@ -127,6 +127,41 @@ struct Swatches<'a> {
     dark: bool,
 }
 
+/// Name of a color of `PALETTE` or `FILLS` (`None` for any other color).
+fn color_name(c: Color) -> Option<&'static str> {
+    Some(match c {
+        Color::Ink => "Black (white on a dark background)",
+        Color::Rgb(0xe0, 0x31, 0x31) => "Red",
+        Color::Rgb(0xf0, 0x8c, 0x00) => "Orange",
+        Color::Rgb(0xf2, 0xc6, 0x00) => "Yellow",
+        Color::Rgb(0x2f, 0x9e, 0x44) => "Green",
+        Color::Rgb(0x0c, 0x85, 0x99) => "Teal",
+        Color::Rgb(0x19, 0x71, 0xc2) => "Blue",
+        Color::Rgb(0x70, 0x48, 0xe8) => "Violet",
+        Color::Rgb(0xd6, 0x33, 0x6c) => "Pink",
+        Color::Rgb(0x86, 0x8e, 0x96) => "Gray",
+        Color::Rgb(0xff, 0xc9, 0xc9) => "Light red",
+        Color::Rgb(0xff, 0xd8, 0xa8) => "Light orange",
+        Color::Rgb(0xff, 0xec, 0x99) => "Light yellow",
+        Color::Rgb(0xb2, 0xf2, 0xbb) => "Light green",
+        Color::Rgb(0x99, 0xe9, 0xf2) => "Light teal",
+        Color::Rgb(0xa5, 0xd8, 0xff) => "Light blue",
+        Color::Rgb(0xd0, 0xbf, 0xff) => "Light violet",
+        Color::Rgb(0xfc, 0xc2, 0xd7) => "Light pink",
+        Color::Rgb(0xde, 0xe2, 0xe6) => "Light gray",
+        Color::Rgb(0xff, 0xff, 0xff) => "White",
+        Color::Rgb(..) => return None,
+    })
+}
+
+/// The swatch's tooltip: the name of its color, none for a color without a name.
+fn named(resp: Response, c: Color) -> Response {
+    match color_name(c) {
+        Some(name) => resp.on_hover_text(t(name)),
+        None => resp,
+    }
+}
+
 fn swatches(ui: &mut Ui, set: Swatches, mut pick: impl FnMut(Option<Color>), mut live: impl FnMut([u8; 3])) {
     let Swatches { label, none, list, current, dark } = set;
     theme::field_label(ui, label);
@@ -137,10 +172,7 @@ fn swatches(ui: &mut Ui, set: Swatches, mut pick: impl FnMut(Option<Color>), mut
             pick(None);
         }
         for c in list {
-            if swatch(ui, Some(*c), current == Some(*c), dark)
-                .on_hover_text(if *c == Color::Ink { t("Ink (follows the theme)") } else { String::new() })
-                .clicked()
-            {
+            if named(swatch(ui, Some(*c), current == Some(*c), dark), *c).clicked() {
                 pick(Some(*c));
             }
         }
@@ -320,7 +352,7 @@ fn recolor_popup(resp: &Response, current: [u8; 3], dark: bool) -> Option<(Color
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
             for c in PALETTE {
-                if swatch(ui, Some(c), false, dark).clicked() {
+                if named(swatch(ui, Some(c), false, dark), c).clicked() {
                     out = Some((c, false));
                     // a palette swatch is a final choice: close the popup (a picker drag is live and keeps it open)
                     ui.close();
@@ -501,6 +533,32 @@ pub(crate) fn set_shadow(app: &mut App, ids: &[Id], on: bool) {
     app.ed.update_many(ids, |o| o.style.shadow = on);
 }
 
+/// The simple arrowheads offered by the style panel, with their glyph.
+const SIMPLE_HEADS: [(Arrowhead, &str, &str); 5] = [
+    (Arrowhead::None, "—", "No arrowhead"),
+    (Arrowhead::Arrow, "→", "Arrow"),
+    (Arrowhead::Triangle, "▶", "Triangle"),
+    (Arrowhead::Dot, "●", "Dot"),
+    (Arrowhead::Bar, "|", "Bar"),
+];
+
+/// Arrowhead at the end of the freehand strokes: for the selected strokes and the next ones.
+fn pen_head_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    let cur = target.objs.iter().find_map(|o| if let Kind::Pen(p) = &o.kind { Some(p.head_end) } else { None }).unwrap_or(app.pen_head);
+    row(ui, "Arrowhead at the end", |ui| {
+        for (h, name, tip) in SIMPLE_HEADS {
+            if theme::seg_button(ui, cur == h, tip, |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0))).clicked() {
+                app.pen_head = h;
+                app.ed.update_many(&target.ids, |o| {
+                    if let Kind::Pen(p) = &mut o.kind {
+                        p.head_end = h;
+                    }
+                });
+            }
+        }
+    });
+}
+
 /// Path and arrowheads of the connectors.
 fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
     let cur = target.objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
@@ -521,9 +579,8 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
         for (title, is_start) in [("Arrowhead at the start", true), ("Arrowhead at the end", false)] {
             let (now, now_ext) = if is_start { (c.head_start, c.head_start_ext) } else { (c.head_end, c.head_end_ext) };
             row(ui, title, |ui| {
-                for (h, name) in [(Arrowhead::None, "—"), (Arrowhead::Arrow, "→"), (Arrowhead::Triangle, "▶"), (Arrowhead::Dot, "●"), (Arrowhead::Bar, "|")]
-                {
-                    if theme::seg_button(ui, now_ext.is_none() && now == h, "", |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0)))
+                for (h, name, tip) in SIMPLE_HEADS {
+                    if theme::seg_button(ui, now_ext.is_none() && now == h, tip, |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0)))
                         .clicked()
                     {
                         app.ed.update_many(&target.ids, |o| {
@@ -610,8 +667,8 @@ fn text_section(app: &mut App, ui: &mut Ui, target: &Target) {
         }
     });
     row(ui, "Text size", |ui| {
-        for (s, name) in [(16.0, "S"), (22.0, "M"), (32.0, "L"), (48.0, "XL")] {
-            if theme::seg_button(ui, (target.label.size - s).abs() < 0.5, "", |p, r, c| text_in(p, name, r, c, egui::FontId::proportional(13.0))).clicked() {
+        for (s, name, tip) in [(16.0, "S", "Small"), (22.0, "M", "Medium"), (32.0, "L", "Large"), (48.0, "XL", "Extra large")] {
+            if theme::seg_button(ui, (target.label.size - s).abs() < 0.5, tip, |p, r, c| text_in(p, name, r, c, egui::FontId::proportional(13.0))).clicked() {
                 app.label.size = s;
                 let m = app.measurer.clone();
                 app.ed.update_many(&target.ids, |o| {
@@ -624,8 +681,10 @@ fn text_section(app: &mut App, ui: &mut Ui, target: &Target) {
         }
     });
     row(ui, "Alignment", |ui| {
-        for (a, icon) in [(Align::Left, "alignL"), (Align::Center, "alignC"), (Align::Right, "alignR")] {
-            if theme::seg_button(ui, target.label.align == a, "", |p, r, c| icon_in(p, icon, r, c)).clicked() {
+        for (a, icon, tip) in
+            [(Align::Left, "alignL", "Align text left"), (Align::Center, "alignC", "Center text"), (Align::Right, "alignR", "Align text right")]
+        {
+            if theme::seg_button(ui, target.label.align == a, tip, |p, r, c| icon_in(p, icon, r, c)).clicked() {
                 app.label.align = a;
                 app.ed.update_many(&target.ids, |o| {
                     if let Kind::Box(b) = &mut o.kind {
@@ -659,6 +718,9 @@ fn props(app: &mut App, ui: &mut Ui) {
     }
     if target.connectors() || matches!(app.tool, Tool::Line | Tool::Arrow) {
         connector_section(app, ui, &target);
+    }
+    if if has_sel { target.only_pen() && !target.highlighter(app.tool) } else { matches!(app.tool, Tool::Pen) } {
+        pen_head_section(app, ui, &target);
     }
     if target.shapes() || matches!(app.tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
         text_section(app, ui, &target);
@@ -697,9 +759,11 @@ fn connectors_only(objs: &[Object]) -> bool {
 /// B / I / U / S, word color and highlight (rich text).
 fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
     row(ui, if app.editing.is_some() { "Format of the selection" } else { "Format of all the text" }, |ui| {
-        for (name, f) in [("B", Format::Bold), ("I", Format::Italic), ("U", Format::Underline), ("S", Format::Strike)] {
+        for (name, f, tip) in
+            [("B", Format::Bold, "Bold"), ("I", Format::Italic, "Italic"), ("U", Format::Underline, "Underline"), ("S", Format::Strike, "Strikethrough")]
+        {
             let on = app.format_active(f);
-            let clicked = theme::seg_button(ui, on, "", |p, r, c| {
+            let clicked = theme::seg_button(ui, on, tip, |p, r, c| {
                 let font = egui::FontId::proportional(14.0);
                 let g = p.layout_no_wrap(name.to_owned(), font, c);
                 let pos = r.center() - g.size() / 2.0;
@@ -730,7 +794,7 @@ fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
         for c in PALETTE.iter().skip(1) {
-            if swatch(ui, Some(*c), app.format_active(Format::Color(Some(*c))), dark).clicked() {
+            if named(swatch(ui, Some(*c), app.format_active(Format::Color(Some(*c))), dark), *c).clicked() {
                 app.apply_format(Format::Color(Some(*c)));
             }
         }
@@ -740,7 +804,7 @@ fn rich_section(app: &mut App, ui: &mut Ui, dark: bool) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
         for c in FILLS.iter().take(8) {
-            if swatch(ui, Some(*c), app.format_active(Format::Highlight(Some(*c))), dark).clicked() {
+            if named(swatch(ui, Some(*c), app.format_active(Format::Highlight(Some(*c))), dark), *c).clicked() {
                 app.apply_format(Format::Highlight(Some(*c)));
             }
         }

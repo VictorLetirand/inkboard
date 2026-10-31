@@ -197,7 +197,10 @@ fn image_color_replacements_are_bounded() {
 fn strokes_and_tables_must_be_consistent() {
     let pen = |n: usize, pressures: Option<usize>| {
         let pts: Vec<Pt> = (0..n).map(|i| Pt::new(i as f64, 0.0)).collect();
-        Object::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter: false, pressures: pressures.map(|k| Arc::new(vec![0.5f32; k])) }), Style::default())
+        Object::new(
+            Kind::Pen(PenObj { pts: Arc::new(pts), highlighter: false, pressures: pressures.map(|k| Arc::new(vec![0.5f32; k])), head_end: Default::default() }),
+            Style::default(),
+        )
     };
     assert!(!refused(pen(50_000, None)));
     assert!(matches!(check_object(&l(), &pen(50_001, None)), Err(Violation::TooMany { what: "points", .. })));

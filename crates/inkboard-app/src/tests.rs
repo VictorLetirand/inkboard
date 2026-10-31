@@ -134,6 +134,7 @@ fn shift_makes_a_square_and_undo_removes_it() {
     let mut t = T::new();
     t.tool(Tool::Shape(BoxGeom::Rect));
     t.drag_mods((100.0, 100.0), (300.0, 160.0), Modifiers::SHIFT);
+    t.app().commit_editing();
     let f = t.boxes()[0].1.frame;
     assert!((f.w - f.h).abs() < 1.0, "square: {f:?}");
     t.key_mod(Modifiers::COMMAND, Key::Z);
@@ -162,6 +163,19 @@ fn highlighter_is_translucent() {
     let o = &t.objects()[0];
     assert!(matches!(&o.kind, Kind::Pen(p) if p.highlighter));
     assert!(o.style.opacity < 0.6 && o.style.width >= 10.0);
+}
+
+#[test]
+fn pen_gets_the_chosen_arrowhead_but_not_the_highlighter() {
+    let mut t = T::new();
+    t.app().pen_head = Arrowhead::Triangle;
+    t.tool(Tool::Pen);
+    t.drag((100.0, 100.0), (300.0, 150.0));
+    t.tool(Tool::Highlighter);
+    t.drag((100.0, 300.0), (300.0, 300.0));
+    let heads: Vec<(bool, Arrowhead)> =
+        t.objects().iter().filter_map(|o| if let Kind::Pen(p) = &o.kind { Some((p.highlighter, p.head_end)) } else { None }).collect();
+    assert_eq!(heads, vec![(false, Arrowhead::Triangle), (true, Arrowhead::None)]);
 }
 
 #[test]
@@ -325,6 +339,20 @@ fn empty_fresh_text_is_discarded_without_polluting_history() {
     t.app().commit_editing();
     assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     assert!(!t.app().ed.can_undo(), "nothing to undo: creation and abandonment cancel out");
+}
+
+#[test]
+fn a_freshly_drawn_shape_opens_its_label_and_survives_an_empty_exit() {
+    let mut t = T::new();
+    t.tool(Tool::Shape(BoxGeom::Rect));
+    t.drag((100.0, 100.0), (300.0, 220.0));
+    let id = t.app().sel[0].clone();
+    assert_eq!(t.app().editing.as_ref().map(|e| e.id.clone()), Some(id), "the label editor opens on the new shape");
+    assert!(!t.app().editing.as_ref().unwrap().fresh, "only an empty text box is discarded");
+    t.app().commit_editing();
+    assert_eq!(t.objects().len(), 1, "the empty shape stays");
+    t.key_mod(Modifiers::COMMAND, Key::Z);
+    assert_eq!(t.objects(), [] as [inkboard_core::Object; 0], "a single undo step removes the shape");
 }
 
 #[test]

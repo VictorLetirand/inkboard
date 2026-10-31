@@ -723,11 +723,15 @@ impl Renderer<'_> {
             return;
         }
         let (sm, pr) = inkboard_core::pen::smooth(&p.pts, p.pressures.as_ref().map(|v| v.as_slice()), 4);
+        let (cut, cut_pr) = inkboard_core::pen::trim_end(&sm, &pr, p.head_cut(&sm, st.width));
         if p.pressures.is_some() && !p.highlighter {
-            self.pressure_stroke(&sm, &pr, st.width, c);
+            self.pressure_stroke(&cut, &cut_pr, st.width, c);
         } else {
-            let pts: Vec<Pos2> = sm.iter().map(|q| self.cam.s(*q)).collect();
+            let pts: Vec<Pos2> = cut.iter().map(|q| self.cam.s(*q)).collect();
             self.stroke_path(&pts, false, st.width, c, Dash::Solid, !p.highlighter);
+        }
+        if let Some((tip, from, size)) = p.head_on(&sm, st.width) {
+            paint_head(self.painter, &head_glyph(tip, from, size, p.head_end, None), &|q| self.cam.s(q), self.cam.zoom, num::f32(st.width), c, self.bg);
         }
     }
 

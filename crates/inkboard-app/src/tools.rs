@@ -598,7 +598,11 @@ impl App {
                     pr.push(pr[0]);
                 }
                 let style = Style { fill: None, dash: Dash::Solid, ..self.style.clone() };
-                self.ed.insert(if has_force && !hl { Object::new_pen_with_pressure(p, pr, false, style) } else { Object::new_pen(p, hl, style) });
+                let mut o = if has_force && !hl { Object::new_pen_with_pressure(p, pr, false, style) } else { Object::new_pen(p, hl, style) };
+                if !hl && let Kind::Pen(pen) = &mut o.kind {
+                    pen.head_end = self.pen_head;
+                }
+                self.ed.insert(o);
             }
             Drag::Erase { hit, .. } => {
                 if !hit.is_empty() {
@@ -653,7 +657,7 @@ impl App {
         };
         if let Some(id) = new_id {
             self.sel = vec![id.clone()];
-            if matches!(tool, Tool::Text | Tool::Sticky) {
+            if matches!(tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
                 self.start_editing(&id, None);
                 if let Some(e) = &mut self.editing {
                     e.fresh = tool == Tool::Text;
@@ -661,7 +665,7 @@ impl App {
             }
             if !self.tool_lock {
                 self.tool = Tool::Select;
-            } else if !matches!(tool, Tool::Text | Tool::Sticky) {
+            } else if !matches!(tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
                 self.sel.clear();
             }
         }
@@ -993,11 +997,14 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
     if let Some(Drag::Draw { pts, pressures, has_force }) = &app.drag {
         let hl = app.tool == Tool::Highlighter;
         let style = Style { fill: None, dash: Dash::Solid, ..app.style.clone() };
-        let o = if *has_force && !hl && pts.len() >= 2 {
+        let mut o = if *has_force && !hl && pts.len() >= 2 {
             Object::new_pen_with_pressure(pts.clone(), pressures.clone(), false, style)
         } else {
             Object::new_pen(pts.clone(), hl, style)
         };
+        if !hl && let Kind::Pen(pen) = &mut o.kind {
+            pen.head_end = app.pen_head;
+        }
         let (r, g, b) = app.ed.doc.background.preset.rgb();
         let page = app.ed.page();
         let mut rd = Renderer {
@@ -1014,7 +1021,12 @@ fn draw_overlay(app: &mut App, painter: &egui::Painter, cam: &Cam, dark: bool) {
         };
         rd.draw_one(&Object {
             kind: if pts.len() < 2 {
-                Kind::Pen(PenObj { pts: std::sync::Arc::new(vec![pts[0], pts[0]]), highlighter: hl, pressures: None })
+                Kind::Pen(PenObj {
+                    pts: std::sync::Arc::new(vec![pts[0], pts[0]]),
+                    highlighter: hl,
+                    pressures: None,
+                    head_end: if hl { Arrowhead::None } else { app.pen_head },
+                })
             } else {
                 o.kind.clone()
             },

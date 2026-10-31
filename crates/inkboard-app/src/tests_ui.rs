@@ -486,7 +486,7 @@ fn is_made_by(tool: Tool, o: &Object) -> bool {
 
 /// Text and sticky notes open their editor on creation: type something and click away to finish.
 fn finish_editing(t: &mut T, tool: Tool) -> Check {
-    if matches!(tool, Tool::Text | Tool::Sticky) {
+    if matches!(tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
         ensure!(t.app().editing.is_some(), "{tool:?}: the editor should be open after creation");
         type_text(t, "x");
         t.click(AWAY);
@@ -645,6 +645,7 @@ fn double_clicking_a_creation_tool_locks_it_and_the_state_is_visible_in_the_ui()
     assert_eq!(is_pressed(&t, "Rectangle (locked)"), Some(true), "the locked tool is exposed as locked");
     assert_eq!(is_pressed(&t, "Ellipse"), Some(false));
     t.click(P1);
+    t.click(AWAY);
     t.click(P2);
     assert_eq!(t.objects().len(), 2, "the tool stays active: a second rectangle is created");
     assert_eq!(t.app().tool, Tool::Shape(BoxGeom::Rect));
