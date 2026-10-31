@@ -1,6 +1,6 @@
 //! Document model: objects, pages, layers, assets.
 
-use crate::connector::Connector;
+use crate::connector::{Arrowhead, Connector, base_head_size};
 use crate::geom::{Frame, Pt, Rect};
 use crate::style::{Align, Color, FontFamily, Style};
 use crate::svgcolor::Rgb;
@@ -282,6 +282,30 @@ pub struct PenObj {
     /// Pen pressure (0..1) for each point: variable-width stroke. `None`: constant width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pressures: Option<Arc<Vec<f32>>>,
+    /// Arrowhead at the last point of the stroke.
+    #[serde(default, skip_serializing_if = "is_no_head")]
+    pub head_end: Arrowhead,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "the signature serde asks of `skip_serializing_if`")]
+fn is_no_head(h: &Arrowhead) -> bool {
+    *h == Arrowhead::None
+}
+
+impl PenObj {
+    /// Arrowhead at the end of the stroke as `(tip, from, size)`: `from` is the last point at least one head length from the tip (the direction
+    /// is taken over that stretch, not the last segment, which wobbles in hand-drawn strokes). `None` without head or with a degenerate stroke.
+    #[must_use]
+    pub fn head_at_end(&self, width: f64) -> Option<(Pt, Pt, f64)> {
+        if self.head_end == Arrowhead::None || self.pts.len() < 2 {
+            return None;
+        }
+        let tip = *self.pts.last()?;
+        let len: f64 = self.pts.windows(2).map(|w| w[0].dist(w[1])).sum();
+        let size = base_head_size(width).min((len * 0.4).max(4.0));
+        let from = self.pts.iter().rev().find(|q| q.dist(tip) >= size).copied().unwrap_or(self.pts[0]);
+        (from.dist(tip) > 0.0).then_some((tip, from, size))
+    }
 }
 
 /// Table of cells (rows × columns), each cell containing rich text.
@@ -434,14 +458,14 @@ impl Object {
 
     #[must_use]
     pub fn new_pen(pts: Vec<Pt>, highlighter: bool, style: Style) -> Self {
-        Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures: None }), style)
+        Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures: None, head_end: Arrowhead::None }), style)
     }
 
     /// Stroke with pen pressure (one 0..1 value per point; ignored when the lengths differ).
     #[must_use]
     pub fn new_pen_with_pressure(pts: Vec<Pt>, pressures: Vec<f32>, highlighter: bool, style: Style) -> Self {
         let pressures = (pressures.len() == pts.len()).then(|| Arc::new(pressures));
-        Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures }), style)
+        Self::new(Kind::Pen(PenObj { pts: Arc::new(pts), highlighter, pressures, head_end: Arrowhead::None }), style)
     }
 
     /// Frame for rectangular objects (shape, image, table).
@@ -880,5 +904,33 @@ mod tests {
         let (Kind::Pen(pa), Kind::Pen(pb)) = (&a.kind, &b.kind) else { panic!() };
         assert_eq!(pa.pts[0], Pt::new(5.0, 5.0));
         assert_eq!(pb.pts[0], Pt::ZERO);
+    }
+
+    #[test]
+    fn pen_head_is_serialized_only_when_set() {
+        let pts = vec![Pt::ZERO, Pt::new(50.0, 0.0)];
+        let mut o = Object::new_pen(pts, false, Style::default());
+        assert!(!serde_json::to_string(&o.kind).unwrap().contains("head_end"));
+        let Kind::Pen(p) = &mut o.kind else { unreachable!() };
+        p.head_end = Arrowhead::Triangle;
+        let json = serde_json::to_string(&o.kind).unwrap();
+        assert!(json.contains("head_end"));
+        assert_eq!(serde_json::from_str::<Kind>(&json).unwrap(), o.kind);
+        let old = r#"{"type":"pen","pts":[{"x":0.0,"y":0.0},{"x":5.0,"y":0.0}]}"#;
+        let Kind::Pen(p) = serde_json::from_str::<Kind>(old).unwrap() else { panic!() };
+        assert_eq!(p.head_end, Arrowhead::None);
+    }
+
+    #[test]
+    fn pen_head_follows_the_last_stretch_not_the_last_segment() {
+        let mut pts: Vec<Pt> = (0..=20).map(|i| Pt::new(f64::from(i) * 5.0, 0.0)).collect();
+        pts.push(Pt::new(100.0, 1.0)); // the end wobbles sideways
+        let Kind::Pen(mut p) = Object::new_pen(pts, false, Style::default()).kind else { unreachable!() };
+        assert!(p.head_at_end(2.0).is_none());
+        p.head_end = Arrowhead::Triangle;
+        let (tip, from, size) = p.head_at_end(2.0).unwrap();
+        assert_eq!(tip, Pt::new(100.0, 1.0));
+        assert!((size - 12.0).abs() < 1e-9);
+        assert!(from.x < 90.0 && from.y.abs() < 1e-9, "{from:?}");
     }
 }

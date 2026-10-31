@@ -5,6 +5,15 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Added
+
+- **Arrow at the end of a freehand stroke:** the style panel of the pen offers an arrowhead at the end (→ ▶ ● |), for the selected strokes and the next ones. Live sharing moves to protocol v5: update every app that hosts or joins a session.
+
+### Changed
+
+- **Shapes:** a shape opens its text right after it is drawn, ready to type (Escape or a click elsewhere leaves it empty).
+- **Color palette:** the tooltip of the first swatch now says what it does: black, white on a dark background.
+
 ## [0.2.0-rc.2] - 2026-10-30
 
 **Release candidate.** Fixes the Linux AppImage, which stopped at startup on a system without `libxkbcommon-x11`; the macOS Apple Silicon installer is now built on `macos-15`.

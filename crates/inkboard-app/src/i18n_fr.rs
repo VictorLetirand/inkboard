@@ -202,7 +202,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Image…", "Image…"),
     ("Import Mermaid", "Importer du Mermaid"),
     ("Import Mermaid…", "Importer du Mermaid…"),
-    ("Ink (follows the theme)", "Encre (suit le thème)"),
+    ("Black (white on a dark background)", "Noir (blanc sur fond sombre)"),
     ("Insert", "Insérer"),
     ("Insert a formula", "Insérer une formule"),
     ("Insert column to the left", "Insérer une colonne à gauche"),

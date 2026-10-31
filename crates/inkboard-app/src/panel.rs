@@ -138,7 +138,7 @@ fn swatches(ui: &mut Ui, set: Swatches, mut pick: impl FnMut(Option<Color>), mut
         }
         for c in list {
             if swatch(ui, Some(*c), current == Some(*c), dark)
-                .on_hover_text(if *c == Color::Ink { t("Ink (follows the theme)") } else { String::new() })
+                .on_hover_text(if *c == Color::Ink { t("Black (white on a dark background)") } else { String::new() })
                 .clicked()
             {
                 pick(Some(*c));
@@ -501,6 +501,27 @@ pub(crate) fn set_shadow(app: &mut App, ids: &[Id], on: bool) {
     app.ed.update_many(ids, |o| o.style.shadow = on);
 }
 
+/// The simple arrowheads offered by the style panel, with their glyph.
+const SIMPLE_HEADS: [(Arrowhead, &str); 5] =
+    [(Arrowhead::None, "—"), (Arrowhead::Arrow, "→"), (Arrowhead::Triangle, "▶"), (Arrowhead::Dot, "●"), (Arrowhead::Bar, "|")];
+
+/// Arrowhead at the end of the freehand strokes: for the selected strokes and the next ones.
+fn pen_head_section(app: &mut App, ui: &mut Ui, target: &Target) {
+    let cur = target.objs.iter().find_map(|o| if let Kind::Pen(p) = &o.kind { Some(p.head_end) } else { None }).unwrap_or(app.pen_head);
+    row(ui, "Arrowhead at the end", |ui| {
+        for (h, name) in SIMPLE_HEADS {
+            if theme::seg_button(ui, cur == h, "", |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0))).clicked() {
+                app.pen_head = h;
+                app.ed.update_many(&target.ids, |o| {
+                    if let Kind::Pen(p) = &mut o.kind {
+                        p.head_end = h;
+                    }
+                });
+            }
+        }
+    });
+}
+
 /// Path and arrowheads of the connectors.
 fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
     let cur = target.objs.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.clone()) } else { None });
@@ -521,8 +542,7 @@ fn connector_section(app: &mut App, ui: &mut Ui, target: &Target) {
         for (title, is_start) in [("Arrowhead at the start", true), ("Arrowhead at the end", false)] {
             let (now, now_ext) = if is_start { (c.head_start, c.head_start_ext) } else { (c.head_end, c.head_end_ext) };
             row(ui, title, |ui| {
-                for (h, name) in [(Arrowhead::None, "—"), (Arrowhead::Arrow, "→"), (Arrowhead::Triangle, "▶"), (Arrowhead::Dot, "●"), (Arrowhead::Bar, "|")]
-                {
+                for (h, name) in SIMPLE_HEADS {
                     if theme::seg_button(ui, now_ext.is_none() && now == h, "", |p, r, col| text_in(p, name, r, col, egui::FontId::proportional(14.0)))
                         .clicked()
                     {
@@ -659,6 +679,9 @@ fn props(app: &mut App, ui: &mut Ui) {
     }
     if target.connectors() || matches!(app.tool, Tool::Line | Tool::Arrow) {
         connector_section(app, ui, &target);
+    }
+    if if has_sel { target.only_pen() && !target.highlighter(app.tool) } else { matches!(app.tool, Tool::Pen) } {
+        pen_head_section(app, ui, &target);
     }
     if target.shapes() || matches!(app.tool, Tool::Text | Tool::Sticky | Tool::Shape(_)) {
         text_section(app, ui, &target);

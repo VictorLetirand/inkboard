@@ -230,6 +230,49 @@ impl Ctx<'_> {
         format!(r#"<path d="{d}" fill="none" {}{op}/>"#, self.stroke(st, highlighter))
     }
 
+    /// SVG of the parts of an arrowhead, drawn in the stroke color of `st`.
+    fn head(&self, st: &Style, parts: Vec<HeadPart>) -> String {
+        let col = self.col(st.stroke);
+        let background = if self.dark { "#262b38" } else { "#ffffff" };
+        let mut out = String::new();
+        for part in parts {
+            let list = |pts: &[crate::geom::Pt]| pts.iter().map(|p| format!("{},{}", n(p.x), n(p.y))).collect::<Vec<_>>().join(" ");
+            match part {
+                HeadPart::Line(pts) => {
+                    let _ = write!(
+                        out,
+                        r#"<polyline points="{}" fill="none" stroke="{col}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round"/>"#,
+                        list(&pts),
+                        n(st.width)
+                    );
+                }
+                HeadPart::Polygon { pts, solid } => {
+                    let fill = if solid { col.as_str() } else { background };
+                    let _ = write!(
+                        out,
+                        r#"<polygon points="{}" fill="{fill}" stroke="{col}" stroke-width="{}" stroke-linejoin="round"/>"#,
+                        list(&pts),
+                        n(st.width)
+                    );
+                }
+                HeadPart::Circle { center, radius, solid: true } => {
+                    let _ = write!(out, r#"<circle cx="{}" cy="{}" r="{}" fill="{col}"/>"#, n(center.x), n(center.y), n(radius));
+                }
+                HeadPart::Circle { center, radius, solid: false } => {
+                    let _ = write!(
+                        out,
+                        r#"<circle cx="{}" cy="{}" r="{}" fill="{background}" stroke="{col}" stroke-width="{}"/>"#,
+                        n(center.x),
+                        n(center.y),
+                        n(radius),
+                        n(st.width)
+                    );
+                }
+            }
+        }
+        out
+    }
+
     fn connector(&self, o: &Object, c: &crate::connector::Connector) -> String {
         let Some(path) = self.page.connector_path(c) else { return String::new() };
         if path.len() < 2 {
@@ -240,45 +283,9 @@ impl Ctx<'_> {
         let d: Vec<String> = path.iter().enumerate().map(|(i, p)| format!("{}{} {}", if i == 0 { "M" } else { "L" }, n(p.x), n(p.y))).collect();
         let mut out = format!(r#"<path d="{}" fill="none" {}/>"#, d.join(""), self.stroke(st, false));
         let size = c.head_size_on(st.width, &path);
-        let col = self.col(st.stroke);
-        let background = if self.dark { "#262b38" } else { "#ffffff" };
         let heads = [(c.head_start, c.head_start_ext, path[0], path[1]), (c.head_end, c.head_end_ext, path[path.len() - 1], path[path.len() - 2])];
         for (head, ext, tip, from) in heads {
-            for part in head_glyph(tip, from, size, head, ext) {
-                let list = |pts: &[crate::geom::Pt]| pts.iter().map(|p| format!("{},{}", n(p.x), n(p.y))).collect::<Vec<_>>().join(" ");
-                match part {
-                    HeadPart::Line(pts) => {
-                        let _ = write!(
-                            out,
-                            r#"<polyline points="{}" fill="none" stroke="{col}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round"/>"#,
-                            list(&pts),
-                            n(st.width)
-                        );
-                    }
-                    HeadPart::Polygon { pts, solid } => {
-                        let fill = if solid { col.as_str() } else { background };
-                        let _ = write!(
-                            out,
-                            r#"<polygon points="{}" fill="{fill}" stroke="{col}" stroke-width="{}" stroke-linejoin="round"/>"#,
-                            list(&pts),
-                            n(st.width)
-                        );
-                    }
-                    HeadPart::Circle { center, radius, solid: true } => {
-                        let _ = write!(out, r#"<circle cx="{}" cy="{}" r="{}" fill="{col}"/>"#, n(center.x), n(center.y), n(radius));
-                    }
-                    HeadPart::Circle { center, radius, solid: false } => {
-                        let _ = write!(
-                            out,
-                            r#"<circle cx="{}" cy="{}" r="{}" fill="{background}" stroke="{col}" stroke-width="{}"/>"#,
-                            n(center.x),
-                            n(center.y),
-                            n(radius),
-                            n(st.width)
-                        );
-                    }
-                }
-            }
+            out.push_str(&self.head(st, head_glyph(tip, from, size, head, ext)));
         }
         if let Some(l) = c.label.as_ref().filter(|l| !l.text.is_empty()) {
             let (mid, _) = path_midpoint(&path);
@@ -379,10 +386,21 @@ impl Ctx<'_> {
     fn plain_object(&self, o: &Object) -> String {
         match &o.kind {
             Kind::Box(b) => self.boxed(o, b),
-            Kind::Pen(p) => match &p.pressures {
-                Some(pr) if !p.highlighter && p.pts.len() >= 2 => self.pressure_pen(o, &p.pts, pr),
-                _ => self.pen(o, &p.pts, p.highlighter),
-            },
+            Kind::Pen(p) => {
+                let mut out = match &p.pressures {
+                    Some(pr) if !p.highlighter && p.pts.len() >= 2 => self.pressure_pen(o, &p.pts, pr),
+                    _ => self.pen(o, &p.pts, p.highlighter),
+                };
+                if let Some((tip, from, size)) = p.head_at_end(o.style.width) {
+                    let head = self.head(&o.style, head_glyph(tip, from, size, p.head_end, None));
+                    if o.style.opacity < 1.0 {
+                        let _ = write!(out, r#"<g opacity="{}">{head}</g>"#, n(f64::from(o.style.opacity)));
+                    } else {
+                        out.push_str(&head);
+                    }
+                }
+                out
+            }
             Kind::Connector(c) => self.connector(o, c),
             Kind::Table(t) => self.table(o, t),
             Kind::Image(i) => {
@@ -601,6 +619,18 @@ mod tests {
         assert!(svg.ends_with("</svg>"));
         // balanced <g> tags
         assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
+    }
+
+    #[test]
+    fn pen_with_head_exports_a_polygon() {
+        let pts = vec![Pt::new(0.0, 0.0), Pt::new(40.0, 0.0), Pt::new(80.0, 10.0)];
+        let mut pen = Object::new_pen(pts, false, Style::default());
+        let doc = doc_with(vec![pen.clone()]);
+        assert!(!export_approx(&doc, &doc.pages[0]).unwrap().contains("<polygon"));
+        let Kind::Pen(p) = &mut pen.kind else { unreachable!() };
+        p.head_end = Arrowhead::Triangle;
+        let doc = doc_with(vec![pen]);
+        assert!(export_approx(&doc, &doc.pages[0]).unwrap().contains("<polygon"));
     }
 
     #[test]

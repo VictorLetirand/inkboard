@@ -10,7 +10,7 @@ use crate::ui;
 use eframe::egui::{self, Key, Modifiers};
 use inkboard_core::editor::Order;
 use inkboard_core::num;
-use inkboard_core::{Asset, BgPreset, BoxGeom, Color, Document, Editor, Format, Id, Kind, Label, Object, Page, Pt, Rect, Route, Style, View};
+use inkboard_core::{Arrowhead, Asset, BgPreset, BoxGeom, Color, Document, Editor, Format, Id, Kind, Label, Object, Page, Pt, Rect, Route, Style, View};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -142,6 +142,8 @@ pub struct App {
     pub style: Style,
     pub label: Label,
     pub route: Route,
+    /// Arrowhead given to the next freehand strokes.
+    pub pen_head: Arrowhead,
     pub snap: bool,
     pub toast: Option<(String, Instant)>,
     pub dialog: Option<Dialog>,
@@ -250,6 +252,7 @@ impl App {
             style: Style::default(),
             label: Label::default(),
             route: Route::Straight,
+            pen_head: Arrowhead::None,
             snap: false,
             toast: None,
             dialog: None,

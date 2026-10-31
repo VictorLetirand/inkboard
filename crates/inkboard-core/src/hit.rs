@@ -17,7 +17,7 @@ impl Page {
             Kind::Box(b) => b.frame.aabb().expand(if b.geom == BoxGeom::Text { 0.0 } else { m }),
             Kind::Image(i) => i.frame.aabb(),
             Kind::Table(t) => t.rect().expand(m),
-            Kind::Pen(p) => Rect::from_points(p.pts.iter().copied()).unwrap_or_default().expand(m),
+            Kind::Pen(p) => Rect::from_points(p.pts.iter().copied()).unwrap_or_default().expand(m + p.head_at_end(o.style.width).map_or(0.0, |h| h.2)),
             Kind::Connector(c) => self
                 .connector_path_with(c, get)
                 .and_then(Rect::from_points)

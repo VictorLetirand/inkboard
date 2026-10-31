@@ -217,6 +217,12 @@ fn default_head_scale() -> f32 {
     1.0
 }
 
+/// Usual size of an arrowhead for a stroke of the given width (connectors and freehand strokes).
+#[must_use]
+pub fn base_head_size(width: f64) -> f64 {
+    (width * 4.5).max(12.0)
+}
+
 // Exact comparison on purpose: only the untouched default is left out of the file.
 #[allow(clippy::float_cmp, clippy::trivially_copy_pass_by_ref, reason = "the signature serde asks of `skip_serializing_if`")]
 fn is_default_head_scale(s: &f32) -> bool {
@@ -241,7 +247,7 @@ impl Connector {
     #[must_use]
     pub fn head_size(&self, width: f64) -> f64 {
         let scale = if self.head_scale.is_finite() { self.head_scale } else { 1.0 };
-        (width * 4.5).max(12.0) * f64::from(scale.clamp(*Self::HEAD_SCALE_RANGE.start(), *Self::HEAD_SCALE_RANGE.end()))
+        base_head_size(width) * f64::from(scale.clamp(*Self::HEAD_SCALE_RANGE.start(), *Self::HEAD_SCALE_RANGE.end()))
     }
     /// Size of the heads as drawn on the given routed path: `head_size`, but at most 40% of the path length (so that two heads never overlap
     /// nor overrun the other end of a short connector), with a floor of 4 so that a head stays visible. A usual connector is unchanged.

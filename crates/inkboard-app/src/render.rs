@@ -729,6 +729,9 @@ impl Renderer<'_> {
             let pts: Vec<Pos2> = sm.iter().map(|q| self.cam.s(*q)).collect();
             self.stroke_path(&pts, false, st.width, c, Dash::Solid, !p.highlighter);
         }
+        if let Some((tip, from, size)) = p.head_at_end(st.width) {
+            paint_head(self.painter, &head_glyph(tip, from, size, p.head_end, None), &|q| self.cam.s(q), self.cam.zoom, num::f32(st.width), c, self.bg);
+        }
     }
 
     /// Variable-width stroke: a triangle strip whose width follows the pressure, with rounded caps.
