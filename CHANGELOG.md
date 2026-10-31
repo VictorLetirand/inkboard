@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+## [0.2.0-rc.3] - 2026-10-31
+
+**Release candidate.** The first requests from outside users: an arrowhead at the end of a freehand stroke, a shape that opens its text when drawn, and named color swatches. Live sharing moves to protocol v5: update every app that hosts or joins a session.
+
 ### Added
 
 - **Arrow at the end of a freehand stroke:** the style panel of the pen offers an arrowhead at the end (→ ▶ ● |), for the selected strokes and the next ones. Live sharing moves to protocol v5: update every app that hosts or joins a session.
@@ -119,7 +123,8 @@ has been tried by hand on a few devices and networks, but not widely. See the kn
   private address (S-06), and a single frame over 1 MiB from the host (S-04, recovered by a snapshot).
 - Linux and macOS builds pass CI but have not been used by hand yet.
 
-[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.2...HEAD
+[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.3...HEAD
+[0.2.0-rc.3]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.1
 [0.2.0-beta.4]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-beta.4
