@@ -13,7 +13,7 @@ les manques les plus souvent reprochés aux outils du genre (Miro, Excalidraw, d
 ## Installer
 
 Des installeurs (Windows `.exe`, Linux `.deb` / `.AppImage`, macOS `.dmg`) sont publiés sur la page *Releases* du dépôt à chaque version (voir [docs/DISTRIBUTION.md](docs/fr/DISTRIBUTION.md)) ;
-ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premier lancement). Seuls les installeurs Windows ont été construits et testés à ce jour.
+ils ne sont pas encore signés (avertissement SmartScreen / Gatekeeper au premier lancement). Les versions actuelles sont des **release candidates** (`v0.2.0-rc.N`) : utilisées à la main sous Windows uniquement ; les versions Linux et macOS passent la CI mais n'ont pas été essayées à la main, et le stylet n'a pas été validé sur du vrai matériel. **Testeurs bienvenus** : voir le [guide de test en 10 minutes](docs/fr/TESTING.md).
 
 **Sous Windows**, téléchargez `inkboard_*_x64-setup.exe` et double-cliquez : l'installation se fait pour votre utilisateur en quelques secondes (sans droits d'administrateur, rien à installer avant), ajoute un raccourci au menu Démarrer et se désinstalle proprement depuis *Paramètres → Applications*. Ajoutez `--silent` pour une installation silencieuse. Un paquet `winget` est en préparation (`winget install Inkboard.Inkboard`). Si la fenêtre ne s'ouvre pas : Inkboard bascule tout seul d'OpenGL à Direct3D / Vulkan ; la variable d'environnement `INKBOARD_RENDERER=wgpu` (ou `glow`) en force un ; en cas de plantage, il écrit `%APPDATA%\Inkboard\crash.log` et l'indique. La signature de code est prête à être activée dans le workflow de publication dès qu'un certificat existe ([comment](docs/fr/DISTRIBUTION.md)).
 

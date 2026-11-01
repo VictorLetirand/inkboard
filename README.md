@@ -7,7 +7,7 @@ Draw, diagram and present on a native desktop app, import and export the formats
 
 [![CI](https://github.com/VictorLetirand/inkboard/actions/workflows/ci.yml/badge.svg)](https://github.com/VictorLetirand/inkboard/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
+![Status: release candidate](https://img.shields.io/badge/status-release%20candidate-orange.svg)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 
 🇬🇧 English · 🇫🇷 [Version française](README.fr.md)
@@ -18,8 +18,9 @@ Draw, diagram and present on a native desktop app, import and export the formats
 
 ![Two browser guests and an AI agent editing the same board](docs/img/live-sharing.gif)
 
-> **Status: alpha.** Inkboard is a young project. It is feature-rich and heavily tested (over 850 automated tests), but it has so far been **used by hand on Windows only** (live sharing was also tried between several computers, an Android phone on 5G and a Linux server).
-> Linux and macOS builds compile and pass the automated tests in CI, yet nobody has used the app there yet — expect rough edges, and please [report them](../../issues).
+> **Status: release candidate.** Inkboard is a young project: the 0.2.0 features are complete and being stabilized (releases are named `v0.2.0-rc.N`). It is feature-rich and heavily tested (over 850 automated tests), but it has so far been **used by hand on Windows only** (live sharing was also tried between several computers, an Android phone on 5G and a Linux server).
+> Linux and macOS builds compile and pass the automated tests in CI, yet nobody has used the app there by hand yet, and the pen has not been validated on real hardware — expect rough edges, and please [report them](../../issues).
+> **Testers wanted:** the [10-minute testing guide](docs/TESTING.md) tells you what to try and how to report it.
 > The interface is available in **English and French**; it follows your system language and can be switched from the menu (*Language*).
 
 ## Why Inkboard?
@@ -41,7 +42,7 @@ Before writing a line of code we surveyed what users keep asking for in whiteboa
 
 ### Download (recommended)
 
-Grab the installer for your system from the [**Releases**](../../releases) page (pre-releases while Inkboard is in alpha):
+Grab the installer for your system from the [**Releases**](../../releases) page (release candidates are published as pre-releases until 0.2.0):
 
 | System | File | Notes |
 |---|---|---|
@@ -184,7 +185,7 @@ Planned or wanted next:
 - First real-world usage on Linux and macOS, and fixes that come out of it.
 - Real LaTeX beyond what the typesetting library supports; per-language code highlighting.
 
-Have an idea or found a bug? [Open an issue](../../issues/new/choose) — see also [CONTRIBUTING.md](CONTRIBUTING.md).
+Have an idea or found a bug? [Open an issue](../../issues/new/choose) or start a [discussion](https://github.com/VictorLetirand/inkboard/discussions) — see also the [testing guide](docs/TESTING.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
