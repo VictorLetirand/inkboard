@@ -5,6 +5,16 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Added
+
+- **MCP, connectors:** `add_connector` accepts `dash`, `font_size` (label) and `stroke_width`; the label is `label` or `text` in both `add_connector` and `update_object`.
+- **MCP, icons:** `add_icon` takes `label_font_size`, `label_max_width` (long labels now wrap, default `max(2 × icon size, 140)`) and `label_side` (`bottom`, `top`, `right`, `left`). `search_icons` returns each icon's `aspect` and `wide` (wordmark logos), and retries an empty query with synonyms (`note`).
+- **MCP, shapes:** `fit: "width"` (with `max_lines`) on `add_shape` and `update_object` computes the width that holds the text without splitting a word; both warn when the height had to grow or a word is wider than the text area.
+
+### Changed
+
+- **MCP:** `move_objects` also moves the other members of the groups of the given ids (an icon and its label); `group: false` restores the previous behavior.
+
 ## [0.2.0-rc.3] - 2026-10-31
 
 **Release candidate.** The first requests from outside users: an arrowhead at the end of a freehand stroke, a shape that opens its text when drawn, and named color swatches. Live sharing moves to protocol v5: update every app that hosts or joins a session.

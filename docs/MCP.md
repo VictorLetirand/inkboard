@@ -89,19 +89,19 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 | `describe_board` | Pages and objects (id, type, text, position, connector links); in live mode, also `selection`. `detail: "full"` adds [styles and fonts](#reading-styles). Also reads draw.io, Excalidraw, JSON Canvas, Mermaid. |
 | `find_objects` | Finds objects by text, regex, type or area, without reading the whole board (read-only). |
 | `render` | **Picture of the board as an image** (PNG returned directly to the agent, nothing to export and read back). Whole content, a `region`, or the `ids` to frame; optional id badges (`show_ids`); `output` also writes the PNG under the root. Read-only. |
-| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, with text (optionally [rich text](#rich-text)), colors, size. |
-| `add_connector` | **Bound** arrow between two objects (`straight`, `elbow`, `curve`, arrowheads, label — optionally rich text). |
+| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, with text (optionally [rich text](#rich-text)), colors, size. The height grows to hold the text and `warnings` says so (`text did not fit: height grew from X to Y`), or that a word is wider than the text area (`use w ≥ N`). `fit: "width"` (+ `max_lines`, default 2) computes the smallest width that fits the text without splitting a word, per geometry; never below `w` when `w` is given. |
+| `add_connector` | **Bound** arrow between two objects (`straight`, `elbow`, `curve`, arrowheads, label — optionally rich text; the label is `label` or `text`, both accepted, as in `update_object`; `dash` `solid`/`dashed`/`dotted`, `font_size` of the label 4–400, `stroke_width` 0–100 at creation). |
 | `add_table` | Table of cells (columns fitted to the text); cells may be rich text. |
 | `add_code_block` | Colored code block. |
 | `add_formula` | LaTeX formula typeset as in TeX (clear error if unsupported). |
 | `add_image` | PNG/JPEG/GIF/WebP/SVG image (15 MiB at most) from a file under the root (`source`) or in base64; natural size reduced to 600, or `w`/`h`. The type is recognized from the content, never from the extension. |
-| `search_icons` | Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI symbols…) by keywords (`query`, English names, case-insensitive, every word must match); optional `group`, `set`, `limit` (default 20, at most 100). Returns `{count, truncated, icons: [{id, name, set, group, mono}]}`. Read-only. |
+| `search_icons` | Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI symbols…) by keywords (`query`, English names, case-insensitive, every word must match); optional `group`, `set`, `limit` (default 20, at most 100). Returns `{count, truncated, icons: [{id, name, set, group, mono, aspect, wide?}], note?}`. `aspect` = width / height rounded to 2 decimals; `wide: true` above 2 (wordmark logos, unreadable at 64: give `w`). A query with no result is retried with a small synonym table (`box internet` → router, `user team` → users, `registry` → container registry, `phone` → smartphone, `laptop` → notebook…) and `note` says which. Read-only. |
 | `list_icon_groups` | The groups of the icon library with their sets and icon counts (`{total, groups: [{group, sets: [{set, icons}]}]}`), to know what to search for. Read-only. |
-| `add_icon` | Places an icon (`icon` = an `id` from `search_icons`) as an image object that `add_connector` can attach to. `size` (longest side, default 64, 8 to 2000) or `w`/`h` (ratio kept when only one is given); `stroke` tints monochrome icons; `label` adds a text centered under the icon, grouped with it (`markdown: true` for [rich text](#rich-text)). Returns `{id, x, y, w, h, icon, label_id?, warnings?}`. |
+| `add_icon` | Places an icon (`icon` = an `id` from `search_icons`) as an image object that `add_connector` can attach to. `size` (longest side, default 64, 8 to 2000) or `w`/`h` (ratio kept when only one is given); `stroke` tints monochrome icons; `label` adds a text grouped with the icon (`markdown: true` for [rich text](#rich-text)): `label_side` `bottom` (default) / `top` / `right` / `left` (6-unit gap), `label_font_size` (4–400, default 16), `label_max_width` (20 and up; the label wraps at spaces beyond it, a word is never split; default `max(2 × the icon's longest side, 140)`, so a short label is untouched and a long one no longer runs into its neighbours). Returns `{id, x, y, w, h, icon, label_id?, warnings?}`. |
 | `import_mermaid` | Mermaid diagram (flowchart, state, sequence, class, entity-relationship) with automatic layout; optional dedicated page. A `subgraph` becomes a dashed frame with its title; its content is laid out on its own, so frames never overlap, and its `direction` applies when no link joins it to the outside. A link written to a subgraph (`B --> Back`) is attached to that frame. A `;` inside a quoted label (`A["a; b"]`) is kept in the label. A class or an entity becomes a table (name, attributes, methods; or type, name, keys); inheritance and realization end in a hollow triangle, composition and aggregation in a diamond, and an entity link ends in crow's foot symbols and spells out its cardinalities. Not supported: pie, mindmap, gantt (an explicit error says so). |
 | `update_object` | Modify text ([rich text](#rich-text) optional), position, size, colors, [line style, font, lock, rotation](#update_object), a connector's route / arrowheads / ends, or one table cell. |
 | `delete_object` | Deletes one object (`id`) or several (`ids`). |
-| `move_objects` | Moves objects together (relative or to a position); bound connectors follow. |
+| `move_objects` | Moves objects together (relative or to a position); the other members of the groups of `ids` move too (an icon and its label) unless `group: false`; bound connectors follow. |
 | `arrange_objects` | Aligns, distributes, stacks (front/back), groups, ungroups, locks, unlocks. |
 | `duplicate_objects` | Copies objects (one or several copies, with an offset); connectors between copied objects are kept. |
 | `format_text` | Bold, italic, underline, strike, color, highlight on text **already on the board**: a part of a shape's text, a connector's label or a table cell. |
@@ -209,6 +209,8 @@ The existing parameters (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stroke
 | `head_scale` | 0.5 to 4, size of the arrowheads (1: default; the panel's S / M / L / XL are 0.6 / 1 / 1.6 / 2.4); also on `add_connector` | connectors |
 | `shadow` | `true` / `false`: drop shadow; also on `add_shape` | shapes, images, tables, connectors |
 | `recolor` | replaces colors of an SVG image: `{"#e34f26": "#0055ff"}` or `[["#e34f26", "#0055ff"]]`; replaces the previous list, `{}` restores the original colors (at most 256 pairs). `describe_board` with `detail: "full"` lists the colors found in the file | SVG images (not monochrome icons or formulas) |
+| `label` | synonym of `text` for a connector label (error if both are given and differ); also `text` on `add_connector` | connectors |
+| `fit`, `max_lines` | `fit: "width"` sets the width to the smallest that holds the text in `max_lines` lines (1 to 20, default 2) without splitting a word; with `w` it is never smaller than `w` | shapes |
 | `cell` + `text` | `[row, column]` from 0: the new text of that table cell (`markdown` works as everywhere); the column widens if needed | tables |
 
 - **All or nothing**: every parameter is validated first; an unknown or out-of-range value is an error that names the parameter and the allowed values, and nothing is modified.
@@ -224,7 +226,8 @@ The existing parameters (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stroke
 ## `move_objects`
 
 `ids` (1 to 2000) and **either** `dx`, `dy` (relative; one of them is enough) **or** `x`, `y` (new top-left corner of the **bounding box of the whole batch**; for one object it is `update_object`'s `x`/`y`). Giving both forms, or none, is an error.
-Connectors bound to the moved objects follow; a connector moved alone only moves its free ends. Result: `{"moved": n, "dx": …, "dy": …}`.
+By default **the whole group** of each listed object moves (an icon from `add_icon` and its label are one group); `group: false` moves only the listed ids. The bounding box of `x`, `y` then includes the group members.
+Connectors bound to the moved objects follow; a connector moved alone only moves its free ends. Result: `{"moved": n, "dx": …, "dy": …}`. `group_members_added` appears when members were added.
 
 ## `arrange_objects`
 

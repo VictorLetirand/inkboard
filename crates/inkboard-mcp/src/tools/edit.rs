@@ -144,8 +144,13 @@ fn enum_arg<T: Copy>(a: &Value, k: &str, table: &[(&str, T)]) -> Res<Option<T>> 
     table.iter().find(|t| t.0 == name).map(|t| Some(t.1)).ok_or_else(|| format!("unknown {k} \"{name}\" (one of: {})", names(table)))
 }
 
+/// The `dash` parameter (`solid`, `dashed`, `dotted`), shared by `update_object` and `add_connector`.
+pub(super) fn dash_arg(a: &Value) -> Res<Option<Dash>> {
+    enum_arg(a, "dash", &DASHES)
+}
+
 /// Integer in `min..=max` (`default` when absent).
-fn int_arg(a: &Value, k: &str, min: u64, max: u64, default: u64) -> Res<u64> {
+pub(super) fn int_arg(a: &Value, k: &str, min: u64, max: u64, default: u64) -> Res<u64> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(default),
         Some(v) => match v.as_u64() {
@@ -614,7 +619,17 @@ fn delete_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
 }
 
 fn move_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
-    let ids = ids_arg(ed, a, "ids")?;
+    let mut ids = ids_arg(ed, a, "ids")?;
+    // by default a group moves as a whole (an icon and its label); `group: false` moves only the listed objects
+    let listed = ids.len();
+    if bool_arg(a, "group")?.unwrap_or(true) {
+        let page = ed.page();
+        let groups: HashSet<_> = ids.iter().filter_map(|i| page.get(i)).filter_map(|o| o.group.clone()).collect();
+        let known: HashSet<Id> = ids.iter().cloned().collect();
+        let members: Vec<Id> =
+            page.objects.iter().filter(|o| o.group.as_ref().is_some_and(|g| groups.contains(g)) && !known.contains(&o.id)).map(|o| o.id.clone()).collect();
+        ids.extend(members);
+    }
     let [dx, dy, x, y] = ["dx", "dy", "x", "y"].map(|k| num_arg(a, k, -MAX_COORD, MAX_COORD));
     let (dx, dy, x, y) = (dx?, dy?, x?, y?);
     let d = match (dx.is_some() || dy.is_some(), x.is_some() || y.is_some()) {
@@ -628,7 +643,11 @@ fn move_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
         }
     };
     ed.translate(&ids, d);
-    Ok(json!({"moved": ids.len(), "dx": r3(d.x), "dy": r3(d.y)}))
+    let mut out = json!({"moved": ids.len(), "dx": r3(d.x), "dy": r3(d.y)});
+    if ids.len() > listed {
+        out["group_members_added"] = json!(ids.len() - listed);
+    }
+    Ok(out)
 }
 
 fn arrange_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -744,7 +763,7 @@ fn duplicate_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
 
 /// Schemas for `tools/list`.
 pub(super) fn specs() -> Vec<Value> {
-    let ids = |what: &str| json!({"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAX_IDS, "description": format!("Ids of the objects {what} (1 to {MAX_IDS}; ids come from describe_board, find_objects or the add_* tools). Groups are not expanded: list every member.")});
+    let ids = |what: &str| json!({"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAX_IDS, "description": format!("Ids of the objects {what} (1 to {MAX_IDS}; ids come from describe_board, find_objects or the add_* tools). {}", if what == "to move" { "The groups of these objects move whole unless `group` is false." } else { "Groups are not expanded: list every member." })});
     vec![
         json!({"name": "find_objects",
             "description": "Finds objects on a page without reading the whole board: by text, regex, type or area. Filters combine (all must match). `text` is a case-insensitive substring of a shape's text, a connector's label, a table's cells or a formula's LaTeX. `in_region` keeps objects whose bounding box overlaps the rectangle. Returns `count` (all matches), `truncated` (more than `limit`) and `objects` (same summaries as describe_board).",
@@ -755,8 +774,9 @@ pub(super) fn specs() -> Vec<Value> {
                 "in_region": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"}}, "required": ["x", "y", "w", "h"], "description": "Rectangle of the board, same units as x/y/w/h."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Default 50."}}), &[])}),
         json!({"name": "move_objects",
-            "description": "Moves objects together. Either relative (`dx`, `dy`) or absolute (`x`, `y`: new top-left corner of the bounding box of all the objects, as update_object's x/y for one). Connectors bound to moved objects follow. Locked objects move too.",
+            "description": "Moves objects together. Either relative (`dx`, `dy`) or absolute (`x`, `y`: new top-left corner of the bounding box of all the objects, as update_object's x/y for one). By default every member of the groups of the given ids moves too (an icon from add_icon moves with its label; `group_members_added` tells how many were added); `group: false` moves only the listed ids. Connectors bound to moved objects follow. Locked objects move too.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "ids": ids("to move"),
+                "group": {"type": "boolean", "description": "Default true: also move the other members of the groups of `ids`. false: move only the listed objects."},
                 "dx": {"type": "number", "description": "Horizontal offset (right is positive)."}, "dy": {"type": "number", "description": "Vertical offset (down is positive)."},
                 "x": {"type": "number", "description": "New left edge of the group of objects."}, "y": {"type": "number", "description": "New top edge of the group of objects."}}), &["ids"])}),
         json!({"name": "arrange_objects",

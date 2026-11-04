@@ -159,7 +159,12 @@ fn nested_and_overlapping_markup() {
 #[test]
 fn escapes_give_literal_characters() {
     let (mut c, board) = setup("rt-esc");
-    let r = ok(&mut c, &board, "add_shape", json!({"geom": "rect", "text": r"\*x\* \_y\_ \~z\~ \{color=#e03131\} \\ 2 \* 3", "markdown": true}));
+    let r = ok(
+        &mut c,
+        &board,
+        "add_shape",
+        json!({"geom": "rect", "w": 600, "h": 200, "text": r"\*x\* \_y\_ \~z\~ \{color=#e03131\} \\ 2 \* 3", "markdown": true}),
+    );
     assert!(r.get("warnings").is_none(), "{r}");
     assert_eq!(spans(&box_text(&board, &id_of(&r))), sp(&[(r"*x* _y_ ~z~ {color=#e03131} \ 2 * 3", "")]));
 }
@@ -170,13 +175,13 @@ fn invalid_markup_is_kept_as_text_and_reported() {
     for (src, shown) in
         [("**x", "**x"), ("a {color=#e03131}x", "a {color=#e03131}x"), ("{color=red}x{/}", "{color=red}x{/}"), ("x {/} y", "x {/} y"), ("**{/}**", "**{/}**")]
     {
-        let r = ok(&mut c, &board, "add_shape", json!({"geom": "rect", "text": src, "markdown": true}));
+        let r = ok(&mut c, &board, "add_shape", json!({"geom": "rect", "w": 600, "h": 200, "text": src, "markdown": true}));
         let w = r["warnings"].as_array().unwrap_or_else(|| panic!("{src}: no warnings in {r}"));
         assert!(!w.is_empty() && w.iter().all(|m| m.as_str().is_some_and(|m| m.contains("literal"))), "{src}: {w:?}");
         assert_eq!(spans(&box_text(&board, &id_of(&r))), sp(&[(shown, "")]), "{src}");
     }
     // valid and invalid markup together: the valid part applies
-    let r = ok(&mut c, &board, "add_shape", json!({"geom": "rect", "text": "**ok** and *open", "markdown": true}));
+    let r = ok(&mut c, &board, "add_shape", json!({"geom": "rect", "w": 600, "h": 200, "text": "**ok** and *open", "markdown": true}));
     assert_eq!(r["warnings"].as_array().unwrap().len(), 1);
     assert_eq!(spans(&box_text(&board, &id_of(&r))), sp(&[("ok", "b"), (" and *open", "")]));
 }
@@ -185,7 +190,7 @@ fn invalid_markup_is_kept_as_text_and_reported() {
 fn without_markdown_the_text_is_unchanged() {
     let (mut c, board) = setup("rt-plain");
     let text = r"**x** *y* __u__ ~~s~~ {color=#e03131}r{/} \* \\";
-    for args in [json!({"geom": "rect", "text": text}), json!({"geom": "rect", "text": text, "markdown": false})] {
+    for args in [json!({"geom": "rect", "w": 600, "h": 200, "text": text}), json!({"geom": "rect", "w": 600, "h": 200, "text": text, "markdown": false})] {
         let r = ok(&mut c, &board, "add_shape", args);
         assert!(r.get("warnings").is_none(), "{r}");
         assert_eq!(spans(&box_text(&board, &id_of(&r))), sp(&[(text, "")]));
