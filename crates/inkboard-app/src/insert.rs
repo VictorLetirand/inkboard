@@ -26,7 +26,13 @@ impl App {
     /// Code block: dark rectangle, monospace font, left-aligned text.
     pub fn insert_code_block(&mut self) {
         let style = Style { stroke: Color::rgb(0xe6, 0xe6, 0xe6), fill: Some(Color::rgb(0x1e, 0x20, 0x2e)), width: 0.0, roundness: 0.1, ..Style::default() };
-        let label = Label { text: inkboard_core::highlight::highlight(CODE_SAMPLE), family: FontFamily::Mono, size: 18.0, align: Align::Left };
+        let label = Label {
+            text: inkboard_core::highlight::highlight(CODE_SAMPLE),
+            family: FontFamily::Mono,
+            size: 18.0,
+            align: Align::Left,
+            valign: inkboard_core::VAlign::Middle,
+        };
         let mut o = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 420.0, 120.0), style, label);
         if let Kind::Box(b) = &mut o.kind {
             b.lang = Some(Lang::Auto);
@@ -116,7 +122,7 @@ impl App {
     /// Numbered vote dot: a small colored disc, to drop on the items to be decided.
     pub fn insert_vote_dot(&mut self, at: Pt) {
         let style = Style { stroke: Color::rgb(0xff, 0xff, 0xff), fill: Some(Color::rgb(0xe0, 0x31, 0x31)), width: 0.0, ..Style::default() };
-        let label = Label { text: RichText::plain("1"), family: FontFamily::Sans, size: 16.0, align: Align::Center };
+        let label = Label { text: RichText::plain("1"), family: FontFamily::Sans, size: 16.0, align: Align::Center, valign: inkboard_core::VAlign::Middle };
         let o = Object::new_box(BoxGeom::Ellipse, Frame::new(at.x - 14.0, at.y - 14.0, 28.0, 28.0), style, label);
         let id = self.ed.insert(o);
         self.sel = vec![id];

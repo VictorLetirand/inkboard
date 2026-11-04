@@ -334,3 +334,19 @@ fn a_connector_head_scale_must_be_finite_and_within_the_allowed_range() {
         assert!(check_object(&l(), &with_scale(bad)).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn a_connector_label_position_and_offset_must_be_finite_and_within_range() {
+    let with = |pos: Option<f64>, offset: f64| {
+        let mut c = inkboard_core::Connector::straight(Pt::new(0.0, 0.0), Pt::new(100.0, 0.0));
+        c.label_pos = pos;
+        c.label_offset = offset;
+        Object::new(Kind::Connector(c), Style::default())
+    };
+    for (pos, offset) in [(None, 0.0), (Some(0.0), 0.0), (Some(1.0), 1000.0), (Some(0.4), -1000.0)] {
+        check_object(&l(), &with(pos, offset)).unwrap_or_else(|e| panic!("{pos:?} {offset}: {e}"));
+    }
+    for (pos, offset) in [(Some(1.01), 0.0), (Some(-0.01), 0.0), (Some(f64::NAN), 0.0), (None, 1000.5), (None, -1e9), (None, f64::NAN), (None, f64::INFINITY)] {
+        assert!(check_object(&l(), &with(pos, offset)).is_err(), "{pos:?} {offset}");
+    }
+}

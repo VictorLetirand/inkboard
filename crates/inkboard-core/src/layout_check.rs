@@ -7,7 +7,7 @@
 // Segment geometry reads best with the usual one-letter names.
 #![allow(clippy::many_single_char_names)]
 
-use crate::connector::{Connector, End, path_midpoint};
+use crate::connector::{Connector, End};
 use crate::geom::{Pt, Rect};
 use crate::model::{BoxGeom, Id, Kind, Object, Page};
 use crate::num;
@@ -216,10 +216,10 @@ fn bbox(path: &[Pt]) -> Rect {
     Rect::from_points(path.iter().copied()).unwrap_or_default()
 }
 
-/// Box of the label of a connector: its text laid out centered on the middle of the path, as the SVG export does.
+/// Box of the label of a connector: its text laid out centered on its position along the path (`label_pos`, `label_offset`), as the SVG export does.
 fn label_box(c: &Connector, path: &[Pt]) -> Option<Rect> {
     let l = c.label.as_ref().filter(|l| !l.text.is_empty())?;
-    let (mid, _) = path_midpoint(path);
+    let mid = c.label_point(path);
     let lay = layout_rich(&l.text, None, &ApproxMeasurer, l.family, l.size);
     Some(Rect::new(mid.x - lay.width / 2.0, mid.y - lay.height / 2.0, lay.width, lay.height))
 }
@@ -397,7 +397,7 @@ fn text_outside_frame(items: &[Item], out: &mut Vec<Issue>) {
 ///   a diamond or an ellipse can be reported by mistake.
 /// - `connector_crossing` (warning): two paths cross strictly inside a segment each; connectors sharing an end object are skipped.
 /// - `shared_segment` (warning): two paths run along the same line (within 1.5 units, angle under about 1 degree) for more than [`SHARED_MIN`]
-///   units, unless they end on the same object (arrows merging into one target are fine).
+///   units, unless they end on the same object (arrows merging into one target are fine) or only share the first segment of two arrows leaving the same point.
 fn connector_issues(items: &[Item], conns: &[Conn], out: &mut Vec<Issue>) {
     let by_id: HashMap<&Id, &Item> = items.iter().map(|i| (&i.obj.id, i)).collect();
     for k in conns {
@@ -431,14 +431,16 @@ fn connector_issues(items: &[Item], conns: &[Conn], out: &mut Vec<Issue>) {
             }
             let shared_end = a.ends().iter().flatten().any(|id| b.ends().contains(&Some(*id)));
             let same_target = a.c.end.target().is_some() && a.c.end.target() == b.c.end.target();
+            // arrows leaving the same point share their first segment, then branch: a common stem is not a shared segment
+            let stem = pa[0].dist(pb[0]) < 1e-6;
             let mut x = None;
             let mut shared = 0.0_f64;
-            for sa in segments(pa) {
-                for sb in segments(pb) {
+            for (ia, sa) in segments(pa).enumerate() {
+                for (ib, sb) in segments(pb).enumerate() {
                     if !shared_end && x.is_none() {
                         x = crossing(sa, sb);
                     }
-                    if !same_target {
+                    if !(same_target || stem && ia == 0 && ib == 0) {
                         shared = shared.max(shared_length(sa, sb));
                     }
                 }
@@ -466,7 +468,7 @@ fn connector_issues(items: &[Item], conns: &[Conn], out: &mut Vec<Issue>) {
     }
 }
 
-/// `label_collision` (warning): the label of a connector (its text laid out at the middle of the path, as the export draws it) intersects,
+/// `label_collision` (warning): the label of a connector (its text laid out at `label_pos` along the path, the middle by default, as the export draws it) intersects,
 /// by more than [`OVERLAP_TOL`] in both directions, a shape, an image, a text, a table or another connector's label; or it crosses the border
 /// of a frame (intersects it without being inside).
 fn label_collisions(items: &[Item], conns: &[Conn], out: &mut Vec<Issue>) {
@@ -819,6 +821,56 @@ mod tests {
         let b = rect(&mut c, 400.0, 0.0, 60.0, 60.0);
         link_with(&mut c, &a, &b, Route::Straight, Some("flow"));
         assert!(issues_of(&c, "label_collision").is_empty());
+    }
+
+    fn tune(p: &mut Page, id: &Id, set: impl FnOnce(&mut Connector)) {
+        let i = p.index_of(id).unwrap();
+        let Kind::Connector(c) = &mut p.objects[i].kind else { panic!("connector") };
+        set(c);
+    }
+
+    #[test]
+    fn the_label_collision_uses_the_position_and_the_offset_of_the_label() {
+        let mut p = Page::new("t");
+        let a = rect(&mut p, 0.0, 0.0, 60.0, 60.0);
+        let b = rect(&mut p, 400.0, 0.0, 60.0, 60.0);
+        let blocker = rect(&mut p, 200.0, 10.0, 60.0, 40.0);
+        let k = link_with(&mut p, &a, &b, Route::Straight, Some("flow"));
+        assert!(issues_of(&p, "label_collision").iter().any(|i| i.ids == vec![k.clone(), blocker.clone()]));
+        // moved along the arrow, away from the blocker in the middle
+        tune(&mut p, &k, |c| c.set_label_pos(Some(0.2)));
+        assert!(issues_of(&p, "label_collision").is_empty(), "{:?}", issues_of(&p, "label_collision"));
+        // back at the middle but beside the line, below the blocker
+        tune(&mut p, &k, |c| {
+            c.set_label_pos(None);
+            c.set_label_offset(60.0);
+        });
+        assert!(issues_of(&p, "label_collision").is_empty(), "{:?}", issues_of(&p, "label_collision"));
+        // and a label moved back onto the blocker collides again
+        tune(&mut p, &k, |c| c.set_label_offset(0.0));
+        assert_eq!(issues_of(&p, "label_collision").len(), 1);
+    }
+
+    #[test]
+    fn elbows_fanning_out_from_one_source_are_not_a_shared_segment() {
+        let mut p = Page::new("t");
+        let src = rect(&mut p, 0.0, 200.0, 100.0, 60.0);
+        for y in [0.0, 100.0, 300.0, 400.0] {
+            let t = rect(&mut p, 400.0, y, 100.0, 60.0);
+            link_with(&mut p, &src, &t, Route::Elbow, None);
+        }
+        assert!(issues_of(&p, "shared_segment").is_empty(), "{:?}", issues_of(&p, "shared_segment"));
+        assert!(issues_of(&p, "connector_crossing").is_empty(), "{:?}", issues_of(&p, "connector_crossing"));
+        // the same elbows from different sources do not share a segment either
+        let mut q = Page::new("t");
+        let a1 = rect(&mut q, 0.0, 0.0, 100.0, 60.0);
+        let a2 = rect(&mut q, 0.0, 100.0, 100.0, 60.0);
+        let b1 = rect(&mut q, 400.0, 150.0, 100.0, 60.0);
+        let b2 = rect(&mut q, 400.0, 250.0, 100.0, 60.0);
+        link_with(&mut q, &a1, &b1, Route::Elbow, None);
+        link_with(&mut q, &a2, &b2, Route::Elbow, None);
+        assert!(issues_of(&q, "shared_segment").is_empty(), "{:?}", issues_of(&q, "shared_segment"));
+        assert!(issues_of(&q, "connector_crossing").is_empty(), "{:?}", issues_of(&q, "connector_crossing"));
     }
 
     #[test]

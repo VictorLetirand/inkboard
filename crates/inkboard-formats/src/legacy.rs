@@ -4,7 +4,7 @@ use crate::common::{FormatError, Imported, Report, parse_color, parse_data_url};
 use inkboard_core::num;
 use inkboard_core::{
     Align, Arrowhead, Asset, AssetId, Background, BgPreset, BoxGeom, Color, Connector, Dash, Document, FontFamily, Frame, Id, ImageObj, Kind, Label, Object,
-    Pattern, Pt, RichText, Style, View,
+    Pattern, Pt, RichText, Style, VAlign, View,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -101,6 +101,7 @@ fn convert(raw: &Value, assets: &std::collections::BTreeMap<AssetId, Asset>) -> 
             Some("right") => Align::Right,
             _ => Align::Left,
         },
+        valign: VAlign::Middle,
     };
     let frame = Frame { x, y, w, h, angle };
     let abs_pts = || -> Vec<Pt> {

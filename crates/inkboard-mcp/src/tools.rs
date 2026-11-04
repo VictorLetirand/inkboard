@@ -51,6 +51,26 @@ fn head_scale_prop() -> Value {
     json!({"type": "number", "minimum": 0.5, "maximum": 4, "description": "Connector arrowhead size factor (1 = usual size, 0.5 to 4); applies to both ends."})
 }
 
+/// Schema of `from_side` / `to_side`: the side of the object a connector attaches to.
+fn side_prop(end: &str) -> Value {
+    json!({"type": "string", "enum": ["top", "bottom", "left", "right", "auto"], "description": format!("Side of the object the {end} of the connector attaches to: the middle of that side, the arrow leaving (or arriving) perpendicular to it. Use it so that an arrow does not leave a diamond by a corner or cross the label of an icon. \"auto\" (the default) chooses the side facing the other end; on update_object it also clears a side set before. Ignored when that end is not attached to an object.")})
+}
+
+/// Schema of `label_pos`: where the label sits along a connector.
+fn label_pos_prop() -> Value {
+    json!({"type": "number", "minimum": 0, "maximum": 1, "description": "Position of the connector's label along its path: 0 at the start, 1 at the end (default 0.5, the middle). Moves a label off a bend, a junction or another label; it follows the arrow when objects move."})
+}
+
+/// Schema of `label_offset`: distance between a connector and its label.
+fn label_offset_prop() -> Value {
+    json!({"type": "number", "minimum": -1000, "maximum": 1000, "description": "Distance (units, default 0) between the connector's path and its label, perpendicular to the path, to put the label beside the line instead of on it. Positive: to the right of the direction of travel (below a path going right, left of a path going down); negative: to the left."})
+}
+
+/// Schema of `valign`: vertical placement of the text of a shape.
+fn valign_prop() -> Value {
+    json!({"type": "string", "enum": ["top", "middle", "bottom"], "description": "Shapes only: vertical placement of the text in the shape (default middle). With align \"left\" and valign \"top\", a rect carries its own title at the top left: a titled frame in one object (give it a transparent fill and send it to the back)."})
+}
+
 /// Schema of `fit`: width computed from the text.
 fn fit_prop() -> Value {
     json!({"type": "string", "enum": ["width"], "description": "Shapes only. \"width\": the smallest width in which the text fits in `max_lines` lines without splitting a word (same approximate font metrics as the height fit, in the usable text area of the geometry). With `w` given, the width is never smaller than `w`; without `w` it is the computed one. Ignored for geom text (already fitted)."})
@@ -95,6 +115,7 @@ pub fn list() -> Vec<Value> {
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
                 "text": {"type": "string"}, "markdown": richtext::markdown_prop("`text`"), "w": {"type": "number"}, "h": {"type": "number"},
                 "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "fill": color.clone(), "stroke": color.clone(), "shadow": shadow_prop(),
+                "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (default center; left for geom text)."}, "valign": valign_prop(),
                 "fit": fit_prop(), "max_lines": max_lines_prop()})), &["geom"])}),
         json!({"name": "add_connector", "description": "Connects two objects with an arrow that follows them when they move (ids returned by add_shape or describe_board).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "from": {"type": "string"}, "to": {"type": "string"},
@@ -102,6 +123,8 @@ pub fn list() -> Vec<Value> {
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Arrowheads (default: end)."},
                 "head_start": head_prop("start"), "head_end": head_prop("end"),
                 "head_scale": head_scale_prop(),
+                "from_side": side_prop("start"), "to_side": side_prop("end"),
+                "label_pos": label_pos_prop(), "label_offset": label_offset_prop(),
                 "label": {"type": "string", "description": "Text of the arrow's label."},
                 "text": {"type": "string", "description": "Synonym of `label` (the name update_object uses); if both are given they must be equal."},
                 "markdown": richtext::markdown_prop("`label`"), "stroke": color.clone(),
@@ -130,12 +153,15 @@ pub fn list() -> Vec<Value> {
                 "shadow": shadow_prop(),
                 "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "font_family": {"type": "string", "enum": ["sans", "hand", "serif", "mono"]},
                 "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (shapes and connector labels)."},
+                "valign": valign_prop(),
                 "locked": {"type": "boolean", "description": "Lock or unlock the object in the application."},
                 "rotation": {"type": "number", "minimum": -360, "maximum": 360, "description": "Absolute angle in degrees (shapes and images; 0 resets)."},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"], "description": "Connector only."},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Connector only: arrowheads."},
                 "head_start": head_prop("start"), "head_end": head_prop("end"),
                 "head_scale": head_scale_prop(),
+                "from_side": side_prop("start"), "to_side": side_prop("end"),
+                "label_pos": label_pos_prop(), "label_offset": label_offset_prop(),
                 "from": {"type": "string", "description": "Connector only: id of the object to connect the start to (shape, table or image)."},
                 "to": {"type": "string", "description": "Connector only: id of the object to connect the end to."},
                 "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."},
@@ -899,7 +925,10 @@ fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
     };
     // as `update_object`: a size of 0 or a huge one would make the guests of a shared board refuse it
     let size = edit::num_arg(a, "font_size", 4.0, 400.0)?.unwrap_or(20.0);
-    let mut label = Label::new(text, size, if geom == BoxGeom::Text { Align::Left } else { Align::Center });
+    let mut label = Label::new(text, size, edit::align_arg(a)?.unwrap_or(if geom == BoxGeom::Text { Align::Left } else { Align::Center }));
+    if let Some(v) = edit::valign_arg(a)? {
+        label.valign = v;
+    }
     let mut warnings = Vec::new();
     label.text = richtext::rich(text, markdown, &mut warnings);
     let fit_lines = fit_arg(a)?;
@@ -954,6 +983,12 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
     if let Some(v) = edit::head_scale_arg(a)? {
         c.set_head_scale(v);
     }
+    for (k, end) in [("from_side", &mut c.start), ("to_side", &mut c.end)] {
+        if let Some(side) = edit::side_arg(a, k)? {
+            end.set_side(side.side());
+        }
+    }
+    let (label_pos, label_offset) = (edit::label_pos_arg(a)?, edit::label_offset_arg(a)?);
     let markdown = richtext::markdown_flag(a)?;
     let mut warnings = Vec::new();
     let (dash, font_size, width) = (edit::dash_arg(a)?, edit::num_arg(a, "font_size", 4.0, 400.0)?, edit::num_arg(a, "stroke_width", 0.0, 100.0)?);
@@ -963,6 +998,14 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
         c.label = Some(label);
     } else if font_size.is_some() {
         warnings.push("font_size ignored: this connector has no label".to_owned());
+    } else if label_pos.is_some() || label_offset.is_some() {
+        warnings.push("label_pos and label_offset ignored: this connector has no label".to_owned());
+    }
+    if c.label.is_some() {
+        c.set_label_pos(label_pos);
+        if let Some(d) = label_offset {
+            c.set_label_offset(d);
+        }
     }
     let mut style = Style { stroke: ocolor(a, "stroke")?.unwrap_or(Color::Ink), width: width.unwrap_or(2.0), ..Style::default() };
     if let Some(d) = dash {
@@ -1033,7 +1076,13 @@ fn add_code_block(ed: &mut Editor, a: &Value) -> Res<Value> {
     let code = s(a, "code")?;
     let at = origin(ed, a);
     let style = Style { stroke: Color::rgb(0xe6, 0xe6, 0xe6), fill: Some(Color::rgb(0x1e, 0x20, 0x2e)), width: 0.0, roundness: 0.1, ..Style::default() };
-    let label = Label { text: inkboard_core::highlight::highlight(code), family: FontFamily::Mono, size: 18.0, align: Align::Left };
+    let label = Label {
+        text: inkboard_core::highlight::highlight(code),
+        family: FontFamily::Mono,
+        size: 18.0,
+        align: Align::Left,
+        valign: inkboard_core::VAlign::Middle,
+    };
     let mut o = Object::new_box(BoxGeom::Rect, Frame::new(at.x, at.y, 420.0, 120.0), style, label);
     if let Kind::Box(b) = &mut o.kind {
         let lay = b.layout(&ApproxMeasurer);

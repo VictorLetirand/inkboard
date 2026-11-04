@@ -1870,7 +1870,7 @@ fn add_text_box(t: &mut T, geom: BoxGeom, frame: Frame, text: &str, align: Align
 fn final_rows(t: &mut T, id: &Id) -> Vec<(f32, f32)> {
     let Kind::Box(b) = t.app().ed.page().get(id).unwrap().kind.clone() else { panic!("not a box") };
     let lay = b.layout(&t.app().measurer);
-    let origins = crate::render::line_origins(&lay, b.label.align, b.label_rect());
+    let origins = crate::render::line_origins(&lay, b.label.align, b.label.valign, b.label_rect());
     lay.lines
         .iter()
         .zip(origins)
@@ -2450,4 +2450,19 @@ fn undo_removes_a_pasted_table_in_one_step() {
     t.app().ed.undo();
     assert_eq!(t.objects(), [] as [inkboard_core::Object; 0]);
     assert!(!t.app().ed.can_undo());
+}
+
+#[test]
+fn text_lines_start_at_the_top_the_middle_or_the_bottom_of_their_area() {
+    let lay = inkboard_core::text::layout_rich(&RichText::plain("one\ntwo"), None, &ApproxMeasurer, FontFamily::Sans, 20.0);
+    let area = Rect::new(10.0, 100.0, 200.0, 300.0);
+    let first_y = |valign| crate::render::line_origins(&lay, Align::Left, valign, area)[0].1;
+    assert!((first_y(VAlign::Top) - 100.0).abs() < 1e-9);
+    assert!((first_y(VAlign::Middle) - (100.0 + (300.0 - lay.height) / 2.0)).abs() < 1e-9);
+    assert!((first_y(VAlign::Bottom) - (400.0 - lay.height)).abs() < 1e-9);
+    // a text taller than its area starts at the top whatever the alignment
+    let small = Rect::new(10.0, 100.0, 200.0, 10.0);
+    for v in [VAlign::Top, VAlign::Middle, VAlign::Bottom] {
+        assert!((crate::render::line_origins(&lay, Align::Left, v, small)[0].1 - 100.0).abs() < 1e-9);
+    }
 }

@@ -279,6 +279,12 @@ pub fn check_object(l: &Limits, o: &Object) -> Result<(), Violation> {
             if !c.head_scale.is_finite() || !inkboard_core::Connector::HEAD_SCALE_RANGE.contains(&c.head_scale) {
                 return Err(Violation::OutOfBounds { field: "arrowhead size", max: 4 });
             }
+            if c.label_pos.is_some_and(|p| !(0.0..=1.0).contains(&p)) {
+                return Err(Violation::OutOfBounds { field: "label position", max: 1 });
+            }
+            if !c.label_offset.is_finite() || c.label_offset.abs() > inkboard_core::Connector::LABEL_OFFSET_MAX {
+                return Err(Violation::OutOfBounds { field: "label offset", max: 1000 });
+            }
         }
     }
     let v = serde_json::to_value(o).map_err(|_| Violation::Malformed("object cannot be serialized"))?;

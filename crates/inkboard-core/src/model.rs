@@ -97,18 +97,63 @@ pub struct Label {
     pub size: f64,
     #[serde(default)]
     pub align: Align,
+    /// Vertical placement of the text block in its area; only written when it is not the usual middle.
+    #[serde(default, skip_serializing_if = "VAlign::is_middle")]
+    pub valign: VAlign,
+}
+
+/// Vertical alignment of a text block inside the text area of its object.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VAlign {
+    Top,
+    #[default]
+    Middle,
+    Bottom,
+}
+
+impl VAlign {
+    #[allow(clippy::trivially_copy_pass_by_ref, reason = "the signature serde asks of `skip_serializing_if`")]
+    fn is_middle(&self) -> bool {
+        *self == VAlign::Middle
+    }
+    /// Name used by the MCP server (`top`, `middle`, `bottom`).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            VAlign::Top => "top",
+            VAlign::Middle => "middle",
+            VAlign::Bottom => "bottom",
+        }
+    }
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<VAlign> {
+        [VAlign::Top, VAlign::Middle, VAlign::Bottom].into_iter().find(|v| v.name() == name)
+    }
+    /// Top of a block of height `block` inside an area of height `area_h` starting at `area_y` (a block taller than the area starts at the top).
+    #[must_use]
+    pub fn block_top(self, area_y: f64, area_h: f64, block: f64) -> f64 {
+        if block > area_h {
+            return area_y;
+        }
+        match self {
+            VAlign::Top => area_y,
+            VAlign::Middle => area_y + (area_h - block) / 2.0,
+            VAlign::Bottom => area_y + area_h - block,
+        }
+    }
 }
 
 impl Default for Label {
     fn default() -> Self {
-        Self { text: RichText::default(), family: FontFamily::Sans, size: 20.0, align: Align::Center }
+        Self { text: RichText::default(), family: FontFamily::Sans, size: 20.0, align: Align::Center, valign: VAlign::Middle }
     }
 }
 
 impl Label {
     #[must_use]
     pub fn new(text: &str, size: f64, align: Align) -> Self {
-        Self { text: RichText::plain(text), family: FontFamily::Sans, size, align }
+        Self { text: RichText::plain(text), family: FontFamily::Sans, size, align, valign: VAlign::Middle }
     }
     #[must_use]
     pub fn line_height(&self) -> f64 {

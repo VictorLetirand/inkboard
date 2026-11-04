@@ -1,4 +1,4 @@
-//! Messages of the session protocol (version 5). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
+//! Messages of the session protocol (version 6). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
 
 use crate::error::{Error, Result};
 use crate::wire::WireOp;
@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 /// v3: the host may send a snapshot (part) compressed, as `Packed` (see `pack`).
 /// v4: objects carry new fields (`ImageObj.recolor`, `Connector.head_scale`, `Style.shadow`) that a v3 peer would drop when it edits them.
 /// v5: freehand strokes carry an arrowhead (`PenObj.head_end`) that a v4 peer would drop when it edits them.
-pub const PROTO_VERSION: u32 = 5;
+/// v6: connectors carry an attachment side (`End::Bound.side`) and a label position (`Connector.label_pos`, `label_offset`), and texts a vertical
+/// alignment (`Label.valign`), that a v5 peer would drop when it edits them.
+pub const PROTO_VERSION: u32 = 6;
 
 /// Fails with a clear message when the peer speaks another version of the protocol.
 pub fn check_proto(theirs: u32) -> Result<()> {

@@ -7,8 +7,8 @@ use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, su
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::num;
 use inkboard_core::{
-    Align, ApproxMeasurer, Arrowhead, Color, Connector, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect,
-    RichText, Route,
+    Align, ApproxMeasurer, Arrowhead, AttachSide, Color, Connector, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt,
+    Rect, RichText, Route, VAlign,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -26,6 +26,7 @@ const MAX_COORD: f64 = 1_000_000.0;
 const DASHES: [(&str, Dash); 3] = [("solid", Dash::Solid), ("dashed", Dash::Dashed), ("dotted", Dash::Dotted)];
 const FAMILIES: [(&str, FontFamily); 4] = [("sans", FontFamily::Sans), ("hand", FontFamily::Hand), ("serif", FontFamily::Serif), ("mono", FontFamily::Mono)];
 const ALIGNS: [(&str, Align); 3] = [("left", Align::Left), ("center", Align::Center), ("right", Align::Right)];
+const VALIGNS: [(&str, VAlign); 3] = [("top", VAlign::Top), ("middle", VAlign::Middle), ("bottom", VAlign::Bottom)];
 const ROUTES: [(&str, Route); 3] = [("straight", Route::Straight), ("elbow", Route::Elbow), ("curve", Route::Curve)];
 const ARROWS: [(&str, (Arrowhead, Arrowhead)); 4] = [
     ("end", (Arrowhead::None, Arrowhead::Arrow)),
@@ -132,6 +133,54 @@ pub(super) fn num_arg(a: &Value, k: &str, min: f64, max: f64) -> Res<Option<f64>
     }
 }
 
+/// Largest `label_offset` the tools accept (units).
+const LABEL_OFFSET_MAX: f64 = Connector::LABEL_OFFSET_MAX;
+
+/// What a side parameter asks for: a side, or `auto` (back to the automatic side).
+#[derive(Clone, Copy)]
+pub(super) enum SideArg {
+    Auto,
+    Side(AttachSide),
+}
+
+impl SideArg {
+    pub(super) fn side(self) -> Option<AttachSide> {
+        match self {
+            SideArg::Auto => None,
+            SideArg::Side(s) => Some(s),
+        }
+    }
+}
+
+/// A side parameter (`from_side`, `to_side`); `None` when absent.
+pub(super) fn side_arg(a: &Value, k: &str) -> Res<Option<SideArg>> {
+    let Some(name) = opt_str(a, k)? else { return Ok(None) };
+    if name == "auto" {
+        return Ok(Some(SideArg::Auto));
+    }
+    AttachSide::from_name(name).map(|s| Some(SideArg::Side(s))).ok_or_else(|| format!("unknown {k} \"{name}\" (one of: top, bottom, left, right, auto)"))
+}
+
+/// The `label_pos` parameter: where the label of a connector sits along its path (0 start, 1 end).
+pub(super) fn label_pos_arg(a: &Value) -> Res<Option<f64>> {
+    num_arg(a, "label_pos", 0.0, 1.0)
+}
+
+/// The `label_offset` parameter: distance (units) between the path and the label of a connector.
+pub(super) fn label_offset_arg(a: &Value) -> Res<Option<f64>> {
+    num_arg(a, "label_offset", -LABEL_OFFSET_MAX, LABEL_OFFSET_MAX)
+}
+
+/// The `align` parameter: horizontal alignment of the text of a shape.
+pub(super) fn align_arg(a: &Value) -> Res<Option<Align>> {
+    enum_arg(a, "align", &ALIGNS)
+}
+
+/// The `valign` parameter: vertical placement of the text in a shape.
+pub(super) fn valign_arg(a: &Value) -> Res<Option<VAlign>> {
+    enum_arg(a, "valign", &VALIGNS)
+}
+
 /// The `head_scale` parameter: the size factor of the arrowheads, within the range the connector accepts.
 pub(super) fn head_scale_arg(a: &Value) -> Res<Option<f32>> {
     let range = Connector::HEAD_SCALE_RANGE;
@@ -213,9 +262,17 @@ pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
         map.get_mut("style").and_then(Value::as_object_mut).expect("style").insert("shadow".into(), json!(true));
     }
     let font = |l: &Label| json!({"family": name_of(&FAMILIES, l.family), "size": l.size, "align": name_of(&ALIGNS, l.align)});
+    // the text of a shape also says where it sits vertically, when that is not the middle
+    let box_font = |l: &Label| {
+        let mut f = font(l);
+        if l.valign != VAlign::Middle {
+            f["valign"] = json!(name_of(&VALIGNS, l.valign));
+        }
+        f
+    };
     match &o.kind {
         Kind::Box(b) => {
-            map.insert("font".into(), font(&b.label));
+            map.insert("font".into(), box_font(&b.label));
             if b.frame.angle != 0.0 {
                 map.insert("rotation".into(), json!(degrees(b.frame.angle)));
             }
@@ -233,6 +290,17 @@ pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
                 map.insert("font".into(), font(l));
             }
             map.insert("route".into(), json!(name_of(&ROUTES, c.route)));
+            for (key, side) in [("from_side", c.start.side()), ("to_side", c.end.side())] {
+                if let Some(side) = side {
+                    map.insert(key.into(), json!(side.name()));
+                }
+            }
+            if let Some(p) = c.label_pos {
+                map.insert("label_pos".into(), json!(r3(p)));
+            }
+            if c.label_offset != 0.0 {
+                map.insert("label_offset".into(), json!(r3(c.label_offset)));
+            }
             let arrow = match (c.has_head_start(), c.has_head_end()) {
                 (false, true) => "end",
                 (true, false) => "start",
@@ -380,6 +448,7 @@ pub(super) struct Patch {
     size: Option<f64>,
     family: Option<FontFamily>,
     align: Option<Align>,
+    valign: Option<VAlign>,
     locked: Option<bool>,
     /// Radians.
     angle: Option<f64>,
@@ -388,6 +457,10 @@ pub(super) struct Patch {
     head_start: Option<HeadKind>,
     head_end: Option<HeadKind>,
     head_scale: Option<f32>,
+    from_side: Option<SideArg>,
+    to_side: Option<SideArg>,
+    label_pos: Option<f64>,
+    label_offset: Option<f64>,
     from: Option<Id>,
     to: Option<Id>,
     cell: Option<Cell>,
@@ -413,6 +486,7 @@ impl Patch {
             size: num_arg(a, "font_size", 4.0, 400.0)?,
             family: enum_arg(a, "font_family", &FAMILIES)?,
             align: enum_arg(a, "align", &ALIGNS)?,
+            valign: valign_arg(a)?,
             locked: bool_arg(a, "locked")?,
             angle: num_arg(a, "rotation", -360.0, 360.0)?.map(f64::to_radians),
             route: enum_arg(a, "route", &ROUTES)?,
@@ -420,6 +494,10 @@ impl Patch {
             head_start: head_arg(a, "head_start")?,
             head_end: head_arg(a, "head_end")?,
             head_scale: head_scale_arg(a)?,
+            from_side: side_arg(a, "from_side")?,
+            to_side: side_arg(a, "to_side")?,
+            label_pos: label_pos_arg(a)?,
+            label_offset: label_offset_arg(a)?,
             from: attachable("from")?,
             to: attachable("to")?,
             cell: None,
@@ -500,6 +578,50 @@ impl Patch {
         }
     }
 
+    /// The changes of a connector: route, heads, ends, sides, label position and font.
+    fn apply_connector(&self, c: &mut Connector, warn: &mut Vec<String>) {
+        if let Some(r) = self.route {
+            c.route = r;
+        }
+        self.apply_heads(c);
+        if let Some(v) = self.head_scale {
+            c.set_head_scale(v);
+        }
+        if let Some(id) = &self.from {
+            c.start = inkboard_core::End::bound(id.clone());
+        }
+        if let Some(id) = &self.to {
+            c.end = inkboard_core::End::bound(id.clone());
+        }
+        for (name, side, end) in [("from_side", self.from_side, &mut c.start), ("to_side", self.to_side, &mut c.end)] {
+            let Some(side) = side.map(SideArg::side) else { continue };
+            if matches!(end, inkboard_core::End::Free { .. }) && side.is_some() {
+                warn.push(format!("{name} ignored: this end of the connector is not attached to an object"));
+            } else {
+                end.set_side(side);
+            }
+        }
+        if self.label_pos.is_some() || self.label_offset.is_some() {
+            if c.label.is_some() {
+                if let Some(p) = self.label_pos {
+                    c.set_label_pos(Some(p));
+                }
+                if let Some(d) = self.label_offset {
+                    c.set_label_offset(d);
+                }
+            } else {
+                warn.push("label_pos and label_offset place the label, and this connector has no label (give `text` too)".into());
+            }
+        }
+        match &mut c.label {
+            Some(l) => self.font(l),
+            None if self.has_font() => {
+                warn.push("font_size, font_family and align apply to the label, and this connector has no label (give `text` too)".into());
+            }
+            None => {}
+        }
+    }
+
     pub(super) fn apply(&self, o: &mut Object, warn: &mut Vec<String>) {
         self.apply_style(&mut o.style);
         if let Some(l) = self.locked {
@@ -507,13 +629,18 @@ impl Patch {
         }
         let kind = kind_name(o);
         let present = |ps: &[(&'static str, bool)]| ps.iter().filter(|p| p.1).map(|p| p.0).collect::<Vec<_>>();
-        let font = [("font_size", self.size.is_some()), ("font_family", self.family.is_some()), ("align", self.align.is_some())];
+        let font =
+            [("font_size", self.size.is_some()), ("font_family", self.family.is_some()), ("align", self.align.is_some()), ("valign", self.valign.is_some())];
         let link = [
             ("route", self.route.is_some()),
             ("arrow", self.arrow.is_some()),
             ("head_start", self.head_start.is_some()),
             ("head_end", self.head_end.is_some()),
             ("head_scale", self.head_scale.is_some()),
+            ("from_side", self.from_side.is_some()),
+            ("to_side", self.to_side.is_some()),
+            ("label_pos", self.label_pos.is_some()),
+            ("label_offset", self.label_offset.is_some()),
             ("from", self.from.is_some()),
             ("to", self.to.is_some()),
         ];
@@ -528,6 +655,9 @@ impl Patch {
                 if self.has_font() {
                     self.font(&mut b.label);
                     b.fit(&ApproxMeasurer);
+                }
+                if let Some(v) = self.valign {
+                    b.label.valign = v;
                 }
                 ignored.extend(present(&link));
             }
@@ -558,31 +688,13 @@ impl Patch {
                     let widest = ApproxMeasurer.width(&c.text.to_plain(), FontFamily::Sans, 18.0, true);
                     t.col_w[c.col] = t.col_w[c.col].max((widest + 28.0).ceil());
                 }
-                ignored.extend(present(&[("align", self.align.is_some())]));
+                ignored.extend(present(&[("align", self.align.is_some()), ("valign", self.valign.is_some())]));
                 ignored.extend(present(&rotation));
                 ignored.extend(present(&link));
             }
             Kind::Connector(c) => {
-                if let Some(r) = self.route {
-                    c.route = r;
-                }
-                self.apply_heads(c);
-                if let Some(v) = self.head_scale {
-                    c.set_head_scale(v);
-                }
-                if let Some(id) = &self.from {
-                    c.start = inkboard_core::End::bound(id.clone());
-                }
-                if let Some(id) = &self.to {
-                    c.end = inkboard_core::End::bound(id.clone());
-                }
-                match &mut c.label {
-                    Some(l) => self.font(l),
-                    None if self.has_font() => {
-                        warn.push("font_size, font_family and align apply to the label, and this connector has no label (give `text` too)".into());
-                    }
-                    None => {}
-                }
+                self.apply_connector(c, warn);
+                ignored.extend(present(&[("valign", self.valign.is_some())]));
                 ignored.extend(present(&rotation));
             }
             Kind::Pen(_) => {

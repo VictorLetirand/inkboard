@@ -214,6 +214,7 @@ fn fill_page(
                 family: *rng.pick(&[FontFamily::Sans, FontFamily::Serif, FontFamily::Hand]),
                 size: 16.0,
                 align: Align::Left,
+                valign: inkboard_core::VAlign::Middle,
             };
             let mut st = style(rng);
             st.fill = None;
@@ -222,7 +223,7 @@ fn fill_page(
         } else if roll < 0.47 {
             // code block
             let text = rng.pick(CODE);
-            let label = Label { text: RichText::plain(*text), family: FontFamily::Mono, size: 14.0, align: Align::Left };
+            let label = Label { text: RichText::plain(*text), family: FontFamily::Mono, size: 14.0, align: Align::Left, valign: inkboard_core::VAlign::Middle };
             let mut o = Object::new_box(
                 BoxGeom::Rect,
                 Frame::new(at.x, at.y, 380.0, 190.0),
