@@ -88,6 +88,7 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 | `describe_board` | Pages et objets (id, type, texte, position, liens des connecteurs) ; en mode direct, aussi `selection`. `detail: "full"` ajoute les [styles et polices](#lire-les-styles). Lit aussi draw.io, Excalidraw, JSON Canvas, Mermaid. |
 | `find_objects` | Trouve des objets par texte, expression régulière, type ou zone, sans lire tout le tableau (lecture seule). |
 | `render` | **Image du tableau** (PNG renvoyé directement à l'agent, rien à exporter puis relire). Tout le contenu, une `region`, ou les `ids` à cadrer ; badges d'id facultatifs (`show_ids`) ; `output` écrit aussi le PNG sous la racine. Lecture seule. |
+| `check_layout` | **Liste les défauts de mise en page d'une page** avec les ids concernés (chevauchements, texte qui déborde, flèches qui traversent un objet, se croisent ou se superposent, étiquettes en collision, flèches en double ou non attachées, texte trop petit une fois exporté, mise en page déséquilibrée). Lecture seule ; voir [`check_layout`](#check_layout). |
 | `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, avec texte (éventuellement [texte enrichi](#texte-enrichi)), couleurs, taille. |
 | `add_connector` | Flèche **liée** entre deux objets (`straight`, `elbow`, `curve`, pointes, étiquette — éventuellement en texte enrichi). |
 | `add_table` | Tableau de cellules (colonnes ajustées au texte) ; les cellules peuvent être en texte enrichi. |
@@ -155,6 +156,16 @@ Le bloc texte contient `width_px`, `height_px`, `region` (le rectangle effective
 
 Un résultat d'outil est une valeur JSON, transportée telle quelle par le protocole direct (une ligne JSON par réponse). La clé réservée de premier niveau `_image` (`{"mime": "image/png", "data_base64": "…"}`) marque un résultat qui comprend une image : `inkboard-mcp` (`tools/call`) répond alors avec `content = [{"type": "image", "data": …, "mimeType": …}, {"type": "text", "text": <le JSON sans _image>}]`. Tout autre résultat reste un unique bloc texte, exactement comme avant. Comme l'image voyage dans la ligne JSON, une réponse directe peut faire plusieurs Mio (le PNG est limité à 4 Mio, soit 5,5 Mio en base64).
 
+## `check_layout`
+
+Liste les défauts mesurables d'une page, avec les ids des objets concernés, pour les corriger sans juger une image. Lecture seule. Le texte est mesuré approximativement et les objets sont comparés par leur rectangle englobant : un signalement est un indice fort, pas une preuve (vérifiez avec `render` en cas de doute).
+
+Paramètres : `path`, `page` ; `ids` (ne garde que les problèmes qui touchent ces objets) ; `export_width` (largeur d'export prévue en pixels, 100 à 20000, 1600 par défaut). Résultat : `{"ok", "issues": [{kind, severity, ids, message, ...}], "metrics": {...}}`.
+
+- **Erreurs** : `overlap` (deux boîtes qui se recouvrent de plus de 2 unités, hors contenant/contenu et hors même groupe), `text_overflow` (texte plus haut que sa zone), `word_split` (mot plus large que la zone de texte), `connector_through_object` (le trajet d'une flèche traverse un objet qui n'est ni sa source, ni sa cible, ni un cadre contenant l'une d'elles), `unbound_connector` (extrémité non attachée), `duplicate_connector` (plusieurs flèches entre les deux mêmes objets).
+- **Avertissements** : `text_outside_frame` (texte à cheval sur la bordure d'un cadre), `connector_crossing` (deux flèches se croisent, hors extrémité commune), `shared_segment` (deux flèches sur la même ligne sur plus de 20 unités, sauf même cible), `label_collision` (étiquette de flèche sur un objet, une autre étiquette ou une bordure de cadre), `small_text` (texte sous 10 px une fois la page exportée à `export_width` : taille x `export_width` / largeur du contenu), `unbalanced` (rapport largeur/hauteur hors de 0,6 à 2,2, ou au moins 3 cellules vides sur une grille 3 x 3 du contenu quand il y a 6 objets ou plus).
+- `metrics` : `objects`, `connectors`, `content_box`, `aspect`, `min_text_px`, `empty_cells`, `export_width`.
+
 ## Lire les styles
 
 `describe_board` accepte `detail` : `"brief"` (par défaut, la sortie est inchangée) ou `"full"`. Avec `full`, chaque objet a aussi :
@@ -211,7 +222,7 @@ Les paramètres existants (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stro
 | `cell` + `text` | `[ligne, colonne]` à partir de 0 : le nouveau texte de cette cellule de tableau (`markdown` fonctionne comme partout) ; la colonne s'élargit si nécessaire | tableaux |
 
 - **Tout ou rien** : chaque paramètre est d'abord validé ; une valeur inconnue ou hors limites est une erreur qui nomme le paramètre et les valeurs permises, et rien n'est modifié.
-- Un paramètre qui ne convient pas à l'objet (`rotation` sur un trait au crayon, `route` sur un rectangle…) est **ignoré** et listé dans `avertissements` (`warnings` reste réservé aux problèmes de Markdown, voir [Texte enrichi](#texte-enrichi)). `cell` sur autre chose qu'un tableau est une erreur.
+- Un paramètre qui ne convient pas à l'objet (`rotation` sur un trait au crayon, `route` sur un rectangle…) est **ignoré** et listé dans `warnings` (avec les problèmes de Markdown, voir [Texte enrichi](#texte-enrichi)). La même liste des paramètres ignorés est encore renvoyée sous `avertissements`, **obsolète** (conservé pour les clients existants ; utilisez `warnings`). `cell` sur autre chose qu'un tableau est une erreur.
 - Les paramètres de police sur un connecteur s'appliquent à son étiquette ; sans étiquette ils sont signalés (donnez aussi `text`).
 - **Les objets verrouillés ne sont pas protégés contre les outils** : `update_object`, `move_objects`, `duplicate_objects` (la copie reste verrouillée) et `delete_object` agissent sur eux. Seuls l'alignement et la répartition de `arrange_objects` les ignorent (ainsi que les objets d'un calque verrouillé).
 

@@ -10,10 +10,12 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 - **MCP, connectors:** `add_connector` accepts `dash`, `font_size` (label) and `stroke_width`; the label is `label` or `text` in both `add_connector` and `update_object`.
 - **MCP, icons:** `add_icon` takes `label_font_size`, `label_max_width` (long labels now wrap, default `max(2 × icon size, 140)`) and `label_side` (`bottom`, `top`, `right`, `left`). `search_icons` returns each icon's `aspect` and `wide` (wordmark logos), and retries an empty query with synonyms (`note`).
 - **MCP, shapes:** `fit: "width"` (with `max_lines`) on `add_shape` and `update_object` computes the width that holds the text without splitting a word; both warn when the height had to grow or a word is wider than the text area.
+- **MCP, `check_layout`:** new read-only tool that lists the measurable layout defects of a page with the ids involved: overlaps, text overflow and split words, text across a frame border, arrows through objects, crossing or merged arrows, arrow label collisions, duplicate or unattached arrows, text too small once exported (`export_width`), unbalanced layout; plus metrics (content box, aspect, smallest text in pixels, empty cells).
 
 ### Changed
 
 - **MCP:** `move_objects` also moves the other members of the groups of the given ids (an icon and its label); `group: false` restores the previous behavior.
+- **MCP:** `update_object` returns its warnings under `warnings` like every other tool (ignored parameters included, with the Markdown ones). `avertissements`, still returned with the ignored parameters only, is deprecated.
 
 ## [0.2.0-rc.3] - 2026-10-31
 

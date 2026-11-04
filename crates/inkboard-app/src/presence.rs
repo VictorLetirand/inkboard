@@ -38,7 +38,7 @@ const MAX_STROKE_POINTS: usize = 20_000;
 /// The "is typing" badge disappears when no presence message renews it (a message comes at least every 2 s).
 const EDITING_IDLE: Duration = Duration::from_secs(6);
 /// Tools that only read the board: shown as a look, never as a move.
-const LOOK_TOOLS: [&str; 7] = ["describe_board", "board_changes", "render", "export", "find_objects", "search_icons", "list_icon_groups"];
+const LOOK_TOOLS: [&str; 8] = ["describe_board", "board_changes", "render", "export", "find_objects", "check_layout", "search_icons", "list_icon_groups"];
 
 // Human participants and the identity fields below are used by the session lots (remote cursors, forwarded agent events).
 #[allow(dead_code)]

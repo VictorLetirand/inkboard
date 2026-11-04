@@ -89,6 +89,7 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 | `describe_board` | Pages and objects (id, type, text, position, connector links); in live mode, also `selection`. `detail: "full"` adds [styles and fonts](#reading-styles). Also reads draw.io, Excalidraw, JSON Canvas, Mermaid. |
 | `find_objects` | Finds objects by text, regex, type or area, without reading the whole board (read-only). |
 | `render` | **Picture of the board as an image** (PNG returned directly to the agent, nothing to export and read back). Whole content, a `region`, or the `ids` to frame; optional id badges (`show_ids`); `output` also writes the PNG under the root. Read-only. |
+| `check_layout` | **Lists the layout defects of a page** with the ids involved (overlaps, text that overflows, arrows through objects, crossing or merged arrows, label collisions, duplicate or unattached arrows, text too small once exported, unbalanced layout). Read-only; see [`check_layout`](#check_layout). |
 | `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, with text (optionally [rich text](#rich-text)), colors, size. The height grows to hold the text and `warnings` says so (`text did not fit: height grew from X to Y`), or that a word is wider than the text area (`use w ≥ N`). `fit: "width"` (+ `max_lines`, default 2) computes the smallest width that fits the text without splitting a word, per geometry; never below `w` when `w` is given. |
 | `add_connector` | **Bound** arrow between two objects (`straight`, `elbow`, `curve`, arrowheads, label — optionally rich text; the label is `label` or `text`, both accepted, as in `update_object`; `dash` `solid`/`dashed`/`dotted`, `font_size` of the label 4–400, `stroke_width` 0–100 at creation). |
 | `add_table` | Table of cells (columns fitted to the text); cells may be rich text. |
@@ -156,6 +157,41 @@ The text block holds `width_px`, `height_px`, `region` (the rectangle actually s
 
 A tool result is a JSON value, carried as is by the live protocol (one JSON line per response). The reserved top-level key `_image` (`{"mime": "image/png", "data_base64": "…"}`) marks a result that includes a picture: `inkboard-mcp` (`tools/call`) then answers with `content = [{"type": "image", "data": …, "mimeType": …}, {"type": "text", "text": <the JSON without _image>}]`. Every other result is still a single text block, exactly as before. Because the picture travels inside the JSON line, a live response can be several MiB long (the PNG is kept under 4 MiB, 5.5 MiB in base64).
 
+## `check_layout`
+
+Lists the measurable defects of a page, with the ids of the objects involved, so that they can be fixed without judging a picture. Read-only (board, file and undo history are untouched). Text is measured approximately (as in `export` and `render`) and objects are compared by their axis-aligned bounding boxes: a report is a strong hint, not a proof; look at it with `render` when in doubt.
+
+| Parameter | Meaning |
+|---|---|
+| `path`, `page` | As for the other tools. |
+| `ids` | Only report the issues that involve one of these objects (the page-level `unbalanced` issues are then left out). The metrics always describe the whole page. |
+| `export_width` | Width in pixels of the planned export (100 to 20000, default 1600), for `small_text` and `min_text_px`. |
+
+The result is `{"ok": bool, "issues": [...], "metrics": {...}}`; `ok` is true when there is no issue at all (errors and warnings). Each issue is `{"kind", "severity", "ids", "message", ...details}`. At most 50 issues of a kind are listed (`truncated` then says so). Only visible objects are checked. "Frame" below means a rectangle shape that contains at least one other object.
+
+| Kind | Severity | Rule |
+|---|---|---|
+| `overlap` | error | Two shapes, images, texts or tables whose boxes intersect by more than 2 units in both directions. Not reported when one contains the other (a frame and its content), when both are in the same group (an icon and its label), or for a text and a frame it partly covers (see `text_outside_frame`). Details: `overlap_w`, `overlap_h`. |
+| `text_overflow` | error | The text of a shape is taller than its text area. Details: `text_h`, `area_h`. |
+| `word_split` | error | A word is wider than the usable text width of its shape, so it is cut in two (bold metrics if any part is bold). Details: `word`, `word_w`, `area_w`. |
+| `connector_through_object` | error | The routed path of a connector (the one `render` and `export` draw) touches the box of an object that is neither its source, nor its target, nor a frame containing one of them. `ids`: `[connector, object]`. |
+| `unbound_connector` | error | An end is free (not attached) or attached to an object that no longer exists. Detail: `ends` (`start`, `end` or `start and end`). |
+| `duplicate_connector` | error | Several connectors join the same two objects, in either direction. `ids`: all of them. |
+| `text_outside_frame` | warning | A text object intersects a frame by more than 2 units without being inside it (typically a frame title across the border). `ids`: `[text, frame]`. |
+| `connector_crossing` | warning | The paths of two connectors cross inside a segment of each. Connectors that share an end object are skipped. Details: `x`, `y`. |
+| `shared_segment` | warning | Two connectors run along the same line (within 1.5 units, under about 1 degree apart) for more than 20 units, unless they end on the same object (arrows merging into one target are fine). Detail: `length`. |
+| `label_collision` | warning | The label of a connector (its text laid out at the middle of the path, as `export` draws it) intersects a shape, image, text, table or another connector's label by more than 2 units, or crosses the border of a frame. `ids`: `[connector, other]`. |
+| `small_text` | warning | Text that is under 10 pixels once the page is exported at `export_width`. Exporting scales the content box (width `content_w`) by `export_width / content_w` pixels per unit, so a font of `size` units is `size x export_width / content_w` pixels. One issue lists every such object (shapes, tables, connector labels) with `min_px`, `smallest` and `min_font_size` (the size that would reach 10 px). |
+| `unbalanced` | warning | Page-level (`ids` is empty), with a `reason`. `aspect`: width / height of the content box outside 0.6 to 2.2. `empty_region`: with at least 6 objects (connectors excluded), the content box is cut into a 3 x 3 grid and the cells touched by no object (frames and connectors do not count) are listed in `empty_cells` as `{col, row}`; 3 or more empty cells are reported. A cheap heuristic: an L-shaped diagram legitimately leaves a corner empty. |
+
+`metrics`: `objects` (visible, connectors excluded), `connectors`, `content_box` `{x, y, w, h}`, `aspect` (width / height), `min_text_px` (smallest text at `export_width`), `empty_cells` (count; 0 under 6 objects) and `export_width`.
+
+Known limits: boxes are bounding boxes, so a rotated shape, an ellipse or a diamond can be reported when only the corner of its box is touched; a pen stroke is never an obstacle; a rich-text span with its own size is not measured separately.
+
+```json
+{"name": "check_layout", "arguments": {"export_width": 1600}}
+```
+
 ## Reading styles
 
 `describe_board` takes `detail`: `"brief"` (default, the output is unchanged) or `"full"`. With `full`, each object also has:
@@ -214,7 +250,7 @@ The existing parameters (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stroke
 | `cell` + `text` | `[row, column]` from 0: the new text of that table cell (`markdown` works as everywhere); the column widens if needed | tables |
 
 - **All or nothing**: every parameter is validated first; an unknown or out-of-range value is an error that names the parameter and the allowed values, and nothing is modified.
-- A parameter that does not suit the object (`rotation` on a pen, `route` on a rectangle…) is **ignored** and listed in `avertissements` (`warnings` stays reserved for Markdown problems, see Rich text). `cell` on something that is not a table is an error.
+- A parameter that does not suit the object (`rotation` on a pen, `route` on a rectangle…) is **ignored** and listed in `warnings` (with the Markdown problems, see Rich text). The same list of ignored parameters is still returned as `avertissements`, which is **deprecated** (kept for existing clients; use `warnings`). `cell` on something that is not a table is an error.
 - Font parameters on a connector apply to its label; without a label they are reported (give `text` too).
 - **Locked objects are not protected from tools**: `update_object`, `move_objects`, `duplicate_objects` (the copy stays locked) and `delete_object` act on them. Only the alignment and distribution of `arrange_objects` skip them (and objects on a locked layer).
 

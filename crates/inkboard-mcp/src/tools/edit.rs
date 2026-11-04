@@ -161,7 +161,7 @@ pub(super) fn int_arg(a: &Value, k: &str, min: u64, max: u64, default: u64) -> R
 }
 
 /// List of existing object ids of the current page (1 to `MAX_IDS`, duplicates dropped, order kept).
-fn ids_arg(ed: &Editor, a: &Value, k: &str) -> Res<Vec<Id>> {
+pub(super) fn ids_arg(ed: &Editor, a: &Value, k: &str) -> Res<Vec<Id>> {
     let list = a.get(k).and_then(Value::as_array).ok_or_else(|| format!("missing \"{k}\" parameter (a list of 1 to {MAX_IDS} object ids)"))?;
     if list.is_empty() || list.len() > MAX_IDS {
         return Err(format!("\"{k}\" must contain 1 to {MAX_IDS} ids (got {})", list.len()));

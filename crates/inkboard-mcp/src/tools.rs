@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 mod batch;
+mod check;
 mod edit;
 mod icons;
 mod render;
@@ -117,7 +118,7 @@ pub fn list() -> Vec<Value> {
         json!({"name": "import_mermaid", "description": "Adds a Mermaid diagram (flowchart/graph, stateDiagram, sequenceDiagram, classDiagram, erDiagram) with automatic layout. Returns the ids created.",
             "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Create a new page for the diagram."}})), &["mermaid"])}),
         json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors, line style, font, lock, rotation; a connector's route, arrowheads and ends; one table cell. \
-            Everything is validated before anything is applied (an error changes nothing); a parameter that does not suit the object's type is ignored and listed in `avertissements`. Locked objects can still be modified here.",
+            Everything is validated before anything is applied (an error changes nothing); a parameter that does not suit the object's type is ignored and listed in `warnings` (also given as `avertissements`, deprecated). Locked objects can still be modified here.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string", "description": "New text of a shape or connector label; with `cell`, the new text of that table cell. `label` is accepted as a synonym (the name add_connector uses); if both are given they must be equal."},
                 "label": {"type": "string", "description": "Synonym of `text`."},
                 "fit": fit_prop(), "max_lines": max_lines_prop(),
@@ -159,20 +160,21 @@ pub fn list() -> Vec<Value> {
 /* ------------------------------------------------- tools of the submodules */
 
 fn ext_specs() -> Vec<Value> {
-    [icons::specs(), render::specs(), edit::specs(), batch::specs(), richtext::specs()].concat()
+    [icons::specs(), render::specs(), check::specs(), edit::specs(), batch::specs(), richtext::specs()].concat()
 }
 
 fn ext_is_tool(name: &str) -> bool {
-    [icons::NAMES, render::NAMES, edit::NAMES, batch::NAMES, richtext::NAMES].iter().any(|l| l.contains(&name))
+    [icons::NAMES, render::NAMES, check::NAMES, edit::NAMES, batch::NAMES, richtext::NAMES].iter().any(|l| l.contains(&name))
 }
 
 fn ext_is_read_only(name: &str) -> bool {
-    [icons::READ_ONLY, render::READ_ONLY, edit::READ_ONLY, batch::READ_ONLY, richtext::READ_ONLY].iter().any(|l| l.contains(&name))
+    [icons::READ_ONLY, render::READ_ONLY, check::READ_ONLY, edit::READ_ONLY, batch::READ_ONLY, richtext::READ_ONLY].iter().any(|l| l.contains(&name))
 }
 
 fn ext_apply(ed: &mut Editor, name: &str, a: &Value) -> Option<Res<Value>> {
     icons::apply(ed, name, a)
         .or_else(|| render::apply(ed, name, a))
+        .or_else(|| check::apply(ed, name, a))
         .or_else(|| edit::apply(ed, name, a))
         .or_else(|| batch::apply(ed, name, a))
         .or_else(|| richtext::apply(ed, name, a))
@@ -1160,8 +1162,10 @@ fn update_object(ed: &mut Editor, args: &Value) -> Res<Value> {
             }
         }
     });
-    let mut out = json!({"id": id.0, "avertissements": warn});
-    richtext::add_warnings(&mut out, md_warnings);
+    // `warnings` holds every warning; `avertissements` (deprecated, kept for existing clients) only the ignored parameters
+    let all: Vec<String> = warn.iter().cloned().chain(md_warnings).collect();
+    let mut out = json!({"id": id.0, "warnings": [], "avertissements": warn});
+    richtext::add_warnings(&mut out, all);
     Ok(out)
 }
 

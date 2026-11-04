@@ -8,8 +8,8 @@ use inkboard_core::{Document, Kind, Object, connector::End, serial};
 use serde_json::{Value, json};
 use std::path::Path;
 
-/// The 27 tools of `docs/MCP.md`.
-const TOOLS: [&str; 27] = [
+/// The 28 tools of `docs/MCP.md`.
+const TOOLS: [&str; 28] = [
     "create_board",
     "save_board",
     "board_changes",
@@ -30,6 +30,7 @@ const TOOLS: [&str; 27] = [
     "list_icon_groups",
     "add_icon",
     "render",
+    "check_layout",
     "find_objects",
     "move_objects",
     "arrange_objects",
@@ -78,7 +79,7 @@ fn invalid(c: &mut Client, board: &Path, tool: &str, args: Value) {
 }
 
 #[test]
-fn tools_list_returns_the_27_documented_tools() {
+fn tools_list_returns_the_28_documented_tools() {
     let dir = temp_dir("tl");
     let mut c = Client::start(&dir);
     let list = c.request("tools/list", json!({}));

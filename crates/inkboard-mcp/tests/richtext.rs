@@ -232,7 +232,7 @@ fn describe_board_is_unchanged_for_plain_text() {
     assert!(!out.contains("markdown"), "{out}");
     // the other tools' answers keep their shape too
     let updated = ok(&mut client, &board, "update_object", json!({"id": a, "text": "new"}));
-    assert_eq!(updated, json!({"id": a, "avertissements": []}));
+    assert_eq!(updated, json!({"id": a, "warnings": [], "avertissements": []}));
     let reply = ok(&mut client, &board, "add_shape", json!({"geom": "rect", "text": "x"}));
     assert_eq!(keys(&reply), "h,id,w,x,y");
 }
@@ -281,7 +281,7 @@ fn connector_labels_can_be_formatted() {
     ok(&mut client, &board, "update_object", json!({"id": id, "text": "*maybe* **", "markdown": true}));
     assert_eq!(spans(&label_text(&board, &id)), sp(&[("maybe", "i"), (" **", "")]));
     let r = ok(&mut client, &board, "update_object", json!({"id": id, "text": "x", "markdown": true}));
-    assert_eq!(r, json!({"id": id, "avertissements": []}));
+    assert_eq!(r, json!({"id": id, "warnings": [], "avertissements": []}));
     // an empty text removes the label
     ok(&mut client, &board, "update_object", json!({"id": id, "text": "", "markdown": true}));
     assert!(describe(&mut client, &board, &id).get("label").is_none());
@@ -300,7 +300,10 @@ fn update_object_text_can_be_formatted() {
     // a table has no text to set: the existing warning, nothing new
     let t = id_of(&ok(&mut c, &board, "add_table", json!({"rows": [["a"]]})));
     let r = ok(&mut c, &board, "update_object", json!({"id": t, "text": "**x**", "markdown": true}));
-    assert_eq!(r, json!({"id": t, "avertissements": ["text can only be changed on shapes and connectors"]}));
+    assert_eq!(
+        r,
+        json!({"id": t, "warnings": ["text can only be changed on shapes and connectors"], "avertissements": ["text can only be changed on shapes and connectors"]})
+    );
 }
 
 /* --------------------------------------------------------------- reading */

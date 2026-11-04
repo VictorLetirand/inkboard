@@ -46,6 +46,7 @@ pub mod highlight;
 pub mod history;
 pub mod hit;
 pub mod layout;
+pub mod layout_check;
 pub mod model;
 pub mod num;
 pub mod pen;
