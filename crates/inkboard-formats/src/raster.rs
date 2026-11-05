@@ -208,6 +208,50 @@ fn svg_to_pdf_with(svg: &str, fontdb: pdf_fontdb::Database) -> Result<Vec<u8>, F
     svg2pdf::to_pdf(&tree, svg2pdf::ConversionOptions::default(), svg2pdf::PageOptions::default()).map_err(|e| FormatError::Invalid(format!("PDF : {e}")))
 }
 
+/// Converts several SVGs to ONE vector PDF, one page per SVG (page size = SVG size).
+///
+/// # Errors
+///
+/// [`FormatError`] when no SVG is given or one cannot be parsed or converted.
+pub fn svgs_to_pdf(svgs: &[String]) -> Result<Vec<u8>, FormatError> {
+    use pdf_writer::{Content, Finish, Pdf, Rect, Ref};
+    use svg2pdf::usvg as pdf_usvg;
+    if svgs.is_empty() {
+        return Err(FormatError::Invalid("PDF : no page".to_owned()));
+    }
+    let opt = sandboxed_options!(pdf_usvg, std::sync::Arc::new(pdf_fonts(use_system_fonts())));
+    let mut alloc = Ref::new(1);
+    let catalog = alloc.bump();
+    let tree_ref = alloc.bump();
+    let mut pdf = Pdf::new();
+    let mut pages = Vec::new();
+    for svg in svgs {
+        let svg = inkboard_core::svg::with_soft_shadows(svg);
+        let tree = pdf_usvg::Tree::from_str(&svg, &opt).map_err(|e| FormatError::Invalid(format!("SVG: {e}")))?;
+        let (chunk, x_ref) = svg2pdf::to_chunk(&tree, svg2pdf::ConversionOptions::default()).map_err(|e| FormatError::Invalid(format!("PDF : {e}")))?;
+        let mut map = std::collections::HashMap::new();
+        let chunk = chunk.renumber(|old| *map.entry(old).or_insert_with(|| alloc.bump()));
+        let x_ref = *map.get(&x_ref).ok_or_else(|| FormatError::Invalid("PDF : empty page".to_owned()))?;
+        let (page_ref, content_ref) = (alloc.bump(), alloc.bump());
+        let (w, h) = (tree.size().width(), tree.size().height());
+        let name = pdf_writer::Name(b"S");
+        let mut page = pdf.page(page_ref);
+        page.media_box(Rect::new(0.0, 0.0, w, h));
+        page.parent(tree_ref);
+        page.contents(content_ref);
+        page.resources().x_objects().pair(name, x_ref);
+        page.finish();
+        let mut content = Content::new();
+        content.x_object(name);
+        pdf.stream(content_ref, &content.finish());
+        pdf.extend(&chunk);
+        pages.push(page_ref);
+    }
+    pdf.catalog(catalog).pages(tree_ref);
+    pdf.pages(tree_ref).count(i32::try_from(pages.len()).unwrap_or(i32::MAX)).kids(pages);
+    Ok(pdf.finish())
+}
+
 /// Longest side and number of pixels a bitmap received from somebody else may declare (read from its header, before any decoding).
 pub const MAX_BITMAP_SIDE: u32 = 16_384;
 pub const MAX_BITMAP_PIXELS: u64 = 40_000_000;
@@ -470,6 +514,29 @@ mod tests {
         let pdf = svg_to_pdf(svg).unwrap();
         assert_eq!(&pdf[..5], b"%PDF-");
         assert!(svg_to_pdf("<svg").is_err());
+    }
+
+    #[test]
+    fn several_svgs_make_one_pdf_with_one_page_each() {
+        let svg = |w: u32| {
+            format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="20" viewBox="0 0 {w} 20"><rect width="{w}" height="20" fill="#ff0000"/><text x="2" y="14" font-size="10">Hi</text></svg>"##
+            )
+        };
+        let pdf = svgs_to_pdf(&[svg(40), svg(50), svg(60)]).unwrap();
+        assert_eq!(&pdf[..5], b"%PDF-");
+        let text = String::from_utf8_lossy(&pdf).into_owned();
+        assert!(text.contains("/Count 3"), "three pages");
+        assert_eq!(
+            text.matches(
+                "/Type /Page
+"
+            )
+            .count(),
+            3
+        );
+        assert!(svgs_to_pdf(&[]).is_err());
+        assert!(svgs_to_pdf(&["<svg".to_owned()]).is_err());
     }
 
     /// SVG of a red rectangle without outline, with or without a drop shadow, on a transparent background.

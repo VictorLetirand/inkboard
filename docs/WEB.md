@@ -75,7 +75,7 @@ the page address and the native link.
    session has been asleep) and reconnects at once instead of waiting for its pauses between attempts.
 6. **Images**: Ctrl+V of a clipboard image and a file dropped on the page are inserted and sent to the host in pieces, acknowledged, with the same limits as
    the application's guests. "Copy as image" writes a PNG to the browser clipboard (HTTPS or localhost only). **Save** (Ctrl+S) and the export entries
-   (PNG, SVG, PDF…) **download** a copy; there is no file dialog.
+   (PNG, SVG, PDF…) **download** a copy; there is no file dialog. Exporting several pages downloads one file per page (no zip), except PDF, which stays a single multi-page file.
 7. **Phone and tablet**: the page has a viewport that does not zoom by itself; in the Join window and the session bar, buttons and fields get touch-sized
    (40 px) when the main pointer is a finger, and the windows fit the width of the screen. The rest of the interface (toolbar, panels) is unchanged.
 

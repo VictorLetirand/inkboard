@@ -85,6 +85,11 @@ pub fn pick_save_path(name: &str, label: &str, exts: &[&str]) -> Option<PathBuf>
     rfd::FileDialog::new().set_file_name(name).add_filter(label, exts).save_file()
 }
 
+/// Asks for a folder to write several files in.
+pub fn pick_folder() -> Option<PathBuf> {
+    rfd::FileDialog::new().pick_folder()
+}
+
 /// Asks for image files to insert.
 pub fn pick_images() -> Vec<PathBuf> {
     rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg"]).pick_files().unwrap_or_default()

@@ -1605,6 +1605,8 @@ fn french_mode_renders_every_dialog_and_panel_without_missing_translations() {
         Dialog::Shortcuts { filter: String::new(), recording: None },
         Dialog::Shortcuts { filter: String::new(), recording: Some(crate::keymap::Action::Delete) },
         Dialog::Formula { src: "x^2".into(), editing: None, preview: crate::app::FormulaPreview::default() },
+        Dialog::Export { ext: "png", pages: vec![true, false], selection_only: true, scale: 2 },
+        Dialog::Export { ext: "pdf", pages: vec![true], selection_only: false, scale: 2 },
     ];
     for d in dialogs {
         t.app().dialog = Some(d);

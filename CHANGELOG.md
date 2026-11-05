@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Added
+
+- **Export dialog:** *Export as PNG / SVG / PDF / Excalidraw / JSON Canvas* now lets you tick the pages to export (All / None / Current page), export the selection only, and pick the PNG scale. Several pages give one file per page in a chosen folder (one download each on the web), PDF gives a single multi-page file.
+
 ## [0.2.0-rc.4] - 2026-11-05
 
 **Release candidate.** The MCP server learns to draw clean diagrams on its own: a `check_layout` tool that lists the layout defects with their ids, titled frames (`add_frame`), arrow attachment sides and label positions, grids and a richer `auto_layout`. Live sharing moves to protocol v6: update every app that hosts or joins a session.
