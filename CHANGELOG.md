@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+## [0.2.0-rc.5] - 2026-11-05
+
+**Release candidate.** Two points of friction from daily use: the page bar adapts to the room available (ellipsized tabs, then a compact drop-down) and exports can cover several pages at once. No change to the file format or to live sharing.
+
 ### Added
 
 - **Export dialog:** *Export as PNG / SVG / PDF / Excalidraw / JSON Canvas* now lets you tick the pages to export (All / None / Current page), export the selection only, and pick the PNG scale. Several pages give one file per page in a chosen folder (one download each on the web), PDF gives a single multi-page file.
@@ -161,7 +165,8 @@ has been tried by hand on a few devices and networks, but not widely. See the kn
   private address (S-06), and a single frame over 1 MiB from the host (S-04, recovered by a snapshot).
 - Linux and macOS builds pass CI but have not been used by hand yet.
 
-[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.4...HEAD
+[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.5...HEAD
+[0.2.0-rc.5]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.5
 [0.2.0-rc.4]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.4
 [0.2.0-rc.3]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.2
