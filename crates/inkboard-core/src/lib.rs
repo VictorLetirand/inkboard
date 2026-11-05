@@ -46,6 +46,7 @@ pub mod highlight;
 pub mod history;
 pub mod hit;
 pub mod layout;
+pub mod layout_check;
 pub mod model;
 pub mod num;
 pub mod pen;
@@ -58,11 +59,11 @@ pub mod svgcolor;
 pub mod text;
 pub mod transform;
 
-pub use connector::{Anchor, Arrowhead, Connector, End, HeadExt, HeadPart, Route, head_glyph};
+pub use connector::{Anchor, Arrowhead, AttachSide, Connector, End, HeadExt, HeadPart, Route, head_glyph};
 pub use editor::Editor;
 pub use geom::{Frame, Pt, Rect};
 pub use model::{
-    Asset, AssetId, Background, BgPreset, BoxGeom, BoxObj, Document, Id, ImageObj, Kind, Label, Layer, Object, Page, Pattern, PenObj, Table, View,
+    Asset, AssetId, Background, BgPreset, BoxGeom, BoxObj, Document, Id, ImageObj, Kind, Label, Layer, Object, Page, Pattern, PenObj, Table, VAlign, View,
 };
 pub use style::{Align, Color, Dash, FontFamily, Style};
 pub use text::{ApproxMeasurer, Format, Measurer, RichText, Span, SpanStyle};

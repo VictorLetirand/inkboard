@@ -144,7 +144,7 @@ fn end_of(e: &EndSpec, attach: &[Id], at: Pt) -> End {
         return End::free(at);
     }
     let target = attach[e.target.index(attach.len())].clone();
-    End::Bound { target, anchor: e.frac.map_or(Anchor::Auto, |(fx, fy)| Anchor::Frac { fx, fy }) }
+    End::Bound { target, anchor: e.frac.map_or(Anchor::Auto, |(fx, fy)| Anchor::Frac { fx, fy }), side: None }
 }
 
 /// Builds an object; connectors are bound to the ids of `attach`.
@@ -453,7 +453,7 @@ proptest! {
             prop_assert!(path.as_ref().is_some_and(|p| p.len() >= 2), "no path for {:?}", c);
             let path = path.unwrap_or_default();
             for (end, at) in [(&c.start, path[0]), (&c.end, path[path.len() - 1])] {
-                let End::Bound { target, anchor } = end else { continue };
+                let End::Bound { target, anchor, .. } = end else { continue };
                 let t = page.get(target).expect("the target exists");
                 match anchor {
                     Anchor::Auto => {

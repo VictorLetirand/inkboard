@@ -309,7 +309,7 @@ fn update_object_sets_every_style_parameter() {
             "locked": true, "rotation": 30, "fill": "#ff0000"}),
     );
     assert_eq!(r["avertissements"], json!([]), "{r}");
-    assert!(r.get("warnings").is_none(), "{r}");
+    assert_eq!(r["warnings"], json!([]), "{r}");
     let o = full(&mut c, &board, "r1");
     assert_eq!(o["style"], json!({"stroke": "ink", "fill": "#ff0000", "width": 5.0, "dash": "dotted", "opacity": 0.5, "roundness": 0.3}));
     assert_eq!(o["font"], json!({"family": "mono", "size": 30.0, "align": "right"}));
@@ -376,7 +376,7 @@ fn update_object_edits_a_table_cell() {
     let (mut c, board) = ref_setup("ed-cell");
     let w0 = full(&mut c, &board, "tb")["w"].as_f64().unwrap();
     let r = ok(&mut c, &board, "update_object", json!({"id": "tb", "cell": [0, 1], "text": "**Total** {color=#e03131}red{/}", "markdown": true}));
-    assert!(r.get("warnings").is_none() && r["avertissements"] == json!([]), "{r}");
+    assert!(r["warnings"] == json!([]) && r["avertissements"] == json!([]), "{r}");
     let t = full(&mut c, &board, "tb");
     assert_eq!(t["cells"], json!([["A", "Total red"], ["", "D"]]));
     assert_eq!(t["cells_markdown"], json!([["A", "**Total** {color=#e03131}red{/}"], ["", "D"]]));
@@ -418,7 +418,7 @@ fn update_object_cell_errors_leave_the_file_alone() {
     // without `cell`, text on a table is still a warning, as before
     let r = ok(&mut c, &board, "update_object", json!({"id": "tb", "text": "x"}));
     assert_eq!(r["avertissements"], json!(["text can only be changed on shapes and connectors"]));
-    assert!(r.get("warnings").is_none(), "warnings is for Markdown only: {r}");
+    assert_eq!(r["warnings"], r["avertissements"]);
 }
 
 #[test]
@@ -452,7 +452,6 @@ fn update_object_warns_about_parameters_that_do_not_suit_the_object() {
     let r = ok(&mut c, &board, "update_object", json!({"id": "p1", "font_size": 20, "rotation": 10, "route": "elbow", "opacity": 0.4}));
     let w = r["avertissements"][0].as_str().unwrap();
     assert!(w.contains("font_size") && w.contains("rotation") && w.contains("route") && w.contains("pen"), "{r}");
-    assert!(r.get("warnings").is_none(), "warnings is for Markdown only: {r}");
     assert_eq!(full(&mut c, &board, "p1")["style"]["opacity"], json!(0.4), "the other parameters apply");
     let r = ok(&mut c, &board, "update_object", json!({"id": "tb", "rotation": 10, "align": "left"}));
     assert!(r["avertissements"][0].as_str().unwrap().contains("rotation"), "{r}");
@@ -466,7 +465,7 @@ fn update_object_warns_about_parameters_that_do_not_suit_the_object() {
 fn update_object_keeps_working_as_before() {
     let (mut c, board) = ref_setup("ed-compat");
     let r = ok(&mut c, &board, "update_object", json!({"id": "r1", "text": "New", "x": 10, "y": 20, "w": 150, "fill": "#ffec99"}));
-    assert_eq!(r, json!({"id": "r1", "avertissements": []}));
+    assert_eq!(r, json!({"id": "r1", "warnings": [], "avertissements": []}));
     let o = full(&mut c, &board, "r1");
     assert_eq!((o["text"].clone(), o["x"].clone(), o["y"].clone(), o["w"].clone()), (json!("New"), json!(10.0), json!(20.0), json!(150.0)));
     assert!(invalid(&mut c, &board, "update_object", json!({"id": "ghost", "text": "x"})).contains("object not found"));
@@ -898,7 +897,7 @@ fn the_new_tools_are_listed_with_complete_schemas() {
         assert!(t["inputSchema"]["properties"]["path"].is_object() && t["inputSchema"]["properties"]["page"].is_object(), "{n}");
     }
     assert_eq!(get("move_objects")["inputSchema"]["required"], json!(["ids"]));
-    assert_eq!(get("arrange_objects")["inputSchema"]["properties"]["action"]["enum"].as_array().unwrap().len(), 16);
+    assert_eq!(get("arrange_objects")["inputSchema"]["properties"]["action"]["enum"].as_array().unwrap().len(), 17);
     assert_eq!(get("describe_board")["inputSchema"]["properties"]["detail"]["enum"], json!(["brief", "full"]));
     assert_eq!(get("delete_object")["inputSchema"]["properties"]["ids"]["type"], json!("array"));
     for p in ["stroke_width", "dash", "opacity", "roundness", "font_size", "font_family", "align", "locked", "rotation", "route", "arrow", "from", "to", "cell"]

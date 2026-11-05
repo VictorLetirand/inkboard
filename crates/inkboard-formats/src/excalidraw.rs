@@ -9,7 +9,7 @@ use inkboard_core::num;
 use inkboard_core::text::{Measurer, layout_rich};
 use inkboard_core::{
     Align, Arrowhead, Asset, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, HeadExt, Id, ImageObj, Kind, Label, Object,
-    Page, PenObj, Pt, RichText, Route, Style, Table,
+    Page, PenObj, Pt, RichText, Route, Style, Table, VAlign,
 };
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -176,6 +176,15 @@ impl Exporter<'_> {
         let text = lay.lines.iter().map(|l| l.iter().map(|r| r.text.as_str()).collect::<String>()).collect::<Vec<_>>().join("\n");
         let (x, y) = match place {
             Place::At(p) => (p.x, p.y),
+            // a text that asks for the top or the bottom of its area goes there (and to the side its alignment says); otherwise it is centered
+            Place::In(_) | Place::Center if label.valign != VAlign::Middle => (
+                match label.align {
+                    Align::Left => area.x,
+                    Align::Center => area.center().x - lay.width / 2.0,
+                    Align::Right => area.right() - lay.width,
+                },
+                label.valign.block_top(area.y, area.h, lay.height),
+            ),
             Place::In(_) | Place::Center => (area.center().x - lay.width / 2.0, area.center().y - lay.height / 2.0),
         };
         let id = Id::new();
@@ -197,7 +206,7 @@ impl Exporter<'_> {
                 Align::Right => "right",
             }),
         );
-        t.insert("verticalAlign".into(), json!(if container.is_some() { "middle" } else { "top" }));
+        t.insert("verticalAlign".into(), json!(if container.is_some() { label.valign.name() } else { "top" }));
         t.insert("containerId".into(), container.map_or(Value::Null, |c| json!(c)));
         t.insert("autoResize".into(), json!(true));
         t.insert("lineHeight".into(), json!(1.3));
@@ -305,7 +314,8 @@ impl Exporter<'_> {
                     ..o.clone()
                 };
                 let e = self.base(&cell_obj, "rectangle", cr, 0.0);
-                let label = Label { text: t.cell(r, c).cloned().unwrap_or_default(), family: t.family, size: t.size, align: Align::Left };
+                let label =
+                    Label { text: t.cell(r, c).cloned().unwrap_or_default(), family: t.family, size: t.size, align: Align::Left, valign: VAlign::Middle };
                 let area = Rect::new(cr.x + 8.0, cr.y + 4.0, cr.w - 16.0, cr.h - 8.0);
                 let t_el = self.text_el(&cell_obj, &label, area, Place::In(cell_id.as_str()), 0.0, o.style.stroke);
                 self.push_with_label(e, t_el);
@@ -340,7 +350,7 @@ impl Exporter<'_> {
             }
         }
         let label = c.label.as_ref().and_then(|l| {
-            let (mid, _) = inkboard_core::connector::path_midpoint(&path);
+            let mid = c.label_point(&path);
             self.text_el(o, l, Rect::new(mid.x - 40.0, mid.y - 10.0, 80.0, 20.0), Place::In(o.id.as_str()), 0.0, o.style.stroke)
         });
         self.push_with_label(e, label);
@@ -420,6 +430,11 @@ fn label_of(e: &Value) -> Label {
             Some("center") => Align::Center,
             Some("right") => Align::Right,
             _ => Align::Left,
+        },
+        valign: match text(e, "verticalAlign") {
+            Some("top") => VAlign::Top,
+            Some("bottom") => VAlign::Bottom,
+            _ => VAlign::Middle,
         },
     }
 }
@@ -516,7 +531,7 @@ impl Scene<'_> {
             Route::Straight
         };
         if let Some(t) = self.labels.get(id) {
-            c.label = Some(Label { align: Align::Center, ..label_of(t) });
+            c.label = Some(Label { align: Align::Center, valign: VAlign::Middle, ..label_of(t) });
         }
         let mut o = Object::new(Kind::Connector(c), Style { fill: None, ..style_of(e, false) });
         o.id = self.own_id(id);
@@ -631,7 +646,8 @@ pub fn import(content: &str, name: &str, measurer: &dyn Measurer) -> Result<Impo
                 }) {
                     continue;
                 }
-                let mut text_obj = Object::new_box(BoxGeom::Text, Frame::new(x, y, width, height), style_of(e, true), label_of(e));
+                let mut text_obj =
+                    Object::new_box(BoxGeom::Text, Frame::new(x, y, width, height), style_of(e, true), Label { valign: VAlign::Middle, ..label_of(e) });
                 if let Kind::Box(b) = &mut text_obj.kind {
                     b.fit(measurer);
                     b.frame.angle = angle;
@@ -713,6 +729,24 @@ mod tests {
         assert_eq!(t["containerId"], rect["id"]);
         // the rectangle also references the arrow that attaches to it
         assert!(rect["boundElements"].as_array().unwrap().iter().any(|b| b["type"] == "arrow"));
+    }
+
+    #[test]
+    fn a_vertical_alignment_goes_through_vertical_align_and_comes_back() {
+        let mut label = Label::new("Zone", 20.0, Align::Left);
+        label.valign = VAlign::Top;
+        let framed = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 300.0, 200.0), Style::default(), label);
+        let centered = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 300.0, 300.0, 200.0), Style::default(), Label::new("C", 20.0, Align::Center));
+        let mut d = Document::default();
+        d.pages[0].objects = vec![framed, centered];
+        let v: Value = serde_json::from_str(&export(&d, &d.pages[0], &ApproxMeasurer)).unwrap();
+        let texts: Vec<&Value> = v["elements"].as_array().unwrap().iter().filter(|e| e["type"] == "text").collect();
+        assert_eq!((texts[0]["verticalAlign"].as_str(), texts[1]["verticalAlign"].as_str()), (Some("top"), Some("middle")));
+        // the title sits in the top left corner of the text area (16 units inside the frame)
+        assert!((texts[0]["x"].as_f64().unwrap() - 16.0).abs() < 1e-6 && (texts[0]["y"].as_f64().unwrap() - 16.0).abs() < 1e-6, "{}", texts[0]);
+        let back = export_import(&d);
+        let got: Vec<VAlign> = back.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some(b.label.valign) } else { None }).collect();
+        assert_eq!(got, [VAlign::Top, VAlign::Middle]);
     }
 
     #[test]

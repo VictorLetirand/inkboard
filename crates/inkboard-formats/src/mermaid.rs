@@ -799,8 +799,8 @@ fn build_flow(flow: &Flow, measurer: &dyn Measurer) -> Vec<Object> {
             // attached to a frame: the waypoints computed for the node inside it would cross it
         } else if a == b {
             let src_rect = rects[a];
-            conn.start = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.25 } };
-            conn.end = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.75 } };
+            conn.start = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.25 }, side: None };
+            conn.end = End::Bound { target: ids[a].clone(), anchor: Anchor::Frac { fx: 1.0, fy: 0.75 }, side: None };
             conn.via = vec![Pt::new(src_rect.right() + 34.0, src_rect.y + src_rect.h * 0.25), Pt::new(src_rect.right() + 34.0, src_rect.y + src_rect.h * 0.75)];
         } else {
             let route = &lay.routes[k];

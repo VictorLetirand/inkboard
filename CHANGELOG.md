@@ -5,6 +5,32 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Added
+
+- **MCP, unknown arguments:** a tool call (also inside `batch`) with an argument that is not in the tool's schema still runs and returns a `warnings` entry (`unknown argument "bold" ignored (did you mean ...?)`), once, in the dispatcher.
+- **MCP, `check_layout`:** new warning `sparse_frame` (content under 30% of the frame, or an empty band over 200 units); `unbalanced` also reports `staircase` (top-level frames side by side with tops more than 60 units apart); new metrics `coverage` and `frame_top_offset`.
+- **MCP, `create_board`:** `overwrite: true` replaces an existing file with a fresh empty board; without it an existing file is an error that says so.
+- **MCP, `add_frame`:** `title_color` (default dark grey `#343a40`, kept on a re-fit).
+- **MCP, `add_frame`:** new tool that draws a grouping frame around existing objects in one call: one `rect` with its own title (top left, bold), sized to the union of `ids` plus `padding` (default 40, room added for the title) and placed behind them, also correct inside another frame. Calling it again with `frame` re-fits the same frame after the content moved.
+- **MCP, grid:** `arrange_objects` with `action: "grid"` (`columns`, `gap_x`, `gap_y`, `origin`, `cell` `max` / `fit`, `align` `center` / `start`) lays objects out row by row in the order given; an icon and its label count as one item.
+- **MCP, `auto_layout`:** `gap_x` / `gap_y` set the spacing, `ids` limits the layout to some objects, an icon and its label (any group) are one node, and a frame is laid out as a cluster around its content like a Mermaid subgraph (the engine's `auto_layout_with`; the application's command gets the same group and frame handling).
+- **MCP, connectors:** `add_connector` accepts `dash`, `font_size` (label) and `stroke_width`; the label is `label` or `text` in both `add_connector` and `update_object`.
+- **MCP, icons:** `add_icon` takes `label_font_size`, `label_max_width` (long labels now wrap, default `max(2 × icon size, 140)`) and `label_side` (`bottom`, `top`, `right`, `left`). `search_icons` returns each icon's `aspect` and `wide` (wordmark logos), and retries an empty query with synonyms (`note`).
+- **MCP, shapes:** `fit: "width"` (with `max_lines`) on `add_shape` and `update_object` computes the width that holds the text without splitting a word; both warn when the height had to grow or a word is wider than the text area.
+- **MCP, `check_layout`:** new read-only tool that lists the measurable layout defects of a page with the ids involved: overlaps, text overflow and split words, text across a frame border, arrows through objects, crossing or merged arrows, arrow label collisions, duplicate or unattached arrows, text too small once exported (`export_width`), unbalanced layout; plus metrics (content box, aspect, smallest text in pixels, empty cells).
+- **Arrow attachment side:** a connector end bound to an object can carry a side (`top`, `bottom`, `left`, `right`): it attaches at the middle of that side and the route leaves perpendicular to it (straight, elbow and curve). MCP: `from_side` / `to_side` on `add_connector` and `update_object` (`auto` clears). draw.io `exitX` / `exitY` / `entryX` / `entryY` and JSON Canvas `fromSide` / `toSide` map to it.
+- **Arrow label position:** a connector label can sit anywhere along the path (`label_pos`, 0 to 1) and beside the line (`label_offset`); the canvas, the SVG / PDF / PNG export, the text editor and `check_layout` use it. MCP: `label_pos`, `label_offset` on `add_connector` and `update_object`. draw.io edge label geometry maps to it.
+- **Title inside a shape:** a text can be aligned to the top or the bottom of its shape (`valign`), so a frame `rect` carries its own title (`align: left`, `valign: top`). MCP: `valign` on `add_shape` and `update_object` (and `align` on `add_shape`); draw.io `verticalAlign` and Excalidraw `verticalAlign` map to it, and a draw.io rectangle with its text at the top or bottom no longer gets a separate text object.
+- **Live sharing protocol v6:** objects carry the new fields above, so every app of a session (host and guests) must be updated to this version. Boards that do not use the new fields are saved exactly as before, and older files open unchanged.
+
+### Changed
+
+- **Left/top-aligned text in a rect:** its text area starts 16 units (was 8) from the left border for left-aligned text and from the top border for top-aligned text, so a frame title clears the rounded corner (canvas, export, text fit and `check_layout` agree; `add_frame` and `auto_layout` leave the room needed).
+- **Elbow arrows no longer share a line:** elbow connectors whose middle segments would run along the same line and overlap (one source fanning out to a column of targets, parallel links between two columns) are spread over parallel channels 10 units apart, on screen and in every export; `check_layout` no longer reports them as `shared_segment`, nor two arrows that only share their first segment when leaving the same point. Applies to arrows without waypoints, on pages of at most 150 elbow arrows.
+- **Arrows on icons:** an arrow attached to an image (an icon) with no side now attaches at the middle of the side facing the other end instead of a point of its box that could be a corner.
+- **MCP:** `move_objects` also moves the other members of the groups of the given ids (an icon and its label); `group: false` restores the previous behavior.
+- **MCP:** `update_object` returns its warnings under `warnings` like every other tool (ignored parameters included, with the Markdown ones). `avertissements`, still returned with the ignored parameters only, is deprecated.
+
 ## [0.2.0-rc.3] - 2026-10-31
 
 **Release candidate.** The first requests from outside users: an arrowhead at the end of a freehand stroke, a shape that opens its text when drawn, and named color swatches. Live sharing moves to protocol v5: update every app that hosts or joins a session.

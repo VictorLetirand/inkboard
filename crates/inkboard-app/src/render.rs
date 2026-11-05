@@ -4,7 +4,7 @@ use crate::fonts::{EguiMeasurer, font_id};
 use eframe::egui::epaint::{Mesh, TextShape, Vertex};
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{self, Color32, Painter, Pos2, Shape, Stroke, TextureHandle, pos2, vec2};
-use inkboard_core::connector::{head_glyph, path_midpoint};
+use inkboard_core::connector::head_glyph;
 use inkboard_core::geom::{Frame, Pt, Rect};
 use inkboard_core::model::Outline;
 use inkboard_core::num;
@@ -675,7 +675,7 @@ impl Renderer<'_> {
         if size < 3.0 {
             return;
         }
-        let origins = line_origins(lay, label.align, area);
+        let origins = line_origins(lay, label.align, label.valign, area);
         for (line, &(x, y)) in lay.lines.iter().zip(&origins) {
             let mut job = LayoutJob::default();
             job.wrap.max_width = f32::INFINITY;
@@ -787,12 +787,12 @@ impl Renderer<'_> {
             paint_head(self.painter, &head_glyph(tip, from, size, head, ext), &|p| self.cam.s(p), self.cam.zoom, num::f32(st.width), color, self.bg);
         }
         if let Some(l) = c.label.as_ref().filter(|l| !l.text.is_empty()) {
-            let (mid, _) = path_midpoint(&path);
+            let mid = c.label_point(&path);
             let lay = layout_rich(&l.text, None, self.measurer, l.family, l.size);
             let area = Rect::new(mid.x - lay.width / 2.0, mid.y - lay.height / 2.0, lay.width, lay.height);
             let r = self.cam.rect_s(area).expand(3.0 * self.cam.zoom.min(1.0));
             self.painter.rect_filled(r, 3.0, self.bg);
-            let label = Label { align: Align::Center, ..l.clone() };
+            let label = Label { align: Align::Center, valign: inkboard_core::VAlign::Middle, ..l.clone() };
             self.paint_lines(&lay, &label, area, &|p| p, 0.0, color, false);
         }
     }
@@ -863,7 +863,7 @@ impl Renderer<'_> {
             );
         }
         self.painter.rect_stroke(self.cam.rect_s(rect), 0.0, Stroke::new(num::f32(line_w) * self.cam.zoom, color), egui::StrokeKind::Middle);
-        let label = Label { text: RichText::default(), family: t.family, size: t.size, align: Align::Left };
+        let label = Label { text: RichText::default(), family: t.family, size: t.size, align: Align::Left, valign: inkboard_core::VAlign::Middle };
         for ri in 0..t.rows() {
             for ci in 0..t.cols() {
                 let Some(cell) = t.cell(ri, ci).filter(|c| !c.is_empty()) else { continue };
@@ -909,10 +909,10 @@ pub fn paint_head(painter: &egui::Painter, parts: &[HeadPart], to_screen: &dyn F
     }
 }
 
-/// Top-left origin (model units) of every line of a laid-out text inside `area`: left / center / right aligned, and centered vertically when it fits.
+/// Top-left origin (model units) of every line of a laid-out text inside `area`: left / center / right aligned, and placed vertically (middle, top or bottom) when it fits.
 /// The final rendering and the text editor both use it, so the text does not move when editing starts or ends.
-pub fn line_origins(lay: &TextLayout, align: Align, area: Rect) -> Vec<(f64, f64)> {
-    let mut y = if lay.height > area.h { area.y } else { area.y + (area.h - lay.height) / 2.0 };
+pub fn line_origins(lay: &TextLayout, align: Align, valign: inkboard_core::VAlign, area: Rect) -> Vec<(f64, f64)> {
+    let mut y = valign.block_top(area.y, area.h, lay.height);
     let mut out = Vec::with_capacity(lay.widths.len());
     for w in &lay.widths {
         let x = match align {

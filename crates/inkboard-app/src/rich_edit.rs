@@ -429,6 +429,7 @@ struct EditorLayout {
     anchor: egui::Rect,
     bar_align: Option<Align>,
     lay_wrap: Option<f64>,
+    valign: inkboard_core::VAlign,
 }
 
 fn editor_layout(app: &mut App, cam: &Cam, dark: bool) -> Option<EditorLayout> {
@@ -458,7 +459,7 @@ fn editor_layout(app: &mut App, cam: &Cam, dark: bool) -> Option<EditorLayout> {
         }
         Kind::Connector(c) => {
             let path = page.connector_path(c)?;
-            let (mid, _) = inkboard_core::connector::path_midpoint(&path);
+            let mid = c.label_point(&path);
             (
                 egui::Rect::from_center_size(cam.s(mid), vec2(160.0, 24.0)),
                 FontFamily::Sans,
@@ -483,7 +484,11 @@ fn editor_layout(app: &mut App, cam: &Cam, dark: bool) -> Option<EditorLayout> {
         Kind::Table(_) => Some(f64::from(area.width() / cam.zoom)),
         _ => None,
     };
-    Some(EditorLayout { area, family, size, align, color, no_wrap, anchor, bar_align, lay_wrap })
+    let valign = match &o.kind {
+        Kind::Box(b) => b.label.valign,
+        _ => inkboard_core::VAlign::Middle,
+    };
+    Some(EditorLayout { area, family, size, align, color, no_wrap, anchor, bar_align, lay_wrap, valign })
 }
 
 fn editor_formatting(app: &mut App, ctx: &egui::Context, anchor: egui::Rect, bar_align: Option<Align>) {
@@ -564,7 +569,7 @@ fn paint_editor_details(
 pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     app.live_fit_edited();
     let dark = app.ed.doc.background.preset.is_dark();
-    let Some(EditorLayout { area, family, size, align, color, no_wrap, anchor, bar_align, lay_wrap }) = editor_layout(app, cam, dark) else { return };
+    let Some(EditorLayout { area, family, size, align, color, no_wrap, anchor, bar_align, lay_wrap, valign }) = editor_layout(app, cam, dark) else { return };
     let model_size = f64::from(size / cam.zoom);
     let zoom = cam.zoom;
     let measurer = app.measurer.clone();
@@ -589,13 +594,18 @@ pub fn draw_text_editor(app: &mut App, ui: &mut egui::Ui, cam: &Cam) {
     let mut probe_rows: Vec<(f32, f32)> = Vec::new();
     let mut probe_caret = None;
     let width = area.width().max(if no_wrap { 6.0 } else { 60.0 });
-    // vertical centering of the text block in its area, like the final rendering
+    // vertical placement of the text block in its area (middle, top or bottom), like the final rendering
     if ed.synced != ed.buf {
         ed.rich.apply_edit(&ed.synced, &ed.buf);
         ed.synced = ed.buf.clone();
     }
     let lay = inkboard_core::text::layout_rich(&ed.rich, lay_wrap, &measurer, family, model_size);
-    let y_off = ((area.height() - num::f32(lay.height) * zoom) / 2.0).max(0.0);
+    let free_px = (area.height() - num::f32(lay.height) * zoom).max(0.0);
+    let y_off = match valign {
+        inkboard_core::VAlign::Top => 0.0,
+        inkboard_core::VAlign::Middle => free_px / 2.0,
+        inkboard_core::VAlign::Bottom => free_px,
+    };
     // same line height as the final rendering (egui's own row height is a little larger)
     let line_px = num::f32(lay.line_h) * zoom;
     let job_align = halign;

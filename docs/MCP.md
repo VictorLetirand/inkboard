@@ -64,13 +64,25 @@ docker build -f packaging/docker/mcp.Dockerfile -t inkboard-mcp .
 docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
 ```
 
-The server speaks MCP over standard input and output (hence `-i`). The image runs as a non-root user (uid 10001): the mounted folder must be writable by it. It was checked with a real MCP session (`initialize`, `tools/list` returning the 27 tools, then `create_board`, `add_shape` and `describe_board` on a file of the mounted folder, and a path outside `/data` refused). Live mode (editing the board that is open on screen) needs the desktop application and is not available in a container.
+The server speaks MCP over standard input and output (hence `-i`). The image runs as a non-root user (uid 10001): the mounted folder must be writable by it. It was checked with a real MCP session (`initialize`, `tools/list` returning the 29 tools, then `create_board`, `add_shape` and `describe_board` on a file of the mounted folder, and a path outside `/data` refused). Live mode (editing the board that is open on screen) needs the desktop application and is not available in a container.
 
 ### Arrowheads
 
 `add_connector` and `update_object` take `head_start` and `head_end` to choose the head of each end by name (`arrow` still sets both at once; a named head wins for its end). Original heads: `none`, `arrow`, `triangle`, `dot`, `bar`. Added heads, for UML and entity-relationship diagrams: `diamond` (composition), `diamond_open` (aggregation), `triangle_open` (inheritance, realization), `crow_foot` (many), `crow_foot_one` (one or many), `crow_foot_zero` (zero or many), `one_only` (exactly one), `zero_or_one`. `describe_board` with `detail: "full"` reports them in `heads`.
 
 The added heads are stored in separate optional fields of the connector (`head_start_ext`, `head_end_ext`), next to the original `head_start` / `head_end`, which keep the closest original head (a diamond is a `dot`, a hollow triangle a `triangle`, a crow's foot an `arrow`, `one_only` a `bar`). A version that does not know the added heads ignores the new fields and draws that head, so a board that uses them still opens, and a board that does not is written exactly as before. In a live session, a guest on an older version who edits such a connector sends it back without the added heads, which then show their original head for everybody. draw.io and Excalidraw files use their own symbols (draw.io: `diamond`, `ERmany`, `ERoneToMany`, `ERzeroToMany`, `ERmandOne`, `ERzeroToOne`, with `endFill=0` for hollow ones).
+
+### Attachment sides, label position and elbow routes
+
+Three controls for the arrows of a diagram, on `add_connector` and `update_object`:
+
+- **`from_side`, `to_side`** (`top`, `bottom`, `left`, `right`, `auto`): the side of the object an end attaches to. The arrow starts (or arrives) at the **middle of that side of the object's box** and leaves perpendicular to it: a straight arrow from that point, an elbow with its first segment perpendicular, a curve tangent to it. `auto` (the default, and what clears a side on `update_object`) keeps the automatic behavior. Without a side, an arrow attached to an **image** (an icon) now also uses the middle of the side facing the other end instead of a point of the box on the line between the centers (which could be a corner). Shapes keep the point of their outline facing the other end. Reconnecting an end with `from` / `to` drops its side; give `from_side` / `to_side` in the same call to set one for the new object. `describe_board` with `detail: "full"` reports `from_side` / `to_side` when set.
+- **`label_pos`** (0 to 1, default 0.5): where the label sits along the routed path, 0 at the start and 1 at the end. **`label_offset`** (units, -1000 to 1000, default 0): distance from the path, perpendicular to it, positive to the right of the direction of travel (below a path going right), negative to the left. They need a label (`label` / `text`, in the same call or before) and are reported by `describe_board` (`detail: "full"`) when set. The label follows the arrow when objects move; `check_layout` (`label_collision`) uses the same position.
+- **Elbow routes are separated.** Elbow arrows whose middle segment would run along the same line and overlap (typically one source fanning out to a column of targets, or two columns joined by parallel arrows) are spread over parallel channels 10 units apart, ordered so that they nest instead of crossing, and `check_layout` no longer reports them as `shared_segment`. Limits: only arrows without waypoints are separated, among the arrows of a page with at most 150 elbow arrows and 5000 objects; arrows leaving the same point share their first segment (a common stem, then they branch); an arrow that has to go around an obstacle keeps its own route.
+
+A shape can carry its own title: `align: "left"` with `valign: "top"` (`top`, `middle`, `bottom`; default `middle`) on `add_shape` / `update_object` puts the text at the top left of a `rect`, so a titled frame is one object (a transparent fill and `send_to_back` leave the content visible). `describe_board` with `detail: "full"` reports `font.valign` when it is not `middle`.
+
+Saved files and formats. The new fields are written only when set (`side` in an end, `label_pos` and `label_offset` in a connector, `valign` in a text), so a board that does not use them is written exactly as before and an old file loads unchanged; an older version ignores them. **Live sharing moves to protocol v6**: update every app that hosts or joins a session. draw.io: a side is written as `exitX` / `exitY` (start) and `entryX` / `entryY` (end), and the middle of a side read from a draw.io file becomes a side again (any other point stays a fraction of the box); the label position is the edge geometry `x` (-1 to 1 along the edge, so `label_pos` × 2 − 1) and `y` (offset); `valign` is `verticalAlign`, and a draw.io rectangle with its text at the top or bottom keeps it in one object. JSON Canvas: `fromSide` / `toSide` both ways. Excalidraw: `valign` is the `verticalAlign` of the text; sides and label position have no equivalent and are not exported.
 
 ## How live mode works
 
@@ -83,29 +95,31 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 
 | Tool | Purpose |
 |---|---|
-| `create_board` | Creates an empty board (refuses to overwrite an existing file). |
+| `create_board` | Creates an empty board. An existing file is an error that says to use the existing board or pass `overwrite: true`, which replaces it with a fresh empty board. |
 | `save_board` | Live mode: saves the displayed board (it must already have a file). |
 | `board_changes` | What the **user** changed since your last look (`describe_board` / `board_changes`): objects added, modified, deleted. Your own changes are not reported. |
 | `describe_board` | Pages and objects (id, type, text, position, connector links); in live mode, also `selection`. `detail: "full"` adds [styles and fonts](#reading-styles). Also reads draw.io, Excalidraw, JSON Canvas, Mermaid. |
 | `find_objects` | Finds objects by text, regex, type or area, without reading the whole board (read-only). |
 | `render` | **Picture of the board as an image** (PNG returned directly to the agent, nothing to export and read back). Whole content, a `region`, or the `ids` to frame; optional id badges (`show_ids`); `output` also writes the PNG under the root. Read-only. |
-| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, with text (optionally [rich text](#rich-text)), colors, size. |
-| `add_connector` | **Bound** arrow between two objects (`straight`, `elbow`, `curve`, arrowheads, label — optionally rich text). |
+| `check_layout` | **Lists the layout defects of a page** with the ids involved (overlaps, text that overflows, arrows through objects, crossing or merged arrows, label collisions, duplicate or unattached arrows, text too small once exported, unbalanced layout). Read-only; see [`check_layout`](#check_layout). |
+| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, with text (optionally [rich text](#rich-text)), colors, size. The height grows to hold the text and `warnings` says so (`text did not fit: height grew from X to Y`), or that a word is wider than the text area (`use w ≥ N`). `fit: "width"` (+ `max_lines`, default 2) computes the smallest width that fits the text without splitting a word, per geometry; never below `w` when `w` is given. `align` (`left`, `center`, `right`) and `valign` (`top`, `middle`, `bottom`) place the text: `align: "left"` + `valign: "top"` on a `rect` is a titled frame in one object ([details](#attachment-sides-label-position-and-elbow-routes)). |
+| `add_connector` | **Bound** arrow between two objects (`straight`, `elbow`, `curve`, arrowheads, label — optionally rich text; the label is `label` or `text`, both accepted, as in `update_object`; `dash` `solid`/`dashed`/`dotted`, `font_size` of the label 4–400, `stroke_width` 0–100 at creation; `from_side` / `to_side` choose the side of each object the arrow attaches to, `label_pos` / `label_offset` place the label, see [attachment sides](#attachment-sides-label-position-and-elbow-routes)). |
 | `add_table` | Table of cells (columns fitted to the text); cells may be rich text. |
 | `add_code_block` | Colored code block. |
 | `add_formula` | LaTeX formula typeset as in TeX (clear error if unsupported). |
 | `add_image` | PNG/JPEG/GIF/WebP/SVG image (15 MiB at most) from a file under the root (`source`) or in base64; natural size reduced to 600, or `w`/`h`. The type is recognized from the content, never from the extension. |
-| `search_icons` | Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI symbols…) by keywords (`query`, English names, case-insensitive, every word must match); optional `group`, `set`, `limit` (default 20, at most 100). Returns `{count, truncated, icons: [{id, name, set, group, mono}]}`. Read-only. |
+| `search_icons` | Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI symbols…) by keywords (`query`, English names, case-insensitive, every word must match); optional `group`, `set`, `limit` (default 20, at most 100). Returns `{count, truncated, icons: [{id, name, set, group, mono, aspect, wide?}], note?}`. `aspect` = width / height rounded to 2 decimals; `wide: true` above 2 (wordmark logos, unreadable at 64: give `w`). A query with no result is retried with a small synonym table (`box internet` → router, `user team` → users, `registry` → container registry, `phone` → smartphone, `laptop` → notebook…) and `note` says which. Read-only. |
 | `list_icon_groups` | The groups of the icon library with their sets and icon counts (`{total, groups: [{group, sets: [{set, icons}]}]}`), to know what to search for. Read-only. |
-| `add_icon` | Places an icon (`icon` = an `id` from `search_icons`) as an image object that `add_connector` can attach to. `size` (longest side, default 64, 8 to 2000) or `w`/`h` (ratio kept when only one is given); `stroke` tints monochrome icons; `label` adds a text centered under the icon, grouped with it (`markdown: true` for [rich text](#rich-text)). Returns `{id, x, y, w, h, icon, label_id?, warnings?}`. |
+| `add_icon` | Places an icon (`icon` = an `id` from `search_icons`) as an image object that `add_connector` can attach to. `size` (longest side, default 64, 8 to 2000) or `w`/`h` (ratio kept when only one is given); `stroke` tints monochrome icons; `label` adds a text grouped with the icon (`markdown: true` for [rich text](#rich-text)): `label_side` `bottom` (default) / `top` / `right` / `left` (6-unit gap), `label_font_size` (4–400, default 16), `label_max_width` (20 and up; the label wraps at spaces beyond it, a word is never split; default `max(2 × the icon's longest side, 140)`, so a short label is untouched and a long one no longer runs into its neighbours). Returns `{id, x, y, w, h, icon, label_id?, warnings?}`. |
 | `import_mermaid` | Mermaid diagram (flowchart, state, sequence, class, entity-relationship) with automatic layout; optional dedicated page. A `subgraph` becomes a dashed frame with its title; its content is laid out on its own, so frames never overlap, and its `direction` applies when no link joins it to the outside. A link written to a subgraph (`B --> Back`) is attached to that frame. A `;` inside a quoted label (`A["a; b"]`) is kept in the label. A class or an entity becomes a table (name, attributes, methods; or type, name, keys); inheritance and realization end in a hollow triangle, composition and aggregation in a diamond, and an entity link ends in crow's foot symbols and spells out its cardinalities. Not supported: pie, mindmap, gantt (an explicit error says so). |
 | `update_object` | Modify text ([rich text](#rich-text) optional), position, size, colors, [line style, font, lock, rotation](#update_object), a connector's route / arrowheads / ends, or one table cell. |
 | `delete_object` | Deletes one object (`id`) or several (`ids`). |
-| `move_objects` | Moves objects together (relative or to a position); bound connectors follow. |
-| `arrange_objects` | Aligns, distributes, stacks (front/back), groups, ungroups, locks, unlocks. |
+| `move_objects` | Moves objects together (relative or to a position); the other members of the groups of `ids` move too (an icon and its label) unless `group: false`; bound connectors follow. |
+| `arrange_objects` | Aligns, distributes, lays out in a grid (`grid`), stacks (front/back), groups, ungroups, locks, unlocks. |
+| `add_frame` | **Grouping frame** around existing objects in one call: one `rect` sized to the union of `ids` plus `padding`, its own title at the top left, placed behind them; `frame` re-fits it later. See [`add_frame`](#add_frame). |
 | `duplicate_objects` | Copies objects (one or several copies, with an offset); connectors between copied objects are kept. |
 | `format_text` | Bold, italic, underline, strike, color, highlight on text **already on the board**: a part of a shape's text, a connector's label or a table cell. |
-| `auto_layout` | Rearranges a graph of connected shapes (TB, LR, BT, RL). |
+| `auto_layout` | Rearranges a graph of connected shapes, images and tables (TB, LR, BT, RL); `gap_x` / `gap_y`, `ids`; an icon and its label are one node and a frame is laid out around its content. See [`auto_layout`](#auto_layout). |
 | `add_page` | New page. |
 | `manage_pages` | Lists, renames or deletes pages (`add_page` creates them). |
 | `batch` | **Several tool calls in one request** (1 to 200), run in order on one board, with references to earlier results (`"$0.id"`), all-or-nothing by default, one undo step. |
@@ -156,6 +170,46 @@ The text block holds `width_px`, `height_px`, `region` (the rectangle actually s
 
 A tool result is a JSON value, carried as is by the live protocol (one JSON line per response). The reserved top-level key `_image` (`{"mime": "image/png", "data_base64": "…"}`) marks a result that includes a picture: `inkboard-mcp` (`tools/call`) then answers with `content = [{"type": "image", "data": …, "mimeType": …}, {"type": "text", "text": <the JSON without _image>}]`. Every other result is still a single text block, exactly as before. Because the picture travels inside the JSON line, a live response can be several MiB long (the PNG is kept under 4 MiB, 5.5 MiB in base64).
 
+## Unknown arguments
+
+A call (also an operation of `batch`) with an argument that is not a property of the tool's input schema still runs, but the result carries a `warnings` entry such as `unknown argument "bold" ignored (did you mean "title_bold"?)`; the closest property is suggested when it is within an edit distance of 2 or shares a prefix. `path` and `page` are always accepted. Existing `warnings` of the tool are kept.
+
+## `check_layout`
+
+Lists the measurable defects of a page, with the ids of the objects involved, so that they can be fixed without judging a picture. Read-only (board, file and undo history are untouched). Text is measured approximately (as in `export` and `render`) and objects are compared by their axis-aligned bounding boxes: a report is a strong hint, not a proof; look at it with `render` when in doubt.
+
+| Parameter | Meaning |
+|---|---|
+| `path`, `page` | As for the other tools. |
+| `ids` | Only report the issues that involve one of these objects (the page-level `unbalanced` issues are then left out). The metrics always describe the whole page. |
+| `export_width` | Width in pixels of the planned export (100 to 20000, default 1600), for `small_text` and `min_text_px`. |
+
+The result is `{"ok": bool, "issues": [...], "metrics": {...}}`; `ok` is true when there is no issue at all (errors and warnings). Each issue is `{"kind", "severity", "ids", "message", ...details}`. At most 50 issues of a kind are listed (`truncated` then says so). Only visible objects are checked. "Frame" below means a rectangle shape that contains at least one other object.
+
+| Kind | Severity | Rule |
+|---|---|---|
+| `overlap` | error | Two shapes, images, texts or tables whose boxes intersect by more than 2 units in both directions. Not reported when one contains the other (a frame and its content), when both are in the same group (an icon and its label), or for a text and a frame it partly covers (see `text_outside_frame`). Details: `overlap_w`, `overlap_h`. |
+| `text_overflow` | error | The text of a shape is taller than its text area. Details: `text_h`, `area_h`. |
+| `word_split` | error | A word is wider than the usable text width of its shape, so it is cut in two (bold metrics if any part is bold). Details: `word`, `word_w`, `area_w`. |
+| `connector_through_object` | error | The routed path of a connector (the one `render` and `export` draw) touches the box of an object that is neither its source, nor its target, nor a frame containing one of them. `ids`: `[connector, object]`. |
+| `unbound_connector` | error | An end is free (not attached) or attached to an object that no longer exists. Detail: `ends` (`start`, `end` or `start and end`). |
+| `duplicate_connector` | error | Several connectors join the same two objects, in either direction. `ids`: all of them. |
+| `text_outside_frame` | warning | A text object intersects a frame by more than 2 units without being inside it (typically a frame title across the border). `ids`: `[text, frame]`. |
+| `connector_crossing` | warning | The paths of two connectors cross inside a segment of each. Connectors that share an end object are skipped. Details: `x`, `y`. |
+| `shared_segment` | warning | Two connectors run along the same line (within 1.5 units, under about 1 degree apart) for more than 20 units, unless they end on the same object (arrows merging into one target are fine) or they only share their first segment (arrows leaving the same point). Elbow arrows that would overlap are separated by the router first (see [elbow routes](#attachment-sides-label-position-and-elbow-routes)). Detail: `length`. |
+| `label_collision` | warning | The label of a connector (its text laid out at its `label_pos` along the path, the middle by default, plus `label_offset`, as `export` draws it) intersects a shape, image, text, table or another connector's label by more than 2 units, or crosses the border of a frame. `ids`: `[connector, other]`. |
+| `small_text` | warning | Text that is under 10 pixels once the page is exported at `export_width`. Exporting scales the content box (width `content_w`) by `export_width / content_w` pixels per unit, so a font of `size` units is `size x export_width / content_w` pixels. One issue lists every such object (shapes, tables, connector labels) with `min_px`, `smallest` and `min_font_size` (the size that would reach 10 px). |
+| `sparse_frame` | warning | A frame whose content (the bounding box of the objects inside it) covers less than 30% of its area, or leaves an empty band wider than 200 units on one side. `ids`: `[frame]`; details `coverage`, `band_side`, `band`; the message suggests `add_frame` with `frame=<id>` to re-fit it. |
+| `unbalanced` | warning | Page-level (`ids` is empty, except `staircase`), with a `reason`. `aspect`: width / height of the content box outside 0.6 to 2.2. `empty_region`: with at least 6 objects (connectors excluded), the content box is cut into a 3 x 3 grid and the cells touched by no object (frames and connectors do not count) are listed in `empty_cells` as `{col, row}`; 3 or more empty cells are reported. `staircase`: two top-level frames (not inside another frame) side by side (disjoint x ranges, overlapping y ranges) whose tops differ by more than 60 units; `ids` are those frames. There is no coverage reason: icons joined by long arrows are legitimately sparse (`coverage` stays a metric only). A cheap heuristic: an L-shaped diagram legitimately leaves a corner empty. |
+
+`metrics`: `objects` (visible, connectors excluded), `connectors`, `content_box` `{x, y, w, h}`, `aspect` (width / height), `min_text_px` (smallest text at `export_width`), `empty_cells` (count; 0 under 6 objects), `coverage` (metric only, never an issue; share of the bounding box of the top-level objects that they cover), `frame_top_offset` (largest difference between the tops of two top-level frames side by side) and `export_width`.
+
+Known limits: boxes are bounding boxes, so a rotated shape, an ellipse or a diamond can be reported when only the corner of its box is touched; a pen stroke is never an obstacle; a rich-text span with its own size is not measured separately.
+
+```json
+{"name": "check_layout", "arguments": {"export_width": 1600}}
+```
+
 ## Reading styles
 
 `describe_board` takes `detail`: `"brief"` (default, the output is unchanged) or `"full"`. With `full`, each object also has:
@@ -200,19 +254,24 @@ The existing parameters (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stroke
 | `font_size` | 4 to 400 | shapes, connector labels, tables |
 | `font_family` | `sans`, `hand`, `serif`, `mono` | shapes, connector labels, tables |
 | `align` | `left`, `center`, `right` | shapes, connector labels |
+| `valign` | `top`, `middle`, `bottom`: vertical place of the text in the shape (`align: left` + `valign: top`: a title at the top left of a `rect`); also on `add_shape` | shapes |
 | `locked` | `true` / `false` | any object |
 | `rotation` | -360 to 360, **absolute** angle in degrees (0 resets), around the center | shapes, images |
 | `route` | `straight`, `elbow`, `curve` | connectors |
 | `arrow` | `end`, `start`, `both`, `none` | connectors |
 | `head_start`, `head_end` | an [arrowhead](#arrowheads) name; replaces what `arrow` gave that end | connectors |
 | `from`, `to` | id of a shape, table or image: reconnects that end (same rules as `add_connector`) | connectors |
+| `from_side`, `to_side` | `top`, `bottom`, `left`, `right`: the middle of that side of the object, the arrow leaving perpendicular to it; `auto` clears it; also on `add_connector`, see [attachment sides](#attachment-sides-label-position-and-elbow-routes) | connectors |
+| `label_pos`, `label_offset` | `label_pos` 0 to 1 (0.5: the middle): where the label sits along the path; `label_offset` -1000 to 1000 units: distance beside the path (positive: right of the direction of travel); also on `add_connector` | connectors with a label |
 | `head_scale` | 0.5 to 4, size of the arrowheads (1: default; the panel's S / M / L / XL are 0.6 / 1 / 1.6 / 2.4); also on `add_connector` | connectors |
 | `shadow` | `true` / `false`: drop shadow; also on `add_shape` | shapes, images, tables, connectors |
 | `recolor` | replaces colors of an SVG image: `{"#e34f26": "#0055ff"}` or `[["#e34f26", "#0055ff"]]`; replaces the previous list, `{}` restores the original colors (at most 256 pairs). `describe_board` with `detail: "full"` lists the colors found in the file | SVG images (not monochrome icons or formulas) |
+| `label` | synonym of `text` for a connector label (error if both are given and differ); also `text` on `add_connector` | connectors |
+| `fit`, `max_lines` | `fit: "width"` sets the width to the smallest that holds the text in `max_lines` lines (1 to 20, default 2) without splitting a word; with `w` it is never smaller than `w` | shapes |
 | `cell` + `text` | `[row, column]` from 0: the new text of that table cell (`markdown` works as everywhere); the column widens if needed | tables |
 
 - **All or nothing**: every parameter is validated first; an unknown or out-of-range value is an error that names the parameter and the allowed values, and nothing is modified.
-- A parameter that does not suit the object (`rotation` on a pen, `route` on a rectangle…) is **ignored** and listed in `avertissements` (`warnings` stays reserved for Markdown problems, see Rich text). `cell` on something that is not a table is an error.
+- A parameter that does not suit the object (`rotation` on a pen, `route` on a rectangle…) is **ignored** and listed in `warnings` (with the Markdown problems, see Rich text). The same list of ignored parameters is still returned as `avertissements`, which is **deprecated** (kept for existing clients; use `warnings`). `cell` on something that is not a table is an error.
 - Font parameters on a connector apply to its label; without a label they are reported (give `text` too).
 - **Locked objects are not protected from tools**: `update_object`, `move_objects`, `duplicate_objects` (the copy stays locked) and `delete_object` act on them. Only the alignment and distribution of `arrange_objects` skip them (and objects on a locked layer).
 
@@ -224,7 +283,8 @@ The existing parameters (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stroke
 ## `move_objects`
 
 `ids` (1 to 2000) and **either** `dx`, `dy` (relative; one of them is enough) **or** `x`, `y` (new top-left corner of the **bounding box of the whole batch**; for one object it is `update_object`'s `x`/`y`). Giving both forms, or none, is an error.
-Connectors bound to the moved objects follow; a connector moved alone only moves its free ends. Result: `{"moved": n, "dx": …, "dy": …}`.
+By default **the whole group** of each listed object moves (an icon from `add_icon` and its label are one group); `group: false` moves only the listed ids. The bounding box of `x`, `y` then includes the group members.
+Connectors bound to the moved objects follow; a connector moved alone only moves its free ends. Result: `{"moved": n, "dx": …, "dy": …}`. `group_members_added` appears when members were added.
 
 ## `arrange_objects`
 
@@ -238,9 +298,27 @@ Connectors bound to the moved objects follow; a connector moved alone only moves
 | `group` | At least 2 objects share a new group; the result has `group`. |
 | `ungroup` | Releases the listed objects (result: `ungrouped`). |
 | `lock`, `unlock` | Locks / unlocks the objects. |
+| `grid` | Lays the objects out in a grid: `columns` (required, ≥ 1), row by row in the order of `ids`. `gap_x`, `gap_y` (default 80); `origin` `{x, y}` = top-left of the grid (default: top-left of the objects' current box); `cell` `"max"` (default: every cell as large as the largest object) or `"fit"` (each column as wide and each row as tall as its largest member); `align` `"center"` (default) or `"start"` inside the cell. An icon and its label (a group) count as **one** item, placed by the group's box. Bound connectors follow; connectors in `ids` and locked objects are skipped (`skipped_connectors`, `skipped_locked`). One undo step. Result: `columns`, `rows`, `placed` (`id`, `x`, `y` of each item). |
 
 Groups are **not expanded**: list every member to move, align or ungroup a whole group.
 Locked objects (and objects on a locked layer) are skipped by `align_*` and `distribute_*` and listed in `skipped_locked`. The engine alone does nothing when there are too few unlocked objects (fewer than 2 to align, 3 to distribute); the tool returns an error instead.
+
+## `add_frame`
+
+Draws the frame an agent would otherwise size by hand. `ids` (the objects to surround; the other members of their groups, such as an icon's label, are included) gives **one `rect`** whose own text is the title (`align: left`, `valign: top`, bold) and whose box is the union of the boxes of `ids` (same bounds as the layout checks) plus `padding` (default 40, not negative); with a title, the top gets the title's height (`title_font_size` × 1.3 for one line) + 20 more (the title sits 16 units from the left and top borders, so it clears the rounded corner). A title wider than the frame widens it (`warnings` says so). Defaults: `fill` `#f1f3f5`, `stroke` `#adb5bd`, `dash` `solid`, `title_font_size` 18, `title_bold` true, `title_color` `#343a40` (dark grey, independent of the border color; `"#rrggbb"` or `"ink"`), `roundness` 0.15 (as a `rect` of `add_shape`). Returns `{id, x, y, w, h}`.
+
+The frame is placed **just under the lowest of the framed objects**, so a frame around objects that already sit inside another frame is drawn above the outer one and below its own content; framing a frame puts the new one under it. It is not grouped with its content: after moving the content, call `add_frame` again with `frame` (its id) and `ids` to **re-fit** the same frame (its title and title color are kept; `title`, `title_color`, `fill`, `stroke`, `dash`, `roundness` change only if given). `x`, `y`, `w`, `h` (all four) give an exact rectangle instead of the union; `ids` is then optional and only decides the stacking (without it, the frame goes to the back). Unknown ids and a negative `padding` are errors.
+
+## `auto_layout`
+
+Lays out the shapes, images and tables joined by connectors as a layered graph (`direction` `TB` default, `LR`, `BT`, `RL`); the top-left corner of what is laid out stays where it was, and elbow connectors without waypoints become straight lines with waypoints around the layers. Without options the spacing is 84 between layers and 48 between nodes of a layer.
+
+- `gap_x`, `gap_y` (0 to 10000): the horizontal and vertical gap. For `TB` / `BT`, `gap_y` is between layers and `gap_x` between nodes of a layer; for `LR` / `RL` it is the other way round.
+- `ids`: lay out only these objects and the connectors **between** them; everything else stays untouched.
+- **Icons:** an icon and its label (a group) move as one node whose box is the union of the group. The same goes for any group (a group with a locked member stays put).
+- **Frames:** a `rect` that holds other laid-out nodes is a frame and is laid out as a cluster, like a Mermaid `subgraph` in `import_mermaid`: its content is laid out on its own, then the frame is re-fitted around it (padding 40, plus room for its title) and takes part as one block in the layout of what surrounds it. Nested frames work; a connector bound to a frame links the block. A frame is recognized by geometry (its box holds the boxes of other nodes in `ids`), whether or not `add_frame` made it.
+
+Result: `{layout, objects, nodes, frames}` (`nodes` counts a group once).
 
 ## `manage_pages`
 

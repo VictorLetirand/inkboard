@@ -3,7 +3,9 @@
 use crate::common::{FormatError, Imported, Report, parse_color};
 use inkboard_core::geom::Rect;
 use inkboard_core::text::Measurer;
-use inkboard_core::{Align, Anchor, Arrowhead, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, Frame, Id, Kind, Label, Object, Page, Pt, Style};
+use inkboard_core::{
+    Align, Anchor, Arrowhead, AttachSide, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, Frame, Id, Kind, Label, Object, Page, Pt, Style,
+};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -19,16 +21,6 @@ const PRESETS: [(&str, Color); 6] = [
 fn color_of(v: Option<&str>) -> Option<Color> {
     let v = v?;
     PRESETS.iter().find(|(k, _)| *k == v).map(|(_, c)| *c).or_else(|| parse_color(v))
-}
-
-fn side_anchor(side: &str) -> Option<Anchor> {
-    Some(match side {
-        "top" => Anchor::Frac { fx: 0.5, fy: 0.0 },
-        "bottom" => Anchor::Frac { fx: 0.5, fy: 1.0 },
-        "left" => Anchor::Frac { fx: 0.0, fy: 0.5 },
-        "right" => Anchor::Frac { fx: 1.0, fy: 0.5 },
-        _ => return None,
-    })
 }
 
 fn side_of(frame: &Frame, p: Pt) -> &'static str {
@@ -97,7 +89,7 @@ pub fn export(page: &Page) -> (String, usize) {
                     dropped += 1;
                     continue;
                 }
-                let mut e = json!({"id": o.id.as_str(), "fromNode": oa.id.as_str(), "toNode": oz.id.as_str(), "fromSide": side_of(&fa, a), "toSide": side_of(&fz, z),
+                let mut e = json!({"id": o.id.as_str(), "fromNode": oa.id.as_str(), "toNode": oz.id.as_str(), "fromSide": c.start.side().map_or_else(|| side_of(&fa, a), AttachSide::name), "toSide": c.end.side().map_or_else(|| side_of(&fz, z), AttachSide::name),
                     "fromEnd": if c.has_head_start() { "arrow" } else { "none" }, "toEnd": if c.has_head_end() { "arrow" } else { "none" }});
                 if let Some(l) = c.label.as_ref().filter(|l| !l.text.is_empty()) {
                     e["label"] = json!(l.text.to_plain());
@@ -175,7 +167,7 @@ pub fn import(content: &str, name: &str, measurer: &dyn Measurer) -> Result<Impo
             report.skipped += 1;
             continue;
         };
-        let bound = |id: &Id, side: Option<&str>| End::Bound { target: id.clone(), anchor: side.and_then(side_anchor).unwrap_or(Anchor::Auto) };
+        let bound = |id: &Id, side: Option<&str>| End::Bound { target: id.clone(), anchor: Anchor::Auto, side: side.and_then(AttachSide::from_name) };
         let mut c = Connector::new(bound(a, get("fromSide")), bound(z, get("toSide")));
         c.head_start = if get("fromEnd").is_some_and(|v| v != "none") { Arrowhead::Triangle } else { Arrowhead::None };
         c.head_end = if get("toEnd").is_none_or(|v| v != "none") { Arrowhead::Triangle } else { Arrowhead::None };
@@ -228,7 +220,9 @@ mod tests {
         assert_eq!(r.report.approximated, 1);
         let conns: Vec<&Connector> = p.objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
         assert_eq!(conns.len(), 2);
-        assert!(matches!(conns[0].start, End::Bound { anchor: Anchor::Frac { fx, .. }, .. } if (fx - 1.0).abs() < 1e-9));
+        assert_eq!((conns[0].start.side(), conns[0].end.side()), (Some(AttachSide::Right), Some(AttachSide::Left)), "fromSide and toSide are the sides");
+        assert!(matches!(conns[0].start, End::Bound { anchor: Anchor::Auto, .. }));
+        assert_eq!(conns[1].start.side(), None, "no side in the file: automatic");
         assert_eq!(conns[0].head_end, Arrowhead::Triangle, "toEnd by default = arrow");
         assert_eq!(conns[1].head_end, Arrowhead::None);
         assert_eq!(conns[1].head_start, Arrowhead::Triangle);
@@ -247,6 +241,28 @@ mod tests {
         let p = &r.doc.pages[0];
         assert_eq!(p.objects.iter().filter(|o| matches!(o.kind, Kind::Box(_))).count(), 6);
         assert_eq!(p.objects.iter().filter(|o| matches!(o.kind, Kind::Connector(_))).count(), 1);
+    }
+
+    #[test]
+    fn a_side_goes_out_and_comes_back() {
+        let mut d = Document::default();
+        let a = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 100.0, 60.0), Style::default(), Label::new("A", 20.0, Align::Center));
+        let b = Object::new_box(BoxGeom::Rect, Frame::new(400.0, 200.0, 100.0, 60.0), Style::default(), Label::new("B", 20.0, Align::Center));
+        let mut c = Connector::new(End::bound(a.id.clone()), End::bound(b.id.clone()));
+        c.start.set_side(Some(AttachSide::Bottom));
+        c.end.set_side(Some(AttachSide::Top));
+        d.pages[0].objects = vec![a, b, Object::new(Kind::Connector(c), Style::default())];
+        let (json, dropped) = export(&d.pages[0]);
+        assert_eq!(dropped, 0);
+        let v: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            (v["edges"][0]["fromSide"].as_str(), v["edges"][0]["toSide"].as_str()),
+            (Some("bottom"), Some("top")),
+            "the side wins over the one measured on the path"
+        );
+        let r = import(&json, "x", &ApproxMeasurer).unwrap();
+        let back: Vec<&Connector> = r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).collect();
+        assert_eq!((back[0].start.side(), back[0].end.side()), (Some(AttachSide::Bottom), Some(AttachSide::Top)));
     }
 
     #[test]

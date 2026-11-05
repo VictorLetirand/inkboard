@@ -1,8 +1,8 @@
 //! SVG export of a page (or a selection), with no UI dependency.
 
-use crate::connector::{HeadPart, head_glyph, path_midpoint};
+use crate::connector::{HeadPart, head_glyph};
 use crate::geom::{Pt, Rect};
-use crate::model::{BoxGeom, BoxObj, Document, Id, Kind, Label, Object, Page, Table};
+use crate::model::{BoxGeom, BoxObj, Document, Id, Kind, Label, Object, Page, Table, VAlign};
 use crate::style::{Align, Color, Dash, NOTE_YELLOW, Style};
 use crate::text::{Measurer, RichText, TextLayout, layout_rich};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -62,11 +62,11 @@ impl Ctx<'_> {
         c.map_or_else(|| "none".to_owned(), |c| self.col(c))
     }
 
-    /// Text block: lines vertically centered in `area` (current frame).
+    /// Text block: lines in `area` (current frame), vertically centered unless the label says otherwise.
     fn text(&self, lay: &TextLayout, area: Rect, label: &Label, color: Color, bold_all: bool) -> String {
         let mut out = String::new();
         let li = lay.line_h;
-        let mut y = if lay.height > area.h { area.y + li / 2.0 } else { area.y + (area.h - lay.height) / 2.0 + li / 2.0 };
+        let mut y = label.valign.block_top(area.y, area.h, lay.height) + li / 2.0;
         let (anchor, ax) = match label.align {
             Align::Left => ("start", area.x),
             Align::Center => ("middle", area.x + area.w / 2.0),
@@ -289,7 +289,7 @@ impl Ctx<'_> {
             out.push_str(&self.head(st, head_glyph(tip, from, size, head, ext)));
         }
         if let Some(l) = c.label.as_ref().filter(|l| !l.text.is_empty()) {
-            let (mid, _) = path_midpoint(&path);
+            let mid = c.label_point(&path);
             let lay = layout_rich(&l.text, None, self.m, l.family, l.size);
             let area = Rect::new(-lay.width / 2.0, -lay.height / 2.0, lay.width, lay.height);
             let block = self.text(&lay, area, &Label { align: Align::Center, ..l.clone() }, st.stroke, false);
@@ -349,7 +349,7 @@ impl Ctx<'_> {
                 n(line_w * 0.6)
             );
         }
-        let label = Label { text: RichText::default(), family: t.family, size: t.size, align: Align::Left };
+        let label = Label { text: RichText::default(), family: t.family, size: t.size, align: Align::Left, valign: VAlign::Middle };
         for ri in 0..t.rows() {
             for ci in 0..t.cols() {
                 let Some(cell) = t.cell(ri, ci).filter(|c| !c.is_empty()) else { continue };
@@ -623,6 +623,45 @@ mod tests {
         assert!(svg.ends_with("</svg>"));
         // balanced <g> tags
         assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
+    }
+
+    #[test]
+    fn the_text_of_a_shape_follows_its_vertical_alignment() {
+        let y_of = |valign| {
+            let mut label = Label::new("T", 20.0, Align::Left);
+            label.valign = valign;
+            let o = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 200.0, 100.0), Style::default(), label);
+            let doc = doc_with(vec![o]);
+            let svg = export_approx(&doc, &doc.pages[0]).unwrap();
+            let at = svg.find("<text x=\"-84\" y=\"").expect("text at the left of the area") + "<text x=\"-84\" y=\"".len();
+            svg[at..].split('"').next().unwrap().parse::<f64>().unwrap()
+        };
+        // text area: 16 units inside on the left, 8 on the other sides (16 on top for a top-aligned text), one line 26 high
+        assert!(y_of(VAlign::Middle).abs() < 1e-6);
+        assert!((y_of(VAlign::Top) - -21.0).abs() < 1e-6, "{}", y_of(VAlign::Top));
+        assert!((y_of(VAlign::Bottom) - 29.0).abs() < 1e-6, "{}", y_of(VAlign::Bottom));
+    }
+
+    #[test]
+    fn a_connector_label_is_drawn_at_its_position_and_beside_the_line() {
+        let label_at = |set: &dyn Fn(&mut Connector)| {
+            let mut conn = Connector::straight(Pt::new(0.0, 0.0), Pt::new(200.0, 0.0));
+            conn.label = Some(Label::new("yes", 14.0, Align::Center));
+            set(&mut conn);
+            let doc = doc_with(vec![Object::new(Kind::Connector(conn), Style::default())]);
+            let svg = export_approx(&doc, &doc.pages[0]).unwrap();
+            let at = svg.find("<g transform=\"translate(").expect("label group") + "<g transform=\"translate(".len();
+            svg[at..].split(')').next().unwrap().to_owned()
+        };
+        assert_eq!(label_at(&|_| {}), "100 0");
+        assert_eq!(label_at(&|c| c.set_label_pos(Some(0.25))), "50 0");
+        assert_eq!(
+            label_at(&|c| {
+                c.set_label_pos(Some(0.25));
+                c.set_label_offset(-14.0);
+            }),
+            "50 -14"
+        );
     }
 
     #[test]

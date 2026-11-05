@@ -2,8 +2,10 @@
 
 use crate::Server;
 use base64::Engine;
-use inkboard_core::layout::{Direction, auto_layout};
+use inkboard_core::layout::{Direction, LayoutOptions, auto_layout_with};
+use inkboard_core::model::BoxObj;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
+use inkboard_core::text::layout_rich;
 use inkboard_core::{
     Align, ApproxMeasurer, Arrowhead, BoxGeom, Color, Connector, Document, Editor, End, FontFamily, Frame, Id, ImageObj, Kind, Label, Measurer, Object, Pt,
     Rect, RichText, Route, Style, Table, connector,
@@ -12,7 +14,9 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 mod batch;
+mod check;
 mod edit;
+mod frame;
 mod icons;
 mod render;
 mod richtext;
@@ -48,6 +52,36 @@ fn head_scale_prop() -> Value {
     json!({"type": "number", "minimum": 0.5, "maximum": 4, "description": "Connector arrowhead size factor (1 = usual size, 0.5 to 4); applies to both ends."})
 }
 
+/// Schema of `from_side` / `to_side`: the side of the object a connector attaches to.
+fn side_prop(end: &str) -> Value {
+    json!({"type": "string", "enum": ["top", "bottom", "left", "right", "auto"], "description": format!("Side of the object the {end} of the connector attaches to: the middle of that side, the arrow leaving (or arriving) perpendicular to it. Use it so that an arrow does not leave a diamond by a corner or cross the label of an icon. \"auto\" (the default) chooses the side facing the other end; on update_object it also clears a side set before. Ignored when that end is not attached to an object.")})
+}
+
+/// Schema of `label_pos`: where the label sits along a connector.
+fn label_pos_prop() -> Value {
+    json!({"type": "number", "minimum": 0, "maximum": 1, "description": "Position of the connector's label along its path: 0 at the start, 1 at the end (default 0.5, the middle). Moves a label off a bend, a junction or another label; it follows the arrow when objects move."})
+}
+
+/// Schema of `label_offset`: distance between a connector and its label.
+fn label_offset_prop() -> Value {
+    json!({"type": "number", "minimum": -1000, "maximum": 1000, "description": "Distance (units, default 0) between the connector's path and its label, perpendicular to the path, to put the label beside the line instead of on it. Positive: to the right of the direction of travel (below a path going right, left of a path going down); negative: to the left."})
+}
+
+/// Schema of `valign`: vertical placement of the text of a shape.
+fn valign_prop() -> Value {
+    json!({"type": "string", "enum": ["top", "middle", "bottom"], "description": "Shapes only: vertical placement of the text in the shape (default middle). With align \"left\" and valign \"top\", a rect carries its own title at the top left: a titled frame in one object (give it a transparent fill and send it to the back)."})
+}
+
+/// Schema of `fit`: width computed from the text.
+fn fit_prop() -> Value {
+    json!({"type": "string", "enum": ["width"], "description": "Shapes only. \"width\": the smallest width in which the text fits in `max_lines` lines without splitting a word (same approximate font metrics as the height fit, in the usable text area of the geometry). With `w` given, the width is never smaller than `w`; without `w` it is the computed one. Ignored for geom text (already fitted)."})
+}
+
+/// Schema of `max_lines`: lines allowed by `fit: "width"`.
+fn max_lines_prop() -> Value {
+    json!({"type": "integer", "minimum": 1, "maximum": 20, "description": "With fit \"width\": number of lines the text may take (default 2). Explicit line breaks of the text count."})
+}
+
 fn page_prop() -> Value {
     json!({"description": "Page: number (from 1) or name. Defaults to the first.", "oneOf": [{"type": "integer"}, {"type": "string"}]})
 }
@@ -66,8 +100,9 @@ fn pos_props(mut p: Value) -> Value {
 pub fn list() -> Vec<Value> {
     let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
     let mut tools = vec![
-        json!({"name": "create_board", "description": "Creates an empty board (.inkboard file).",
-            "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
+        json!({"name": "create_board", "description": "Creates an empty board (.inkboard file). If the file already exists it fails (use the existing board, or pass `overwrite: true` to replace it with a fresh empty board).",
+            "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"},
+                "overwrite": {"type": "boolean", "description": "Replace an existing file with a fresh empty board (default false: an existing file is an error)."}}), &["path"])}),
         json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
             "inputSchema": obj(json!({}), &[])}),
         json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files. `detail: \"full\"` adds each object's style, font, stacking order `z`, group, lock, rotation and (connectors) route and arrow; tables also list their `cells`, and SVG images the `colors` found in the file (see `recolor` of update_object).",
@@ -77,18 +112,27 @@ pub fn list() -> Vec<Value> {
             "inputSchema": obj(json!({"path": path_prop()}), &[])}),
         json!({"name": "add_image", "description": "Adds an image (PNG, JPEG, GIF, WebP or SVG, 15 MiB at most) from a file (`source`, under the allowed root) or from base64 data (`data_base64`). The natural size is reduced to at most 600; w and/or h override it.",
             "inputSchema": obj(pos_props(json!({"source": {"type": "string", "description": "Path of the image file."}, "data_base64": {"type": "string"}, "w": {"type": "number"}, "h": {"type": "number"}})), &[])}),
-        json!({"name": "add_shape", "description": "Adds a shape with text (rect, ellipse, diamond, triangle, sticky = sticky note, text = free text). Returns the id.",
+        json!({"name": "add_shape", "description": "Adds a shape with text (rect, ellipse, diamond, triangle, sticky = sticky note, text = free text). Returns the id. The shape grows in height to hold its text; `warnings` says when it did, and when a word is wider than the text area (with the width to give). `fit: \"width\"` computes the width instead.",
             "inputSchema": obj(pos_props(json!({
                 "geom": {"type": "string", "enum": ["rect", "ellipse", "diamond", "triangle", "sticky", "text"]},
                 "text": {"type": "string"}, "markdown": richtext::markdown_prop("`text`"), "w": {"type": "number"}, "h": {"type": "number"},
-                "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "fill": color.clone(), "stroke": color.clone(), "shadow": shadow_prop()})), &["geom"])}),
+                "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "fill": color.clone(), "stroke": color.clone(), "shadow": shadow_prop(),
+                "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (default center; left for geom text)."}, "valign": valign_prop(),
+                "fit": fit_prop(), "max_lines": max_lines_prop()})), &["geom"])}),
         json!({"name": "add_connector", "description": "Connects two objects with an arrow that follows them when they move (ids returned by add_shape or describe_board).",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "from": {"type": "string"}, "to": {"type": "string"},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"]},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Arrowheads (default: end)."},
                 "head_start": head_prop("start"), "head_end": head_prop("end"),
                 "head_scale": head_scale_prop(),
-                "label": {"type": "string"}, "markdown": richtext::markdown_prop("`label`"), "stroke": color.clone()}), &["from", "to"])}),
+                "from_side": side_prop("start"), "to_side": side_prop("end"),
+                "label_pos": label_pos_prop(), "label_offset": label_offset_prop(),
+                "label": {"type": "string", "description": "Text of the arrow's label."},
+                "text": {"type": "string", "description": "Synonym of `label` (the name update_object uses); if both are given they must be equal."},
+                "markdown": richtext::markdown_prop("`label`"), "stroke": color.clone(),
+                "stroke_width": {"type": "number", "minimum": 0, "maximum": 100, "description": "Line width (default 2)."},
+                "dash": {"type": "string", "enum": ["solid", "dashed", "dotted"], "description": "Line style (default solid): dashed for a tunnel, a VPN, an optional flow."},
+                "font_size": {"type": "number", "minimum": 4, "maximum": 400, "description": "Font size of the label (default 16)."}}), &["from", "to"])}),
         json!({"name": "add_table", "description": "Adds a table of cells; `rows` is a list of rows (lists of texts). The first row is the header.",
             "inputSchema": obj(pos_props(json!({"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
                 "markdown": richtext::markdown_prop("every cell")})), &["rows"])}),
@@ -99,8 +143,10 @@ pub fn list() -> Vec<Value> {
         json!({"name": "import_mermaid", "description": "Adds a Mermaid diagram (flowchart/graph, stateDiagram, sequenceDiagram, classDiagram, erDiagram) with automatic layout. Returns the ids created.",
             "inputSchema": obj(pos_props(json!({"mermaid": {"type": "string"}, "new_page": {"type": "boolean", "description": "Create a new page for the diagram."}})), &["mermaid"])}),
         json!({"name": "update_object", "description": "Modifies an object: text, position (top-left corner), size (shapes), colors, line style, font, lock, rotation; a connector's route, arrowheads and ends; one table cell. \
-            Everything is validated before anything is applied (an error changes nothing); a parameter that does not suit the object's type is ignored and listed in `avertissements`. Locked objects can still be modified here.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string", "description": "New text of a shape or connector label; with `cell`, the new text of that table cell."},
+            Everything is validated before anything is applied (an error changes nothing); a parameter that does not suit the object's type is ignored and listed in `warnings` (also given as `avertissements`, deprecated). Locked objects can still be modified here.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"}, "text": {"type": "string", "description": "New text of a shape or connector label; with `cell`, the new text of that table cell. `label` is accepted as a synonym (the name add_connector uses); if both are given they must be equal."},
+                "label": {"type": "string", "description": "Synonym of `text`."},
+                "fit": fit_prop(), "max_lines": max_lines_prop(),
                 "markdown": richtext::markdown_prop("`text`"), "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
                 "fill": color.clone(), "stroke": color.clone(),
                 "stroke_width": {"type": "number", "minimum": 0, "maximum": 100, "description": "Outline width (0: no outline)."},
@@ -109,12 +155,15 @@ pub fn list() -> Vec<Value> {
                 "shadow": shadow_prop(),
                 "font_size": {"type": "number", "minimum": 4, "maximum": 400}, "font_family": {"type": "string", "enum": ["sans", "hand", "serif", "mono"]},
                 "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Text alignment (shapes and connector labels)."},
+                "valign": valign_prop(),
                 "locked": {"type": "boolean", "description": "Lock or unlock the object in the application."},
                 "rotation": {"type": "number", "minimum": -360, "maximum": 360, "description": "Absolute angle in degrees (shapes and images; 0 resets)."},
                 "route": {"type": "string", "enum": ["straight", "elbow", "curve"], "description": "Connector only."},
                 "arrow": {"type": "string", "enum": ["end", "start", "both", "none"], "description": "Connector only: arrowheads."},
                 "head_start": head_prop("start"), "head_end": head_prop("end"),
                 "head_scale": head_scale_prop(),
+                "from_side": side_prop("start"), "to_side": side_prop("end"),
+                "label_pos": label_pos_prop(), "label_offset": label_offset_prop(),
                 "from": {"type": "string", "description": "Connector only: id of the object to connect the start to (shape, table or image)."},
                 "to": {"type": "string", "description": "Connector only: id of the object to connect the end to."},
                 "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2, "description": "Table only: [row, column] (from 0) of the cell whose text `text` replaces."},
@@ -123,8 +172,11 @@ pub fn list() -> Vec<Value> {
         json!({"name": "delete_object", "description": "Deletes an object, or several with `ids` (connectors that were bound to them remain, detached). Give `id` or `ids`.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"},
                 "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Several objects to delete at once (result: `deleted` is then a list)."}}), &[])}),
-        json!({"name": "auto_layout", "description": "Rearranges the shapes joined by connectors into a layered graph.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."}}), &[])}),
+        json!({"name": "auto_layout", "description": "Rearranges the shapes, images and tables joined by connectors into a layered graph (the top-left corner of what is laid out stays).             An icon and its label (a group) move as one node. A rect that holds other laid-out nodes is a frame: its content is laid out on its own, then the frame is re-fitted around it (padding 40, room for its title) and takes part as one block, like a Mermaid subgraph.             `ids` limits the layout to these objects and the connectors between them. Returns `nodes` (groups count once) and `frames`.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."},
+                "gap_x": {"type": "number", "minimum": 0, "maximum": 10000, "description": "Horizontal gap: between layers for LR / RL, between nodes of a layer for TB / BT (default 84 between layers, 48 between nodes)."},
+                "gap_y": {"type": "number", "minimum": 0, "maximum": 10000, "description": "Vertical gap: between layers for TB / BT, between nodes of a layer for LR / RL (same defaults)."},
+                "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Only lay out these objects (default: the whole page); the other members of their groups come along."}}), &[])}),
         json!({"name": "add_page", "description": "Adds a page. Returns its number.",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
         json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard. Missing folders of `output` are created (under the allowed root). For a PNG, `width` fixes the width in pixels (the same width for every diagram, whatever its size) or `scale` the pixels per board unit (default 2).",
@@ -139,21 +191,25 @@ pub fn list() -> Vec<Value> {
 /* ------------------------------------------------- tools of the submodules */
 
 fn ext_specs() -> Vec<Value> {
-    [icons::specs(), render::specs(), edit::specs(), batch::specs(), richtext::specs()].concat()
+    [icons::specs(), render::specs(), check::specs(), edit::specs(), frame::specs(), batch::specs(), richtext::specs()].concat()
 }
 
 fn ext_is_tool(name: &str) -> bool {
-    [icons::NAMES, render::NAMES, edit::NAMES, batch::NAMES, richtext::NAMES].iter().any(|l| l.contains(&name))
+    [icons::NAMES, render::NAMES, check::NAMES, edit::NAMES, frame::NAMES, batch::NAMES, richtext::NAMES].iter().any(|l| l.contains(&name))
 }
 
 fn ext_is_read_only(name: &str) -> bool {
-    [icons::READ_ONLY, render::READ_ONLY, edit::READ_ONLY, batch::READ_ONLY, richtext::READ_ONLY].iter().any(|l| l.contains(&name))
+    [icons::READ_ONLY, render::READ_ONLY, check::READ_ONLY, edit::READ_ONLY, frame::READ_ONLY, batch::READ_ONLY, richtext::READ_ONLY]
+        .iter()
+        .any(|l| l.contains(&name))
 }
 
 fn ext_apply(ed: &mut Editor, name: &str, a: &Value) -> Option<Res<Value>> {
     icons::apply(ed, name, a)
         .or_else(|| render::apply(ed, name, a))
+        .or_else(|| check::apply(ed, name, a))
         .or_else(|| edit::apply(ed, name, a))
+        .or_else(|| frame::apply(ed, name, a))
         .or_else(|| batch::apply(ed, name, a))
         .or_else(|| richtext::apply(ed, name, a))
 }
@@ -169,6 +225,83 @@ fn os<'a>(a: &'a Value, k: &str) -> Option<&'a str> {
 fn of(a: &Value, k: &str) -> Option<f64> {
     a.get(k).and_then(Value::as_f64)
 }
+/// Text of a connector label, written `label` (`add_connector`) or `text` (`update_object`): both tools accept both names.
+fn label_arg(a: &Value) -> Res<Option<&str>> {
+    match (os(a, "label"), os(a, "text")) {
+        (Some(l), Some(t)) if l != t => Err(format!("\"label\" and \"text\" are the same parameter but differ (\"{l}\" / \"{t}\"): give only one")),
+        (l, t) => Ok(l.or(t)),
+    }
+}
+
+/// `fit: "width"` with its `max_lines` (default 2): the number of lines allowed, `None` without `fit`.
+fn fit_arg(a: &Value) -> Res<Option<usize>> {
+    let max_lines = a.get("max_lines").is_some_and(|v| !v.is_null());
+    match a.get("fit").filter(|v| !v.is_null()) {
+        None if max_lines => Err("\"max_lines\" only applies with fit: \"width\"".into()),
+        None => Ok(None),
+        Some(v) if v.as_str() == Some("width") => Ok(Some(usize::try_from(edit::int_arg(a, "max_lines", 1, 20, 2)?).unwrap_or(2))),
+        Some(v) => Err(format!("unknown fit {v} (only \"width\")")),
+    }
+}
+
+/// Frame width whose usable text width (see `BoxObj::label_rect`) is `usable`.
+fn frame_width_for(geom: BoxGeom, usable: f64) -> f64 {
+    match geom {
+        BoxGeom::Rect => usable + 16.0,
+        BoxGeom::Sticky => usable + 28.0,
+        BoxGeom::Ellipse => usable / 0.7,
+        BoxGeom::Diamond => usable / 0.6,
+        BoxGeom::Triangle => usable / 0.5,
+        BoxGeom::Text => usable + 6.0,
+    }
+}
+
+/// Widest word of the text of a box and its width (bold metrics when the text is formatted, to stay on the safe side).
+fn widest_word(b: &BoxObj) -> Option<(String, f64)> {
+    let bold = richtext::has_formatting(&b.label.text);
+    let plain = b.label.text.to_plain();
+    plain.split_whitespace().map(|w| (w.to_owned(), ApproxMeasurer.width(w, b.label.family, b.label.size, bold))).max_by(|p, q| p.1.total_cmp(&q.1))
+}
+
+/// Smallest frame width in which the text of `b` takes at most `max_lines` lines (more only if its explicit line breaks need them)
+/// without splitting a word; `None` for an empty text.
+fn fit_width(b: &BoxObj, max_lines: usize) -> Option<f64> {
+    let (_, word) = widest_word(b)?;
+    let m = ApproxMeasurer;
+    let lines_at = |u: f64| layout_rich(&b.label.text, Some(u), &m, b.label.family, b.label.size).lines.len();
+    let full = layout_rich(&b.label.text, None, &m, b.label.family, b.label.size).width;
+    let mut hi = (full + m.width(" ", b.label.family, b.label.size, false)).ceil().max(word);
+    let target = max_lines.max(lines_at(hi));
+    let mut lo = word;
+    if lines_at(lo) <= target {
+        hi = lo;
+    } else {
+        // `lo` needs more lines than allowed, `hi` does not; the layout is monotonic in the width
+        for _ in 0..40 {
+            let mid = f64::midpoint(lo, hi);
+            if lines_at(mid) <= target {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+    }
+    Some(frame_width_for(b.geom, hi.ceil()).ceil().max(24.0))
+}
+
+/// Warnings once the text of a box is fitted: its height had to grow (from `h_before`), or a word is wider than the text area.
+fn text_warnings(b: &BoxObj, h_before: f64, out: &mut Vec<String>) {
+    if b.frame.h > h_before + 0.5 {
+        out.push(format!("text did not fit: height grew from {} to {}", h_before.round(), b.frame.h.round()));
+    }
+    if b.geom != BoxGeom::Text
+        && let Some((word, w)) = widest_word(b)
+        && w > b.label_rect().w
+    {
+        out.push(format!("word \"{word}\" is wider than the text area: use w ≥ {}", frame_width_for(b.geom, w).ceil()));
+    }
+}
+
 fn ocolor(a: &Value, k: &str) -> Res<Option<Color>> {
     match os(a, k) {
         None => Ok(None),
@@ -356,6 +489,75 @@ fn check_args(a: &Value) -> Res<()> {
 ///
 /// A message for the agent when the tool is unknown or its arguments are invalid; the board is then unchanged.
 pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
+    let mut out = apply_known(ed, name, a)?;
+    let warnings = unknown_arg_warnings(name, a);
+    if !warnings.is_empty()
+        && let Some(m) = out.as_object_mut()
+    {
+        let list = m.entry("warnings").or_insert_with(|| json!([]));
+        if let Some(l) = list.as_array_mut() {
+            l.extend(warnings.into_iter().map(Value::String));
+        }
+    }
+    Ok(out)
+}
+
+/// Arguments every tool call may carry without listing them (`path` and `page` are common; `data_base64` is filled in from `source`).
+const IMPLICIT_ARGS: [&str; 3] = ["path", "page", "data_base64"];
+/// At most this many unknown arguments are reported per call.
+const MAX_UNKNOWN_ARGS: usize = 10;
+
+/// Property names of each tool's input schema.
+fn schema_props() -> &'static std::collections::HashMap<String, Vec<String>> {
+    static PROPS: std::sync::OnceLock<std::collections::HashMap<String, Vec<String>>> = std::sync::OnceLock::new();
+    PROPS.get_or_init(|| {
+        list()
+            .iter()
+            .filter_map(|t| {
+                let props = t["inputSchema"]["properties"].as_object()?.keys().cloned().collect();
+                Some((t["name"].as_str()?.to_owned(), props))
+            })
+            .collect()
+    })
+}
+
+/// Levenshtein distance between two short names.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = std::mem::replace(&mut row[0], i + 1);
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
+
+/// A `warnings` entry for each argument of the call that is not a property of the tool's schema (the call runs anyway), with the closest
+/// property when it is within an edit distance of 2 or shares a prefix of at least 3 characters.
+fn unknown_arg_warnings(name: &str, a: &Value) -> Vec<String> {
+    let (Some(props), Some(args)) = (schema_props().get(name), a.as_object()) else { return Vec::new() };
+    args.keys()
+        .filter(|k| !props.contains(k) && !IMPLICIT_ARGS.contains(&k.as_str()))
+        .take(MAX_UNKNOWN_ARGS)
+        .map(|k| {
+            let near = props
+                .iter()
+                .map(|p| (if k.len() >= 3 && (p.starts_with(k.as_str()) || k.starts_with(p.as_str()) && p.len() >= 3) { 0 } else { edit_distance(k, p) }, p))
+                .filter(|(d, _)| *d <= 2)
+                .min_by_key(|(d, _)| *d);
+            match near {
+                Some((_, p)) => format!("unknown argument \"{k}\" ignored (did you mean \"{p}\"?)"),
+                None => format!("unknown argument \"{k}\" ignored"),
+            }
+        })
+        .collect()
+}
+
+fn apply_known(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name == "save_board" {
         return Ok(json!({"saved": true}));
     }
@@ -416,9 +618,14 @@ fn apply_checked(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
                 "RL" => Direction::RightLeft,
                 d => return Err(format!("unknown direction \"{d}\" (TB, LR, BT, RL)")),
             };
-            let ids: Vec<Id> = ed.page().objects.iter().map(|o| o.id.clone()).collect();
-            auto_layout(ed, &ids, dir);
-            Ok(json!({"layout": "ok", "objects": ids.len()}))
+            let gaps = (edit::num_arg(a, "gap_x", 0.0, 10_000.0)?, edit::num_arg(a, "gap_y", 0.0, 10_000.0)?);
+            let ids: Vec<Id> = if a.get("ids").is_some_and(|v| !v.is_null()) {
+                edit::ids_arg(ed, a, "ids")?
+            } else {
+                ed.page().objects.iter().map(|o| o.id.clone()).collect()
+            };
+            let r = auto_layout_with(ed, &ids, dir, &LayoutOptions { gap_x: gaps.0, gap_y: gaps.1 });
+            Ok(json!({"layout": "ok", "objects": ids.len(), "nodes": r.nodes, "frames": r.frames}))
         }
         "add_page" => {
             let n = ed.doc.pages.len() + 1;
@@ -469,8 +676,11 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     }
     if name == "create_board" {
         let path = PathBuf::from(s(&a, "path")?);
-        if path.exists() {
-            return Err(format!("{} already exists", path.display()));
+        if path.exists() && !edit::bool_arg(&a, "overwrite")?.unwrap_or(false) {
+            return Err(format!(
+                "{} already exists: use the existing board (describe_board), or pass \"overwrite\": true to replace it with a fresh empty board",
+                path.display()
+            ));
         }
         let doc = Document::new(os(&a, "name").unwrap_or("Board"));
         save(&doc, &path)?;
@@ -800,12 +1010,25 @@ fn add_shape(ed: &mut Editor, a: &Value) -> Res<Value> {
     };
     // as `update_object`: a size of 0 or a huge one would make the guests of a shared board refuse it
     let size = edit::num_arg(a, "font_size", 4.0, 400.0)?.unwrap_or(20.0);
-    let mut label = Label::new(text, size, if geom == BoxGeom::Text { Align::Left } else { Align::Center });
+    let mut label = Label::new(text, size, edit::align_arg(a)?.unwrap_or(if geom == BoxGeom::Text { Align::Left } else { Align::Center }));
+    if let Some(v) = edit::valign_arg(a)? {
+        label.valign = v;
+    }
     let mut warnings = Vec::new();
     label.text = richtext::rich(text, markdown, &mut warnings);
+    let fit_lines = fit_arg(a)?;
     let mut o = Object::new_box(geom, Frame::new(at.x, at.y, of(a, "w").unwrap_or(dw), of(a, "h").unwrap_or(dh)), style, label);
     if let Kind::Box(b) = &mut o.kind {
+        let h0 = b.frame.h;
+        if let Some(n) = fit_lines {
+            if geom == BoxGeom::Text {
+                warnings.push("fit ignored: a free text already fits its content".to_owned());
+            } else if let Some(fw) = fit_width(b, n) {
+                b.frame.w = of(a, "w").map_or(fw, |w| w.max(fw));
+            }
+        }
         b.fit(&ApproxMeasurer);
+        text_warnings(b, h0, &mut warnings);
     }
     let id = ed.insert(o);
     let f = ed.page().get(&id).and_then(Object::frame).ok_or("object not created")?;
@@ -845,14 +1068,34 @@ fn add_connector(ed: &mut Editor, a: &Value) -> Res<Value> {
     if let Some(v) = edit::head_scale_arg(a)? {
         c.set_head_scale(v);
     }
+    for (k, end) in [("from_side", &mut c.start), ("to_side", &mut c.end)] {
+        if let Some(side) = edit::side_arg(a, k)? {
+            end.set_side(side.side());
+        }
+    }
+    let (label_pos, label_offset) = (edit::label_pos_arg(a)?, edit::label_offset_arg(a)?);
     let markdown = richtext::markdown_flag(a)?;
     let mut warnings = Vec::new();
-    if let Some(l) = os(a, "label").filter(|l| !l.is_empty()) {
-        let mut label = Label::new(l, 16.0, Align::Center);
+    let (dash, font_size, width) = (edit::dash_arg(a)?, edit::num_arg(a, "font_size", 4.0, 400.0)?, edit::num_arg(a, "stroke_width", 0.0, 100.0)?);
+    if let Some(l) = label_arg(a)?.filter(|l| !l.is_empty()) {
+        let mut label = Label::new(l, font_size.unwrap_or(16.0), Align::Center);
         label.text = richtext::rich(l, markdown, &mut warnings);
         c.label = Some(label);
+    } else if font_size.is_some() {
+        warnings.push("font_size ignored: this connector has no label".to_owned());
+    } else if label_pos.is_some() || label_offset.is_some() {
+        warnings.push("label_pos and label_offset ignored: this connector has no label".to_owned());
     }
-    let style = Style { stroke: ocolor(a, "stroke")?.unwrap_or(Color::Ink), width: 2.0, ..Style::default() };
+    if c.label.is_some() {
+        c.set_label_pos(label_pos);
+        if let Some(d) = label_offset {
+            c.set_label_offset(d);
+        }
+    }
+    let mut style = Style { stroke: ocolor(a, "stroke")?.unwrap_or(Color::Ink), width: width.unwrap_or(2.0), ..Style::default() };
+    if let Some(d) = dash {
+        style.dash = d;
+    }
     let id = ed.insert(Object::new(Kind::Connector(c), style));
     let mut out = json!({"id": id.0});
     richtext::add_warnings(&mut out, warnings);
@@ -918,7 +1161,13 @@ fn add_code_block(ed: &mut Editor, a: &Value) -> Res<Value> {
     let code = s(a, "code")?;
     let at = origin(ed, a);
     let style = Style { stroke: Color::rgb(0xe6, 0xe6, 0xe6), fill: Some(Color::rgb(0x1e, 0x20, 0x2e)), width: 0.0, roundness: 0.1, ..Style::default() };
-    let label = Label { text: inkboard_core::highlight::highlight(code), family: FontFamily::Mono, size: 18.0, align: Align::Left };
+    let label = Label {
+        text: inkboard_core::highlight::highlight(code),
+        family: FontFamily::Mono,
+        size: 18.0,
+        align: Align::Left,
+        valign: inkboard_core::VAlign::Middle,
+    };
     let mut o = Object::new_box(BoxGeom::Rect, Frame::new(at.x, at.y, 420.0, 120.0), style, label);
     if let Kind::Box(b) = &mut o.kind {
         let lay = b.layout(&ApproxMeasurer);
@@ -968,17 +1217,33 @@ fn import_mermaid(ed: &mut Editor, a: &Value) -> Res<Value> {
 }
 
 fn update_object(ed: &mut Editor, args: &Value) -> Res<Value> {
+    // `label` is a synonym of `text` (the name add_connector uses)
+    let label = label_arg(args)?.map(str::to_owned);
+    let renamed;
+    let args = if os(args, "text").is_none() && label.is_some() {
+        let mut m = args.as_object().cloned().unwrap_or_default();
+        m.insert("text".to_owned(), json!(label));
+        renamed = Value::Object(m);
+        &renamed
+    } else {
+        args
+    };
     let id = find(ed, s(args, "id")?)?.id.clone();
     let (fill, stroke) = (ocolor(args, "fill")?, ocolor(args, "stroke")?);
     let (text, x, y, w, h) = (os(args, "text").map(str::to_owned), of(args, "x"), of(args, "y"), of(args, "w"), of(args, "h"));
     let mut warn: Vec<String> = Vec::new();
     let markdown = richtext::markdown_flag(args)?;
+    let fit_lines = fit_arg(args)?;
+    if fit_lines.is_some() && !matches!(find(ed, &id.0)?.kind, Kind::Box(_)) {
+        warn.push("fit applies to shapes only (ignored)".to_owned());
+    }
     // everything is validated here, before the first change
     let patch = edit::Patch::parse(ed, args, find(ed, &id.0)?)?;
     let mut md_warnings = Vec::new();
     // with `cell`, `text` is the text of that cell (parsed by the patch)
     let rich = text.as_deref().filter(|_| !patch.has_cell()).map(|t| richtext::rich(t, markdown, &mut md_warnings));
     md_warnings.extend(patch.warnings.iter().cloned());
+    let mut height_before = None;
     ed.update(&id, |o| {
         if let Some(f) = fill {
             o.style.fill = Some(f);
@@ -997,7 +1262,11 @@ fn update_object(ed: &mut Editor, args: &Value) -> Res<Value> {
                 if let Some(h) = h {
                     shape.frame.h = h.max(4.0);
                 }
-                shape.fit(&ApproxMeasurer);
+                height_before = Some(shape.frame.h);
+                // with `fit`, the height is fitted once the width is known
+                if fit_lines.is_none() || shape.geom == BoxGeom::Text {
+                    shape.fit(&ApproxMeasurer);
+                }
             }
             Kind::Connector(conn) => {
                 if let Some(t) = &rich {
@@ -1008,6 +1277,17 @@ fn update_object(ed: &mut Editor, args: &Value) -> Res<Value> {
             _ => {}
         }
         patch.apply(o, &mut warn);
+        if let (Kind::Box(shape), Some(h0)) = (&mut o.kind, height_before) {
+            if let Some(n) = fit_lines
+                && shape.geom != BoxGeom::Text
+            {
+                if let Some(fw) = fit_width(shape, n) {
+                    shape.frame.w = w.map_or(fw, |w| w.max(4.0).max(fw));
+                }
+                shape.fit(&ApproxMeasurer);
+            }
+            text_warnings(shape, h0, &mut md_warnings);
+        }
         if x.is_some() || y.is_some() {
             if let Some(f) = o.frame().map(|f| f.aabb()).or_else(|| matches!(o.kind, Kind::Table(_)).then(|| table_rect(o))) {
                 o.translate(Pt::new(x.map_or(0.0, |x| x - f.x), y.map_or(0.0, |y| y - f.y)));
@@ -1016,8 +1296,10 @@ fn update_object(ed: &mut Editor, args: &Value) -> Res<Value> {
             }
         }
     });
-    let mut out = json!({"id": id.0, "avertissements": warn});
-    richtext::add_warnings(&mut out, md_warnings);
+    // `warnings` holds every warning; `avertissements` (deprecated, kept for existing clients) only the ignored parameters
+    let all: Vec<String> = warn.iter().cloned().chain(md_warnings).collect();
+    let mut out = json!({"id": id.0, "warnings": [], "avertissements": warn});
+    richtext::add_warnings(&mut out, all);
     Ok(out)
 }
 

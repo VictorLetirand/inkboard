@@ -11,8 +11,8 @@ use flate2::read::DeflateDecoder;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
 use inkboard_core::text::Measurer;
 use inkboard_core::{
-    Align, Anchor, Arrowhead, Asset, AssetId, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, HeadExt, Id, ImageObj, Kind,
-    Label, Object, Page, Pattern, Pt, Rect, RichText, Route, Span, SpanStyle, Style, num,
+    Align, Anchor, Arrowhead, Asset, AssetId, AttachSide, BgPreset, BoxGeom, BoxObj, Color, Connector, Dash, Document, End, FontFamily, Frame, HeadExt, Id,
+    ImageObj, Kind, Label, Object, Page, Pattern, Pt, Rect, RichText, Route, Span, SpanStyle, Style, VAlign, num,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
@@ -106,6 +106,33 @@ fn font_name(f: FontFamily) -> &'static str {
     }
 }
 
+/// `verticalAlign` of the text of a shape.
+fn valign_style(v: VAlign) -> &'static str {
+    match v {
+        VAlign::Top => "verticalAlign=top;",
+        VAlign::Middle => "verticalAlign=middle;",
+        VAlign::Bottom => "verticalAlign=bottom;",
+    }
+}
+
+/// Point of the box of a side, as draw.io writes it (`exitX`/`exitY`, `entryX`/`entryY`: fractions of the width and height).
+fn side_fractions(side: AttachSide) -> (f64, f64) {
+    match side {
+        AttachSide::Top => (0.5, 0.0),
+        AttachSide::Bottom => (0.5, 1.0),
+        AttachSide::Left => (0.0, 0.5),
+        AttachSide::Right => (1.0, 0.5),
+    }
+}
+
+/// The side whose middle is the point `(fx, fy)` of the box, if it is one.
+fn side_of_fractions(fx: f64, fy: f64) -> Option<AttachSide> {
+    [AttachSide::Top, AttachSide::Bottom, AttachSide::Left, AttachSide::Right].into_iter().find(|s| {
+        let (x, y) = side_fractions(*s);
+        (x - fx).abs() < 1e-6 && (y - fy).abs() < 1e-6
+    })
+}
+
 fn align_name(a: Align) -> &'static str {
     match a {
         Align::Left => "left",
@@ -152,7 +179,7 @@ fn box_style(bx: &BoxObj, st: &Style) -> String {
         font_name(l.family),
         l.size,
         align_name(l.align),
-        if bx.geom == BoxGeom::Text { "" } else { "verticalAlign=middle;" },
+        if bx.geom == BoxGeom::Text { "" } else { valign_style(l.valign) },
         shadow_style(bx.geom != BoxGeom::Sticky && st.shadow),
     )
 }
@@ -181,14 +208,27 @@ fn connector_cell(page: &Page, c: &Connector, st: &Style, id: &str, (ox, oy): (f
         let _ = write!(style, "startSize={size};endSize={size};");
     }
     let mut attrs = String::new();
-    let mut geom = String::from("<mxGeometry relative=\"1\" as=\"geometry\">");
+    // the position of the label: `x` runs from -1 (start) to 1 (end) along the edge, `y` is the distance beside it (positive: to the right of the direction)
+    let mut geom = if c.label_pos.is_some() || c.label_offset != 0.0 {
+        format!(
+            "<mxGeometry x=\"{}\" y=\"{}\" relative=\"1\" as=\"geometry\">",
+            round2(c.label_pos.map_or(0.0, |p| p.mul_add(2.0, -1.0))),
+            round2(c.label_offset)
+        )
+    } else {
+        String::from("<mxGeometry relative=\"1\" as=\"geometry\">")
+    };
     for (e, tag, name) in [(&c.start, "source", "sourcePoint"), (&c.end, "target", "targetPoint")] {
         match e {
-            End::Bound { target, anchor } => {
+            End::Bound { target, anchor, side } => {
                 let _ = write!(attrs, " {tag}=\"{}\"", cell_id(target));
-                if let Anchor::Frac { fx, fy } = anchor {
-                    let p = if tag == "source" { "exit" } else { "entry" };
-                    let _ = write!(style, "{p}X={};{p}Y={};", round2(*fx), round2(*fy));
+                let p = if tag == "source" { "exit" } else { "entry" };
+                // a side is the middle of that side; it wins over a fractional anchor
+                if let Some((fx, fy)) = side.map(side_fractions).or(match anchor {
+                    Anchor::Frac { fx, fy } => Some((*fx, *fy)),
+                    Anchor::Auto => None,
+                }) {
+                    let _ = write!(style, "{p}X={};{p}Y={};", round2(fx), round2(fy));
                 }
             }
             End::Free { .. } => {
@@ -315,6 +355,8 @@ struct Geo {
     y: f64,
     w: f64,
     h: f64,
+    /// `relative="1"`: for an edge, `x` and `y` place its label.
+    relative: bool,
     source_pt: Option<Pt>,
     target_pt: Option<Pt>,
     points: Vec<Pt>,
@@ -356,7 +398,8 @@ fn read_cell(cell: &Node, wrapper: Option<&Node>) -> Cell {
     let src = wrapper.unwrap_or(cell);
     let (style, names) = parse_style(cell.attr("style").unwrap_or(""));
     let geo = cell.child("mxGeometry").map(|g| {
-        let mut geo = Geo { x: num(g, "x"), y: num(g, "y"), w: num(g, "width"), h: num(g, "height"), ..Geo::default() };
+        let mut geo =
+            Geo { x: num(g, "x"), y: num(g, "y"), w: num(g, "width"), h: num(g, "height"), relative: g.attr("relative") == Some("1"), ..Geo::default() };
         for c in &g.children {
             let p = || Pt::new(num(c, "x"), num(c, "y"));
             match (c.name.as_str(), c.attr("as")) {
@@ -603,6 +646,7 @@ fn label_for(c: &Cell, default_align: Align) -> Label {
             Some("center") => Align::Center,
             _ => default_align,
         },
+        valign: VAlign::Middle,
     }
 }
 
@@ -811,8 +855,12 @@ impl Builder<'_> {
         }
         let mut label = label_for(c, Align::Center);
         let valign = s.get("verticalAlign").map_or("middle", String::as_str);
-        let separate = (!label.text.is_empty() && (valign == "top" || valign == "bottom") && r.h >= 50.0)
-            .then(|| self.edge_label(&mut label, r, valign == "top", style.stroke));
+        let wants_edge = !label.text.is_empty() && (valign == "top" || valign == "bottom") && r.h >= 50.0;
+        // a plain rectangle (a frame, a container) carries its own title at the top or the bottom; other shapes get a separate text along the edge
+        if wants_edge && geom == BoxGeom::Rect {
+            label.valign = if valign == "top" { VAlign::Top } else { VAlign::Bottom };
+        }
+        let separate = (wants_edge && geom != BoxGeom::Rect).then(|| self.edge_label(&mut label, r, valign == "top", style.stroke));
         let obj = Object::new_box(geom, frame, style, label);
         let id = obj.id.clone();
         out.push(obj);
@@ -827,12 +875,15 @@ impl Builder<'_> {
             if let Some(t) = cell_id.as_ref().and_then(|i| ids.get(i)) {
                 let fx = s.get(ex).and_then(|v| v.parse::<f64>().ok());
                 let fy = s.get(ey).and_then(|v| v.parse::<f64>().ok());
+                // the middle of a side is a side (the route leaves perpendicular to it); any other point stays a fraction of the box
+                let side = fx.zip(fy).and_then(|(x, y)| side_of_fractions(x, y));
                 return Some(End::Bound {
                     target: t.clone(),
-                    anchor: match (fx, fy) {
-                        (Some(fx), Some(fy)) => Anchor::Frac { fx, fy },
+                    anchor: match (fx, fy, side) {
+                        (Some(fx), Some(fy), None) => Anchor::Frac { fx, fy },
                         _ => Anchor::Auto,
                     },
+                    side,
                 });
             }
             pt.map(|p| End::free(p + *origin))
@@ -888,6 +939,13 @@ impl Builder<'_> {
         let label = label_for(c, Align::Center);
         if !label.text.is_empty() {
             conn.label = Some(label);
+            // where draw.io put the label: `x` from -1 (start) to 1 (end) along the edge, `y` beside it
+            if g.relative {
+                if g.x != 0.0 {
+                    conn.set_label_pos(Some(f64::midpoint(g.x, 1.0)));
+                }
+                conn.set_label_offset(g.y);
+            }
         }
         out.push(Object::new(Kind::Connector(conn), Style { fill: None, ..st }));
     }
@@ -1225,6 +1283,78 @@ mod tests {
         let r = import(src, "x", &ApproxMeasurer).unwrap();
         let scales: Vec<f32> = r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some(c.head_scale) } else { None }).collect();
         assert_eq!(scales, [0.5, 4.0]);
+    }
+
+    #[test]
+    fn an_attachment_side_goes_through_exit_and_entry_and_comes_back() {
+        let rect = |x: f64, y: f64| Object::new_box(BoxGeom::Rect, Frame::new(x, y, 100.0, 60.0), Style::default(), Label::default());
+        let (a, b) = (rect(0.0, 0.0), rect(400.0, 200.0));
+        let mut sided = Connector::new(End::bound(a.id.clone()), End::bound(b.id.clone()));
+        sided.start.set_side(Some(AttachSide::Bottom));
+        sided.end.set_side(Some(AttachSide::Left));
+        let auto = Connector::new(End::bound(a.id.clone()), End::bound(b.id.clone()));
+        let mut d = Document::default();
+        d.pages[0].objects = vec![a, b, Object::new(Kind::Connector(sided), Style::default()), Object::new(Kind::Connector(auto), Style::default())];
+        let xml = export(&d, &ApproxMeasurer);
+        assert_eq!(xml.matches("exitX=0.5;exitY=1;").count(), 1, "bottom = (0.5, 1)");
+        assert_eq!(xml.matches("entryX=0;entryY=0.5;").count(), 1, "left = (0, 0.5)");
+        assert_eq!(xml.matches("exitX").count(), 1, "an automatic end writes nothing");
+        let r = import(&xml, "x", &ApproxMeasurer).unwrap();
+        let sides: Vec<(Option<AttachSide>, Option<AttachSide>)> =
+            r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some((c.start.side(), c.end.side())) } else { None }).collect();
+        assert_eq!(sides, [(Some(AttachSide::Bottom), Some(AttachSide::Left)), (None, None)]);
+        // a point that is not the middle of a side stays a fraction of the box
+        let src = r##"<mxfile><diagram name="P"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+ <mxCell id="a" value="A" style="rounded=0;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="80" height="40" as="geometry"/></mxCell>
+ <mxCell id="b" value="B" style="rounded=0;" vertex="1" parent="1"><mxGeometry x="200" y="0" width="80" height="40" as="geometry"/></mxCell>
+ <mxCell id="e" style="exitX=1;exitY=0.25;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"/></mxCell>
+ </root></mxGraphModel></diagram></mxfile>"##;
+        let r = import(src, "x", &ApproxMeasurer).unwrap();
+        let c = r.doc.pages[0].objects.iter().find_map(|o| if let Kind::Connector(c) = &o.kind { Some(c) } else { None }).expect("connector");
+        assert!(matches!(c.start, End::Bound { anchor: Anchor::Frac { fx, fy }, side: None, .. } if (fx - 1.0).abs() < 1e-9 && (fy - 0.25).abs() < 1e-9));
+        assert_eq!((c.end.side(), matches!(c.end, End::Bound { anchor: Anchor::Auto, .. })), (Some(AttachSide::Left), true));
+    }
+
+    #[test]
+    fn the_label_position_goes_through_the_edge_geometry_and_comes_back() {
+        let mut c = Connector::straight(Pt::new(0.0, 0.0), Pt::new(200.0, 0.0));
+        c.label = Some(Label::new("yes", 14.0, Align::Center));
+        c.set_label_pos(Some(0.25));
+        c.set_label_offset(-14.0);
+        let mut plain = Connector::straight(Pt::new(0.0, 100.0), Pt::new(200.0, 100.0));
+        plain.label = Some(Label::new("no", 14.0, Align::Center));
+        let mut d = Document::default();
+        d.pages[0].objects = vec![Object::new(Kind::Connector(c), Style::default()), Object::new(Kind::Connector(plain), Style::default())];
+        let xml = export(&d, &ApproxMeasurer);
+        assert_eq!(xml.matches("<mxGeometry x=\"-0.5\" y=\"-14\" relative=\"1\"").count(), 1, "0.25 along is -0.5 on draw.io's -1..1 scale");
+        assert_eq!(xml.matches("<mxGeometry relative=\"1\"").count(), 1, "a label in the middle writes nothing");
+        let r = import(&xml, "x", &ApproxMeasurer).unwrap();
+        let got: Vec<(Option<f64>, f64)> =
+            r.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Connector(c) = &o.kind { Some((c.label_pos, c.label_offset)) } else { None }).collect();
+        assert_eq!(got, [(Some(0.25), -14.0), (None, 0.0)]);
+    }
+
+    #[test]
+    fn a_vertical_alignment_goes_through_vertical_align_and_a_titled_frame_stays_one_object() {
+        let mut label = Label::new("Zone", 20.0, Align::Left);
+        label.valign = VAlign::Top;
+        let framed = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 300.0, 200.0), Style::default(), label.clone());
+        label.valign = VAlign::Bottom;
+        let bottom = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 300.0, 300.0, 200.0), Style::default(), label);
+        let centered = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 600.0, 300.0, 200.0), Style::default(), Label::new("C", 20.0, Align::Center));
+        let mut d = Document::default();
+        d.pages[0].objects = vec![framed, bottom, centered];
+        let xml = export(&d, &ApproxMeasurer);
+        assert_eq!(
+            (xml.matches("verticalAlign=top;").count(), xml.matches("verticalAlign=bottom;").count(), xml.matches("verticalAlign=middle;").count()),
+            (1, 1, 1)
+        );
+        let r = import(&xml, "x", &ApproxMeasurer).unwrap();
+        let p = &r.doc.pages[0];
+        assert_eq!(p.objects.len(), 3, "the title stays in its frame");
+        let got: Vec<(VAlign, Align)> =
+            p.objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some((b.label.valign, b.label.align)) } else { None }).collect();
+        assert_eq!(got, [(VAlign::Top, Align::Left), (VAlign::Bottom, Align::Left), (VAlign::Middle, Align::Center)]);
     }
 
     #[test]

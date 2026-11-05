@@ -7,8 +7,8 @@ use super::{Res, find, kind_name, obj, os, page_prop, path_prop, richtext, s, su
 use inkboard_core::editor::{AlignMode, Axis, Order};
 use inkboard_core::num;
 use inkboard_core::{
-    Align, ApproxMeasurer, Arrowhead, Color, Connector, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt, Rect,
-    RichText, Route,
+    Align, ApproxMeasurer, Arrowhead, AttachSide, Color, Connector, Dash, Document, Editor, FontFamily, HeadExt, Id, Kind, Label, Measurer, Object, Page, Pt,
+    Rect, RichText, Route, VAlign,
 };
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -26,6 +26,7 @@ const MAX_COORD: f64 = 1_000_000.0;
 const DASHES: [(&str, Dash); 3] = [("solid", Dash::Solid), ("dashed", Dash::Dashed), ("dotted", Dash::Dotted)];
 const FAMILIES: [(&str, FontFamily); 4] = [("sans", FontFamily::Sans), ("hand", FontFamily::Hand), ("serif", FontFamily::Serif), ("mono", FontFamily::Mono)];
 const ALIGNS: [(&str, Align); 3] = [("left", Align::Left), ("center", Align::Center), ("right", Align::Right)];
+const VALIGNS: [(&str, VAlign); 3] = [("top", VAlign::Top), ("middle", VAlign::Middle), ("bottom", VAlign::Bottom)];
 const ROUTES: [(&str, Route); 3] = [("straight", Route::Straight), ("elbow", Route::Elbow), ("curve", Route::Curve)];
 const ARROWS: [(&str, (Arrowhead, Arrowhead)); 4] = [
     ("end", (Arrowhead::None, Arrowhead::Arrow)),
@@ -76,7 +77,7 @@ pub(super) fn head_arg(a: &Value, k: &str) -> Res<Option<HeadKind>> {
 }
 
 const TYPES: [&str; 11] = ["rect", "ellipse", "diamond", "triangle", "sticky", "text", "connector", "table", "image", "formula", "pen"];
-const ACTIONS: [&str; 16] = [
+const ACTIONS: [&str; 17] = [
     "align_left",
     "align_center_x",
     "align_right",
@@ -85,6 +86,7 @@ const ACTIONS: [&str; 16] = [
     "align_bottom",
     "distribute_horizontal",
     "distribute_vertical",
+    "grid",
     "bring_to_front",
     "bring_forward",
     "send_backward",
@@ -132,6 +134,54 @@ pub(super) fn num_arg(a: &Value, k: &str, min: f64, max: f64) -> Res<Option<f64>
     }
 }
 
+/// Largest `label_offset` the tools accept (units).
+const LABEL_OFFSET_MAX: f64 = Connector::LABEL_OFFSET_MAX;
+
+/// What a side parameter asks for: a side, or `auto` (back to the automatic side).
+#[derive(Clone, Copy)]
+pub(super) enum SideArg {
+    Auto,
+    Side(AttachSide),
+}
+
+impl SideArg {
+    pub(super) fn side(self) -> Option<AttachSide> {
+        match self {
+            SideArg::Auto => None,
+            SideArg::Side(s) => Some(s),
+        }
+    }
+}
+
+/// A side parameter (`from_side`, `to_side`); `None` when absent.
+pub(super) fn side_arg(a: &Value, k: &str) -> Res<Option<SideArg>> {
+    let Some(name) = opt_str(a, k)? else { return Ok(None) };
+    if name == "auto" {
+        return Ok(Some(SideArg::Auto));
+    }
+    AttachSide::from_name(name).map(|s| Some(SideArg::Side(s))).ok_or_else(|| format!("unknown {k} \"{name}\" (one of: top, bottom, left, right, auto)"))
+}
+
+/// The `label_pos` parameter: where the label of a connector sits along its path (0 start, 1 end).
+pub(super) fn label_pos_arg(a: &Value) -> Res<Option<f64>> {
+    num_arg(a, "label_pos", 0.0, 1.0)
+}
+
+/// The `label_offset` parameter: distance (units) between the path and the label of a connector.
+pub(super) fn label_offset_arg(a: &Value) -> Res<Option<f64>> {
+    num_arg(a, "label_offset", -LABEL_OFFSET_MAX, LABEL_OFFSET_MAX)
+}
+
+/// The `align` parameter: horizontal alignment of the text of a shape.
+pub(super) fn align_arg(a: &Value) -> Res<Option<Align>> {
+    enum_arg(a, "align", &ALIGNS)
+}
+
+/// The `valign` parameter: vertical placement of the text in a shape.
+pub(super) fn valign_arg(a: &Value) -> Res<Option<VAlign>> {
+    enum_arg(a, "valign", &VALIGNS)
+}
+
 /// The `head_scale` parameter: the size factor of the arrowheads, within the range the connector accepts.
 pub(super) fn head_scale_arg(a: &Value) -> Res<Option<f32>> {
     let range = Connector::HEAD_SCALE_RANGE;
@@ -144,8 +194,13 @@ fn enum_arg<T: Copy>(a: &Value, k: &str, table: &[(&str, T)]) -> Res<Option<T>> 
     table.iter().find(|t| t.0 == name).map(|t| Some(t.1)).ok_or_else(|| format!("unknown {k} \"{name}\" (one of: {})", names(table)))
 }
 
+/// The `dash` parameter (`solid`, `dashed`, `dotted`), shared by `update_object` and `add_connector`.
+pub(super) fn dash_arg(a: &Value) -> Res<Option<Dash>> {
+    enum_arg(a, "dash", &DASHES)
+}
+
 /// Integer in `min..=max` (`default` when absent).
-fn int_arg(a: &Value, k: &str, min: u64, max: u64, default: u64) -> Res<u64> {
+pub(super) fn int_arg(a: &Value, k: &str, min: u64, max: u64, default: u64) -> Res<u64> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(default),
         Some(v) => match v.as_u64() {
@@ -156,7 +211,7 @@ fn int_arg(a: &Value, k: &str, min: u64, max: u64, default: u64) -> Res<u64> {
 }
 
 /// List of existing object ids of the current page (1 to `MAX_IDS`, duplicates dropped, order kept).
-fn ids_arg(ed: &Editor, a: &Value, k: &str) -> Res<Vec<Id>> {
+pub(super) fn ids_arg(ed: &Editor, a: &Value, k: &str) -> Res<Vec<Id>> {
     let list = a.get(k).and_then(Value::as_array).ok_or_else(|| format!("missing \"{k}\" parameter (a list of 1 to {MAX_IDS} object ids)"))?;
     if list.is_empty() || list.len() > MAX_IDS {
         return Err(format!("\"{k}\" must contain 1 to {MAX_IDS} ids (got {})", list.len()));
@@ -208,9 +263,17 @@ pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
         map.get_mut("style").and_then(Value::as_object_mut).expect("style").insert("shadow".into(), json!(true));
     }
     let font = |l: &Label| json!({"family": name_of(&FAMILIES, l.family), "size": l.size, "align": name_of(&ALIGNS, l.align)});
+    // the text of a shape also says where it sits vertically, when that is not the middle
+    let box_font = |l: &Label| {
+        let mut f = font(l);
+        if l.valign != VAlign::Middle {
+            f["valign"] = json!(name_of(&VALIGNS, l.valign));
+        }
+        f
+    };
     match &o.kind {
         Kind::Box(b) => {
-            map.insert("font".into(), font(&b.label));
+            map.insert("font".into(), box_font(&b.label));
             if b.frame.angle != 0.0 {
                 map.insert("rotation".into(), json!(degrees(b.frame.angle)));
             }
@@ -228,6 +291,17 @@ pub(super) fn full(doc: &Document, z: usize, o: &Object) -> Value {
                 map.insert("font".into(), font(l));
             }
             map.insert("route".into(), json!(name_of(&ROUTES, c.route)));
+            for (key, side) in [("from_side", c.start.side()), ("to_side", c.end.side())] {
+                if let Some(side) = side {
+                    map.insert(key.into(), json!(side.name()));
+                }
+            }
+            if let Some(p) = c.label_pos {
+                map.insert("label_pos".into(), json!(r3(p)));
+            }
+            if c.label_offset != 0.0 {
+                map.insert("label_offset".into(), json!(r3(c.label_offset)));
+            }
             let arrow = match (c.has_head_start(), c.has_head_end()) {
                 (false, true) => "end",
                 (true, false) => "start",
@@ -375,6 +449,7 @@ pub(super) struct Patch {
     size: Option<f64>,
     family: Option<FontFamily>,
     align: Option<Align>,
+    valign: Option<VAlign>,
     locked: Option<bool>,
     /// Radians.
     angle: Option<f64>,
@@ -383,6 +458,10 @@ pub(super) struct Patch {
     head_start: Option<HeadKind>,
     head_end: Option<HeadKind>,
     head_scale: Option<f32>,
+    from_side: Option<SideArg>,
+    to_side: Option<SideArg>,
+    label_pos: Option<f64>,
+    label_offset: Option<f64>,
     from: Option<Id>,
     to: Option<Id>,
     cell: Option<Cell>,
@@ -408,6 +487,7 @@ impl Patch {
             size: num_arg(a, "font_size", 4.0, 400.0)?,
             family: enum_arg(a, "font_family", &FAMILIES)?,
             align: enum_arg(a, "align", &ALIGNS)?,
+            valign: valign_arg(a)?,
             locked: bool_arg(a, "locked")?,
             angle: num_arg(a, "rotation", -360.0, 360.0)?.map(f64::to_radians),
             route: enum_arg(a, "route", &ROUTES)?,
@@ -415,6 +495,10 @@ impl Patch {
             head_start: head_arg(a, "head_start")?,
             head_end: head_arg(a, "head_end")?,
             head_scale: head_scale_arg(a)?,
+            from_side: side_arg(a, "from_side")?,
+            to_side: side_arg(a, "to_side")?,
+            label_pos: label_pos_arg(a)?,
+            label_offset: label_offset_arg(a)?,
             from: attachable("from")?,
             to: attachable("to")?,
             cell: None,
@@ -495,6 +579,50 @@ impl Patch {
         }
     }
 
+    /// The changes of a connector: route, heads, ends, sides, label position and font.
+    fn apply_connector(&self, c: &mut Connector, warn: &mut Vec<String>) {
+        if let Some(r) = self.route {
+            c.route = r;
+        }
+        self.apply_heads(c);
+        if let Some(v) = self.head_scale {
+            c.set_head_scale(v);
+        }
+        if let Some(id) = &self.from {
+            c.start = inkboard_core::End::bound(id.clone());
+        }
+        if let Some(id) = &self.to {
+            c.end = inkboard_core::End::bound(id.clone());
+        }
+        for (name, side, end) in [("from_side", self.from_side, &mut c.start), ("to_side", self.to_side, &mut c.end)] {
+            let Some(side) = side.map(SideArg::side) else { continue };
+            if matches!(end, inkboard_core::End::Free { .. }) && side.is_some() {
+                warn.push(format!("{name} ignored: this end of the connector is not attached to an object"));
+            } else {
+                end.set_side(side);
+            }
+        }
+        if self.label_pos.is_some() || self.label_offset.is_some() {
+            if c.label.is_some() {
+                if let Some(p) = self.label_pos {
+                    c.set_label_pos(Some(p));
+                }
+                if let Some(d) = self.label_offset {
+                    c.set_label_offset(d);
+                }
+            } else {
+                warn.push("label_pos and label_offset place the label, and this connector has no label (give `text` too)".into());
+            }
+        }
+        match &mut c.label {
+            Some(l) => self.font(l),
+            None if self.has_font() => {
+                warn.push("font_size, font_family and align apply to the label, and this connector has no label (give `text` too)".into());
+            }
+            None => {}
+        }
+    }
+
     pub(super) fn apply(&self, o: &mut Object, warn: &mut Vec<String>) {
         self.apply_style(&mut o.style);
         if let Some(l) = self.locked {
@@ -502,13 +630,18 @@ impl Patch {
         }
         let kind = kind_name(o);
         let present = |ps: &[(&'static str, bool)]| ps.iter().filter(|p| p.1).map(|p| p.0).collect::<Vec<_>>();
-        let font = [("font_size", self.size.is_some()), ("font_family", self.family.is_some()), ("align", self.align.is_some())];
+        let font =
+            [("font_size", self.size.is_some()), ("font_family", self.family.is_some()), ("align", self.align.is_some()), ("valign", self.valign.is_some())];
         let link = [
             ("route", self.route.is_some()),
             ("arrow", self.arrow.is_some()),
             ("head_start", self.head_start.is_some()),
             ("head_end", self.head_end.is_some()),
             ("head_scale", self.head_scale.is_some()),
+            ("from_side", self.from_side.is_some()),
+            ("to_side", self.to_side.is_some()),
+            ("label_pos", self.label_pos.is_some()),
+            ("label_offset", self.label_offset.is_some()),
             ("from", self.from.is_some()),
             ("to", self.to.is_some()),
         ];
@@ -523,6 +656,9 @@ impl Patch {
                 if self.has_font() {
                     self.font(&mut b.label);
                     b.fit(&ApproxMeasurer);
+                }
+                if let Some(v) = self.valign {
+                    b.label.valign = v;
                 }
                 ignored.extend(present(&link));
             }
@@ -553,31 +689,13 @@ impl Patch {
                     let widest = ApproxMeasurer.width(&c.text.to_plain(), FontFamily::Sans, 18.0, true);
                     t.col_w[c.col] = t.col_w[c.col].max((widest + 28.0).ceil());
                 }
-                ignored.extend(present(&[("align", self.align.is_some())]));
+                ignored.extend(present(&[("align", self.align.is_some()), ("valign", self.valign.is_some())]));
                 ignored.extend(present(&rotation));
                 ignored.extend(present(&link));
             }
             Kind::Connector(c) => {
-                if let Some(r) = self.route {
-                    c.route = r;
-                }
-                self.apply_heads(c);
-                if let Some(v) = self.head_scale {
-                    c.set_head_scale(v);
-                }
-                if let Some(id) = &self.from {
-                    c.start = inkboard_core::End::bound(id.clone());
-                }
-                if let Some(id) = &self.to {
-                    c.end = inkboard_core::End::bound(id.clone());
-                }
-                match &mut c.label {
-                    Some(l) => self.font(l),
-                    None if self.has_font() => {
-                        warn.push("font_size, font_family and align apply to the label, and this connector has no label (give `text` too)".into());
-                    }
-                    None => {}
-                }
+                self.apply_connector(c, warn);
+                ignored.extend(present(&[("valign", self.valign.is_some())]));
                 ignored.extend(present(&rotation));
             }
             Kind::Pen(_) => {
@@ -614,7 +732,17 @@ fn delete_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
 }
 
 fn move_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
-    let ids = ids_arg(ed, a, "ids")?;
+    let mut ids = ids_arg(ed, a, "ids")?;
+    // by default a group moves as a whole (an icon and its label); `group: false` moves only the listed objects
+    let listed = ids.len();
+    if bool_arg(a, "group")?.unwrap_or(true) {
+        let page = ed.page();
+        let groups: HashSet<_> = ids.iter().filter_map(|i| page.get(i)).filter_map(|o| o.group.clone()).collect();
+        let known: HashSet<Id> = ids.iter().cloned().collect();
+        let members: Vec<Id> =
+            page.objects.iter().filter(|o| o.group.as_ref().is_some_and(|g| groups.contains(g)) && !known.contains(&o.id)).map(|o| o.id.clone()).collect();
+        ids.extend(members);
+    }
     let [dx, dy, x, y] = ["dx", "dy", "x", "y"].map(|k| num_arg(a, k, -MAX_COORD, MAX_COORD));
     let (dx, dy, x, y) = (dx?, dy?, x?, y?);
     let d = match (dx.is_some() || dy.is_some(), x.is_some() || y.is_some()) {
@@ -628,7 +756,11 @@ fn move_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
         }
     };
     ed.translate(&ids, d);
-    Ok(json!({"moved": ids.len(), "dx": r3(d.x), "dy": r3(d.y)}))
+    let mut out = json!({"moved": ids.len(), "dx": r3(d.x), "dy": r3(d.y)});
+    if ids.len() > listed {
+        out["group_members_added"] = json!(ids.len() - listed);
+    }
+    Ok(out)
 }
 
 fn arrange_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -665,6 +797,7 @@ fn arrange_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
         "align_bottom" => ed.align(&ids, AlignMode::Bottom),
         "distribute_horizontal" => ed.distribute(&ids, Axis::Horizontal),
         "distribute_vertical" => ed.distribute(&ids, Axis::Vertical),
+        "grid" => grid(ed, a, &ids, &mut out)?,
         "bring_to_front" => ed.reorder(&ids, Order::Front),
         "bring_forward" => ed.reorder(&ids, Order::Forward),
         "send_backward" => ed.reorder(&ids, Order::Backward),
@@ -684,6 +817,87 @@ fn arrange_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
         out["skipped_locked"] = json!(locked);
     }
     Ok(out)
+}
+
+/// `arrange_objects` with `action: "grid"`: the objects (a group, such as an icon with its label, counts as one) in the order given, row by row.
+fn grid(ed: &mut Editor, a: &Value, ids: &[Id], out: &mut Value) -> Res<()> {
+    if a.get("columns").is_none_or(Value::is_null) {
+        return Err(format!("grid needs \"columns\" (an integer from 1 to {MAX_IDS})"));
+    }
+    let columns = usize::try_from(int_arg(a, "columns", 1, MAX_IDS as u64, 1)?).map_err(|e| e.to_string())?;
+    let (gap_x, gap_y) = (num_arg(a, "gap_x", 0.0, MAX_COORD)?.unwrap_or(80.0), num_arg(a, "gap_y", 0.0, MAX_COORD)?.unwrap_or(80.0));
+    let fit = match opt_str(a, "cell")?.unwrap_or("max") {
+        "max" => false,
+        "fit" => true,
+        c => {
+            return Err(format!(
+                "unknown cell \"{c}\" (max: every cell as large as the largest object, fit: each column and row as large as its largest object)"
+            ));
+        }
+    };
+    let start = match opt_str(a, "align")?.unwrap_or("center") {
+        "center" => false,
+        "start" => true,
+        c => return Err(format!("unknown align \"{c}\" for a grid (center, start)")),
+    };
+    let origin = match a.get("origin").filter(|v| !v.is_null()) {
+        None => None,
+        Some(o) => {
+            let n = |k: &str| o.get(k).and_then(Value::as_f64).filter(|v| v.abs() <= MAX_COORD).ok_or("\"origin\" needs numeric x and y");
+            Some(Pt::new(n("x")?, n("y")?))
+        }
+    };
+    // items: a group is one (positioned by the box of all its members), in the order of the first id met; connectors and locked objects are left alone
+    let page = ed.page();
+    let mut items: Vec<(Vec<Id>, Rect)> = Vec::new();
+    let (mut seen, mut skipped_locked, mut skipped_connectors) = (HashSet::new(), Vec::new(), Vec::new());
+    for id in ids {
+        let Some(o) = page.get(id) else { continue };
+        if matches!(o.kind, Kind::Connector(_)) {
+            skipped_connectors.push(id.0.clone());
+            continue;
+        }
+        let members = page.expand_groups(std::slice::from_ref(id));
+        if !seen.insert(members[0].clone()) {
+            continue;
+        }
+        if members.iter().filter_map(|m| page.get(m)).any(|m| page.is_locked(m)) {
+            skipped_locked.push(id.0.clone());
+            continue;
+        }
+        let rect = members.iter().filter_map(|m| page.get(m)).map(|m| frame_box(page, m)).reduce(|p, q| p.union(&q)).ok_or("object without a box")?;
+        items.push((members, rect));
+    }
+    if items.is_empty() {
+        return Err("grid needs at least one unlocked object that is not a connector".into());
+    }
+    let union = items.iter().map(|i| i.1).reduce(|p, q| p.union(&q)).unwrap_or_default();
+    let at = origin.unwrap_or(Pt::new(union.x, union.y));
+    let rows = items.len().div_ceil(columns);
+    let (max_w, max_h) = items.iter().fold((0.0f64, 0.0f64), |m, i| (m.0.max(i.1.w), m.1.max(i.1.h)));
+    let col_w: Vec<f64> =
+        (0..columns.min(items.len())).map(|c| if fit { items.iter().skip(c).step_by(columns).map(|i| i.1.w).fold(0.0, f64::max) } else { max_w }).collect();
+    let row_h: Vec<f64> = (0..rows).map(|r| if fit { items[r * columns..].iter().take(columns).map(|i| i.1.h).fold(0.0, f64::max) } else { max_h }).collect();
+    let mut placed = Vec::new();
+    ed.transact(|ed| {
+        for (k, (members, rect)) in items.iter().enumerate() {
+            let (c, r) = (k % columns, k / columns);
+            let cell = Pt::new(at.x + col_w[..c].iter().sum::<f64>() + num::f64_of(c) * gap_x, at.y + row_h[..r].iter().sum::<f64>() + num::f64_of(r) * gap_y);
+            let target = if start { cell } else { Pt::new(cell.x + (col_w[c] - rect.w) / 2.0, cell.y + (row_h[r] - rect.h) / 2.0) };
+            ed.translate(members, Pt::new(target.x - rect.x, target.y - rect.y));
+            placed.push(json!({"id": members[0].0, "x": r3(target.x), "y": r3(target.y)}));
+        }
+    });
+    out["columns"] = json!(columns);
+    out["rows"] = json!(rows);
+    out["placed"] = json!(placed);
+    if !skipped_locked.is_empty() {
+        out["skipped_locked"] = json!(skipped_locked);
+    }
+    if !skipped_connectors.is_empty() {
+        out["skipped_connectors"] = json!(skipped_connectors);
+    }
+    Ok(())
 }
 
 fn manage_pages(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -744,7 +958,7 @@ fn duplicate_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
 
 /// Schemas for `tools/list`.
 pub(super) fn specs() -> Vec<Value> {
-    let ids = |what: &str| json!({"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAX_IDS, "description": format!("Ids of the objects {what} (1 to {MAX_IDS}; ids come from describe_board, find_objects or the add_* tools). Groups are not expanded: list every member.")});
+    let ids = |what: &str| json!({"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAX_IDS, "description": format!("Ids of the objects {what} (1 to {MAX_IDS}; ids come from describe_board, find_objects or the add_* tools). {}", if what == "to move" { "The groups of these objects move whole unless `group` is false." } else { "Groups are not expanded: list every member." })});
     vec![
         json!({"name": "find_objects",
             "description": "Finds objects on a page without reading the whole board: by text, regex, type or area. Filters combine (all must match). `text` is a case-insensitive substring of a shape's text, a connector's label, a table's cells or a formula's LaTeX. `in_region` keeps objects whose bounding box overlaps the rectangle. Returns `count` (all matches), `truncated` (more than `limit`) and `objects` (same summaries as describe_board).",
@@ -755,13 +969,21 @@ pub(super) fn specs() -> Vec<Value> {
                 "in_region": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"}}, "required": ["x", "y", "w", "h"], "description": "Rectangle of the board, same units as x/y/w/h."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Default 50."}}), &[])}),
         json!({"name": "move_objects",
-            "description": "Moves objects together. Either relative (`dx`, `dy`) or absolute (`x`, `y`: new top-left corner of the bounding box of all the objects, as update_object's x/y for one). Connectors bound to moved objects follow. Locked objects move too.",
+            "description": "Moves objects together. Either relative (`dx`, `dy`) or absolute (`x`, `y`: new top-left corner of the bounding box of all the objects, as update_object's x/y for one). By default every member of the groups of the given ids moves too (an icon from add_icon moves with its label; `group_members_added` tells how many were added); `group: false` moves only the listed ids. Connectors bound to moved objects follow. Locked objects move too.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "ids": ids("to move"),
+                "group": {"type": "boolean", "description": "Default true: also move the other members of the groups of `ids`. false: move only the listed objects."},
                 "dx": {"type": "number", "description": "Horizontal offset (right is positive)."}, "dy": {"type": "number", "description": "Vertical offset (down is positive)."},
                 "x": {"type": "number", "description": "New left edge of the group of objects."}, "y": {"type": "number", "description": "New top edge of the group of objects."}}), &["ids"])}),
         json!({"name": "arrange_objects",
-            "description": "Aligns, distributes, stacks, groups or locks objects. align_*: at least 2 unlocked objects, aligned on their common bounding box. distribute_*: at least 3 unlocked objects, equal gaps between the two outermost (an error otherwise; the engine alone would do nothing). Locked objects are skipped by align/distribute and reported in `skipped_locked`. bring_to_front/bring_forward/send_backward/send_to_back change the stacking order (`z` of describe_board detail \"full\"). group (2+ objects, returns `group`), ungroup, lock, unlock.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "ids": ids("to arrange"), "action": {"type": "string", "enum": ACTIONS}}), &["ids", "action"])}),
+            "description": "Aligns, distributes, arranges in a grid, stacks, groups or locks objects. align_*: at least 2 unlocked objects, aligned on their common bounding box. distribute_*: at least 3 unlocked objects, equal gaps between the two outermost (an error otherwise; the engine alone would do nothing). Locked objects are skipped by align/distribute and reported in `skipped_locked`. bring_to_front/bring_forward/send_backward/send_to_back change the stacking order (`z` of describe_board detail \"full\"). group (2+ objects, returns `group`), ungroup, lock, unlock. \
+            grid: lays the objects out in `columns` columns, in the order of `ids`, row by row (an icon and its label move together and count as one; connectors and locked objects are skipped and reported; bound arrows follow). \
+            `gap_x`, `gap_y` (default 80) between cells; `origin` {x, y} is the top-left of the grid (default: top-left of the current box of the objects); `cell` \"max\" (default: every cell as large as the largest object) or \"fit\" (each column as wide and each row as tall as its largest object); `align` \"center\" (default) or \"start\" (top-left) inside the cell. Returns `columns`, `rows` and `placed` (id, x, y of each item).",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "ids": ids("to arrange"), "action": {"type": "string", "enum": ACTIONS},
+                "columns": {"type": "integer", "minimum": 1, "maximum": MAX_IDS, "description": "grid only (required): number of columns."},
+                "gap_x": {"type": "number", "minimum": 0, "description": "grid only: horizontal gap between cells (default 80)."}, "gap_y": {"type": "number", "minimum": 0, "description": "grid only: vertical gap between cells (default 80)."},
+                "origin": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"], "description": "grid only: top-left corner of the grid (default: top-left of the objects' current box)."},
+                "cell": {"type": "string", "enum": ["max", "fit"], "description": "grid only: max (default) or fit."},
+                "align": {"type": "string", "enum": ["center", "start"], "description": "grid only: placement inside the cell (default center)."}}), &["ids", "action"])}),
         json!({"name": "manage_pages",
             "description": "Lists, renames or deletes pages (add_page creates them). `list` returns number, name and object count. `rename` and `delete` need `page` (number from 1, or name); rename also needs `name`. The last page of a board cannot be deleted; deleting a page deletes its objects.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "action": {"type": "string", "enum": ["rename", "delete", "list"]},

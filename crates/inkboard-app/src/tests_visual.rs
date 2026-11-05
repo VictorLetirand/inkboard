@@ -114,7 +114,7 @@ fn center_on(t: &mut T, c: Pt, zoom: f64) {
 }
 
 fn label(text: &str, family: FontFamily, size: f64, align: Align) -> Label {
-    Label { text: RichText::plain(text), family, size, align }
+    Label { text: RichText::plain(text), family, size, align, valign: inkboard_core::VAlign::Middle }
 }
 
 fn shape(t: &mut T, geom: BoxGeom, f: (f64, f64, f64, f64), fill: Option<Color>, text: &str) -> Id {

@@ -63,13 +63,25 @@ docker build -f packaging/docker/mcp.Dockerfile -t inkboard-mcp .
 docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
 ```
 
-Le serveur parle MCP sur l'entrée et la sortie standard (d'où `-i`). L'image tourne sous un utilisateur sans droits (uid 10001) : le dossier monté doit être modifiable par lui. Elle a été vérifiée avec une vraie session MCP (`initialize`, `tools/list` renvoyant les 27 outils, puis `create_board`, `add_shape` et `describe_board` sur un fichier du dossier monté, et un chemin hors de `/data` refusé). Le mode direct (modifier le tableau ouvert à l'écran) demande l'application de bureau et n'existe pas dans un conteneur.
+Le serveur parle MCP sur l'entrée et la sortie standard (d'où `-i`). L'image tourne sous un utilisateur sans droits (uid 10001) : le dossier monté doit être modifiable par lui. Elle a été vérifiée avec une vraie session MCP (`initialize`, `tools/list` renvoyant les 29 outils, puis `create_board`, `add_shape` et `describe_board` sur un fichier du dossier monté, et un chemin hors de `/data` refusé). Le mode direct (modifier le tableau ouvert à l'écran) demande l'application de bureau et n'existe pas dans un conteneur.
 
 ### Pointes de flèche
 
 `add_connector` et `update_object` acceptent `head_start` et `head_end` pour choisir par son nom la pointe de chaque extrémité (`arrow` règle toujours les deux d'un coup ; une pointe nommée l'emporte pour son extrémité). Pointes d'origine : `none`, `arrow`, `triangle`, `dot`, `bar`. Pointes ajoutées, pour les diagrammes UML et entité-relation : `diamond` (composition), `diamond_open` (agrégation), `triangle_open` (héritage, réalisation), `crow_foot` (plusieurs), `crow_foot_one` (un ou plusieurs), `crow_foot_zero` (zéro ou plusieurs), `one_only` (exactement un), `zero_or_one`. `describe_board` avec `detail: "full"` les indique dans `heads`.
 
 Les pointes ajoutées sont stockées dans des champs optionnels séparés du connecteur (`head_start_ext`, `head_end_ext`), à côté de `head_start` / `head_end` d'origine, qui gardent la pointe d'origine la plus proche (un losange est un `dot`, un triangle creux un `triangle`, une patte d'oie une `arrow`, `one_only` une `bar`). Une version qui ne connaît pas ces pointes ignore les nouveaux champs et dessine celle-là : un tableau qui les utilise s'ouvre donc toujours, et un tableau qui ne les utilise pas est écrit exactement comme avant. Dans une session en direct, un invité sur une ancienne version qui modifie un tel connecteur le renvoie sans les pointes ajoutées, qui s'affichent alors avec leur pointe d'origine pour tout le monde. Les fichiers draw.io et Excalidraw utilisent leurs propres symboles (draw.io : `diamond`, `ERmany`, `ERoneToMany`, `ERzeroToMany`, `ERmandOne`, `ERzeroToOne`, avec `endFill=0` pour les creux).
+
+### Côtés d'attache, position de l'étiquette et routes coudées
+
+Trois réglages pour les flèches d'un schéma, dans `add_connector` et `update_object` :
+
+- **`from_side`, `to_side`** (`top`, `bottom`, `left`, `right`, `auto`) : le côté de l'objet auquel une extrémité s'attache. La flèche part (ou arrive) au **milieu de ce côté de la boîte de l'objet** et sort perpendiculairement : une flèche droite part de ce point, une flèche coudée a son premier segment perpendiculaire, une courbe lui est tangente. `auto` (par défaut, et ce qui efface un côté dans `update_object`) garde le comportement automatique. Sans côté, une flèche attachée à une **image** (une icône) utilise désormais aussi le milieu du côté qui fait face à l'autre extrémité, et non un point de la boîte sur la ligne entre les centres (qui pouvait être un coin). Les formes gardent le point de leur contour qui fait face à l'autre extrémité. Reconnecter une extrémité avec `from` / `to` supprime son côté ; donner `from_side` / `to_side` dans le même appel pour en fixer un pour le nouvel objet. `describe_board` avec `detail: "full"` indique `from_side` / `to_side` quand ils sont définis.
+- **`label_pos`** (0 à 1, 0,5 par défaut) : position de l'étiquette le long du trajet, 0 au départ et 1 à l'arrivée. **`label_offset`** (unités, de -1000 à 1000, 0 par défaut) : distance au trajet, perpendiculairement, positive à droite du sens de parcours (sous un trajet qui va vers la droite), négative à gauche. Il faut une étiquette (`label` / `text`, dans le même appel ou avant) ; `describe_board` (`detail: "full"`) les indique quand ils sont définis. L'étiquette suit la flèche quand les objets bougent ; `check_layout` (`label_collision`) utilise la même position.
+- **Les routes coudées sont séparées.** Les flèches coudées dont le segment du milieu longerait la même ligne en se recouvrant (typiquement une source qui part vers une colonne de cibles, ou deux colonnes reliées par des flèches parallèles) sont réparties sur des canaux parallèles distants de 10 unités, ordonnés pour s'emboîter sans se croiser, et `check_layout` ne les signale plus en `shared_segment`. Limites : seules les flèches sans points de passage sont séparées, parmi les flèches d'une page de 150 flèches coudées et 5000 objets au plus ; des flèches qui partent du même point partagent leur premier segment (un tronc commun, puis elles se séparent) ; une flèche qui doit contourner un obstacle garde sa route.
+
+Une forme peut porter son titre : `align: "left"` avec `valign: "top"` (`top`, `middle`, `bottom` ; `middle` par défaut) dans `add_shape` / `update_object` place le texte en haut à gauche d'un `rect`, si bien qu'un cadre titré est un seul objet (un fond transparent et `send_to_back` laissent le contenu visible). `describe_board` avec `detail: "full"` indique `font.valign` quand il n'est pas `middle`.
+
+Fichiers et formats. Les nouveaux champs ne sont écrits que s'ils sont définis (`side` dans une extrémité, `label_pos` et `label_offset` dans un connecteur, `valign` dans un texte) : un tableau qui ne les utilise pas est écrit exactement comme avant et un ancien fichier s'ouvre tel quel ; une version plus ancienne les ignore. **Le partage en direct passe au protocole v6** : mettre à jour toutes les applications qui hébergent ou rejoignent une session. draw.io : un côté s'écrit `exitX` / `exitY` (départ) et `entryX` / `entryY` (arrivée), et le milieu d'un côté lu dans un fichier draw.io redevient un côté (tout autre point reste une fraction de la boîte) ; la position de l'étiquette est la géométrie `x` de l'arête (-1 à 1 le long de l'arête, soit `label_pos` × 2 − 1) et `y` (décalage) ; `valign` est `verticalAlign`, et un rectangle draw.io dont le texte est en haut ou en bas le garde dans un seul objet. JSON Canvas : `fromSide` / `toSide` dans les deux sens. Excalidraw : `valign` est le `verticalAlign` du texte ; les côtés et la position de l'étiquette n'ont pas d'équivalent et ne sont pas exportés.
 
 ## Comment le mode direct fonctionne
 
@@ -82,14 +94,15 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 
 | Outil | Rôle |
 |---|---|
-| `create_board` | Crée un tableau vide (refuse d'écraser un fichier existant). |
+| `create_board` | Crée un tableau vide. Un fichier existant est une erreur qui indique d'utiliser le tableau existant ou de passer `overwrite: true`, qui le remplace par un tableau vide neuf. |
 | `save_board` | Mode direct : enregistre le tableau affiché (il doit déjà avoir un fichier). |
 | `board_changes` | Ce que **l'utilisateur** a modifié depuis votre dernier regard (`describe_board` / `board_changes`) : objets ajoutés, modifiés, supprimés. Vos propres modifications ne sont pas signalées. |
 | `describe_board` | Pages et objets (id, type, texte, position, liens des connecteurs) ; en mode direct, aussi `selection`. `detail: "full"` ajoute les [styles et polices](#lire-les-styles). Lit aussi draw.io, Excalidraw, JSON Canvas, Mermaid. |
 | `find_objects` | Trouve des objets par texte, expression régulière, type ou zone, sans lire tout le tableau (lecture seule). |
 | `render` | **Image du tableau** (PNG renvoyé directement à l'agent, rien à exporter puis relire). Tout le contenu, une `region`, ou les `ids` à cadrer ; badges d'id facultatifs (`show_ids`) ; `output` écrit aussi le PNG sous la racine. Lecture seule. |
-| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, avec texte (éventuellement [texte enrichi](#texte-enrichi)), couleurs, taille. |
-| `add_connector` | Flèche **liée** entre deux objets (`straight`, `elbow`, `curve`, pointes, étiquette — éventuellement en texte enrichi). |
+| `check_layout` | **Liste les défauts de mise en page d'une page** avec les ids concernés (chevauchements, texte qui déborde, flèches qui traversent un objet, se croisent ou se superposent, étiquettes en collision, flèches en double ou non attachées, texte trop petit une fois exporté, mise en page déséquilibrée). Lecture seule ; voir [`check_layout`](#check_layout). |
+| `add_shape` | `rect`, `ellipse`, `diamond`, `triangle`, `sticky`, `text`, avec texte (éventuellement [texte enrichi](#texte-enrichi)), couleurs, taille. `align` (`left`, `center`, `right`) et `valign` (`top`, `middle`, `bottom`) placent le texte : `align: "left"` + `valign: "top"` sur un `rect` est un cadre titré en un seul objet ([détails](#côtés-dattache-position-de-létiquette-et-routes-coudées)). |
+| `add_connector` | Flèche **liée** entre deux objets (`straight`, `elbow`, `curve`, pointes, étiquette — éventuellement en texte enrichi ; `from_side` / `to_side` choisissent le côté de chaque objet où la flèche s'attache, `label_pos` / `label_offset` placent l'étiquette, voir [côtés d'attache](#côtés-dattache-position-de-létiquette-et-routes-coudées)). |
 | `add_table` | Tableau de cellules (colonnes ajustées au texte) ; les cellules peuvent être en texte enrichi. |
 | `add_code_block` | Bloc de code coloré. |
 | `add_formula` | Formule LaTeX composée comme en TeX (erreur claire si non gérée). |
@@ -101,10 +114,11 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 | `update_object` | Modifier le texte ([texte enrichi](#texte-enrichi) facultatif), la position, la taille, les couleurs, le [style de trait, la police, le verrou, la rotation](#update_object), le tracé / les pointes / les extrémités d'un connecteur, ou une cellule de tableau. |
 | `delete_object` | Supprime un objet (`id`) ou plusieurs (`ids`). |
 | `move_objects` | Déplace des objets ensemble (en relatif ou vers une position) ; les connecteurs liés suivent. |
-| `arrange_objects` | Aligne, répartit, empile (premier plan / arrière-plan), groupe, dégroupe, verrouille, déverrouille. |
+| `arrange_objects` | Aligne, répartit, dispose en grille (`grid`), empile (premier plan / arrière-plan), groupe, dégroupe, verrouille, déverrouille. |
+| `add_frame` | **Cadre de regroupement** autour d'objets existants en un appel : un seul `rect` ajusté à l'union des `ids` plus `padding`, avec son propre titre en haut à gauche, placé derrière eux ; `frame` le réajuste plus tard. Voir [`add_frame`](#add_frame). |
 | `duplicate_objects` | Copie des objets (une ou plusieurs copies, avec un décalage) ; les connecteurs entre objets copiés sont conservés. |
 | `format_text` | Gras, italique, souligné, barré, couleur, surlignage sur du texte **déjà présent sur le tableau** : une partie du texte d'une forme, l'étiquette d'un connecteur ou une cellule de tableau. |
-| `auto_layout` | Réorganise un graphe de formes reliées (TB, LR, BT, RL). |
+| `auto_layout` | Réorganise un graphe de formes, images et tableaux reliés (TB, LR, BT, RL) ; `gap_x` / `gap_y`, `ids` ; une icône et son libellé forment un seul nœud et un cadre est disposé autour de son contenu. Voir [`auto_layout`](#auto_layout). |
 | `add_page` | Nouvelle page. |
 | `manage_pages` | Liste, renomme ou supprime des pages (`add_page` les crée). |
 | `batch` | **Plusieurs appels d'outils en une seule demande** (1 à 200), exécutés dans l'ordre sur un même tableau, avec des références aux résultats précédents (`"$0.id"`), tout ou rien par défaut, une seule étape d'annulation. |
@@ -155,6 +169,20 @@ Le bloc texte contient `width_px`, `height_px`, `region` (le rectangle effective
 
 Un résultat d'outil est une valeur JSON, transportée telle quelle par le protocole direct (une ligne JSON par réponse). La clé réservée de premier niveau `_image` (`{"mime": "image/png", "data_base64": "…"}`) marque un résultat qui comprend une image : `inkboard-mcp` (`tools/call`) répond alors avec `content = [{"type": "image", "data": …, "mimeType": …}, {"type": "text", "text": <le JSON sans _image>}]`. Tout autre résultat reste un unique bloc texte, exactement comme avant. Comme l'image voyage dans la ligne JSON, une réponse directe peut faire plusieurs Mio (le PNG est limité à 4 Mio, soit 5,5 Mio en base64).
 
+## Arguments inconnus
+
+Un appel (y compris une opération de `batch`) qui contient un argument absent des propriétés du schéma d'entrée de l'outil s'exécute quand même, mais le résultat porte une entrée `warnings` du type `unknown argument "bold" ignored (did you mean "title_bold"?)` ; la propriété la plus proche est suggérée si sa distance d'édition est d'au plus 2 ou si elle partage un préfixe. `path` et `page` sont toujours acceptés. Les `warnings` propres à l'outil sont conservés.
+
+## `check_layout`
+
+Liste les défauts mesurables d'une page, avec les ids des objets concernés, pour les corriger sans juger une image. Lecture seule. Le texte est mesuré approximativement et les objets sont comparés par leur rectangle englobant : un signalement est un indice fort, pas une preuve (vérifiez avec `render` en cas de doute).
+
+Paramètres : `path`, `page` ; `ids` (ne garde que les problèmes qui touchent ces objets) ; `export_width` (largeur d'export prévue en pixels, 100 à 20000, 1600 par défaut). Résultat : `{"ok", "issues": [{kind, severity, ids, message, ...}], "metrics": {...}}`.
+
+- **Erreurs** : `overlap` (deux boîtes qui se recouvrent de plus de 2 unités, hors contenant/contenu et hors même groupe), `text_overflow` (texte plus haut que sa zone), `word_split` (mot plus large que la zone de texte), `connector_through_object` (le trajet d'une flèche traverse un objet qui n'est ni sa source, ni sa cible, ni un cadre contenant l'une d'elles), `unbound_connector` (extrémité non attachée), `duplicate_connector` (plusieurs flèches entre les deux mêmes objets).
+- **Avertissements** : `text_outside_frame` (texte à cheval sur la bordure d'un cadre), `connector_crossing` (deux flèches se croisent, hors extrémité commune), `shared_segment` (deux flèches sur la même ligne sur plus de 20 unités, sauf même cible ou premier segment commun de flèches parties du même point ; les flèches coudées qui se recouvriraient sont d'abord séparées par le routage), `label_collision` (étiquette de flèche, à sa position `label_pos`, sur un objet, une autre étiquette ou une bordure de cadre), `small_text` (texte sous 10 px une fois la page exportée à `export_width` : taille x `export_width` / largeur du contenu), `unbalanced` (rapport largeur/hauteur hors de 0,6 à 2,2, ou au moins 3 cellules vides sur une grille 3 x 3 du contenu quand il y a 6 objets ou plus ; `staircase` : deux cadres de premier niveau côte à côte dont les hauts diffèrent de plus de 60 unités, avec leurs ids  ; pas de raison `coverage` : des icônes reliées par de longues flèches sont légitimement clairsemées), `sparse_frame` (cadre dont le contenu couvre moins de 30 % de sa surface, ou qui laisse une bande vide de plus de 200 unités d'un côté ; `ids` : `[cadre]`, le message propose de rappeler `add_frame` avec `frame=<id>`). Métriques supplémentaires : `coverage` et `frame_top_offset`.
+- `metrics` : `objects`, `connectors`, `content_box`, `aspect`, `min_text_px`, `empty_cells`, `export_width`.
+
 ## Lire les styles
 
 `describe_board` accepte `detail` : `"brief"` (par défaut, la sortie est inchangée) ou `"full"`. Avec `full`, chaque objet a aussi :
@@ -199,19 +227,22 @@ Les paramètres existants (`text`, `markdown`, `x`, `y`, `w`, `h`, `fill`, `stro
 | `font_size` | 4 à 400 | formes, étiquettes de connecteurs, tableaux |
 | `font_family` | `sans`, `hand`, `serif`, `mono` | formes, étiquettes de connecteurs, tableaux |
 | `align` | `left`, `center`, `right` | formes, étiquettes de connecteurs |
+| `valign` | `top`, `middle`, `bottom` : place verticale du texte dans la forme (`align: left` + `valign: top` : un titre en haut à gauche d'un `rect`) ; aussi dans `add_shape` | formes |
 | `locked` | `true` / `false` | tout objet |
 | `rotation` | -360 à 360, angle **absolu** en degrés (0 remet à zéro), autour du centre | formes, images |
 | `route` | `straight`, `elbow`, `curve` | connecteurs |
 | `arrow` | `end`, `start`, `both`, `none` | connecteurs |
 | `head_start`, `head_end` | nom d'une [pointe](#pointes-de-flèche) ; remplace ce que `arrow` a donné à cette extrémité | connecteurs |
 | `from`, `to` | id d'une forme, d'un tableau ou d'une image : reconnecte cette extrémité (mêmes règles que `add_connector`) | connecteurs |
+| `from_side`, `to_side` | `top`, `bottom`, `left`, `right` : le milieu de ce côté de l'objet, la flèche sortant perpendiculairement ; `auto` l'efface ; aussi dans `add_connector`, voir [côtés d'attache](#côtés-dattache-position-de-létiquette-et-routes-coudées) | connecteurs |
+| `label_pos`, `label_offset` | `label_pos` de 0 à 1 (0,5 : le milieu) : place de l'étiquette le long du trajet ; `label_offset` de -1000 à 1000 unités : distance à côté du trajet (positive : à droite du sens de parcours) ; aussi dans `add_connector` | connecteurs avec étiquette |
 | `head_scale` | 0,5 à 4, taille des pointes (1 : par défaut ; les crans S / M / L / XL du panneau valent 0,6 / 1 / 1,6 / 2,4) ; aussi dans `add_connector` | connecteurs |
 | `shadow` | `true` / `false` : ombre portée ; aussi dans `add_shape` | formes, images, tableaux, connecteurs |
 | `recolor` | remplace des couleurs d'une image SVG : `{"#e34f26": "#0055ff"}` ou `[["#e34f26", "#0055ff"]]` ; remplace la liste précédente, `{}` rend les couleurs d'origine (256 paires au plus). `describe_board` avec `detail: "full"` liste les couleurs trouvées dans le fichier | images SVG (pas les icônes monochromes ni les formules) |
 | `cell` + `text` | `[ligne, colonne]` à partir de 0 : le nouveau texte de cette cellule de tableau (`markdown` fonctionne comme partout) ; la colonne s'élargit si nécessaire | tableaux |
 
 - **Tout ou rien** : chaque paramètre est d'abord validé ; une valeur inconnue ou hors limites est une erreur qui nomme le paramètre et les valeurs permises, et rien n'est modifié.
-- Un paramètre qui ne convient pas à l'objet (`rotation` sur un trait au crayon, `route` sur un rectangle…) est **ignoré** et listé dans `avertissements` (`warnings` reste réservé aux problèmes de Markdown, voir [Texte enrichi](#texte-enrichi)). `cell` sur autre chose qu'un tableau est une erreur.
+- Un paramètre qui ne convient pas à l'objet (`rotation` sur un trait au crayon, `route` sur un rectangle…) est **ignoré** et listé dans `warnings` (avec les problèmes de Markdown, voir [Texte enrichi](#texte-enrichi)). La même liste des paramètres ignorés est encore renvoyée sous `avertissements`, **obsolète** (conservé pour les clients existants ; utilisez `warnings`). `cell` sur autre chose qu'un tableau est une erreur.
 - Les paramètres de police sur un connecteur s'appliquent à son étiquette ; sans étiquette ils sont signalés (donnez aussi `text`).
 - **Les objets verrouillés ne sont pas protégés contre les outils** : `update_object`, `move_objects`, `duplicate_objects` (la copie reste verrouillée) et `delete_object` agissent sur eux. Seuls l'alignement et la répartition de `arrange_objects` les ignorent (ainsi que les objets d'un calque verrouillé).
 
@@ -237,9 +268,27 @@ Les connecteurs liés aux objets déplacés suivent ; un connecteur déplacé se
 | `group` | Au moins 2 objets partagent un nouveau groupe ; le résultat contient `group`. |
 | `ungroup` | Libère les objets listés (résultat : `ungrouped`). |
 | `lock`, `unlock` | Verrouille / déverrouille les objets. |
+| `grid` | Dispose les objets en grille : `columns` (obligatoire, ≥ 1), ligne par ligne dans l'ordre de `ids`. `gap_x`, `gap_y` (80 par défaut) ; `origin` `{x, y}` = coin haut gauche de la grille (par défaut : coin haut gauche de la boîte actuelle des objets) ; `cell` `"max"` (défaut : chaque cellule aussi grande que le plus grand objet) ou `"fit"` (chaque colonne aussi large et chaque ligne aussi haute que son plus grand membre) ; `align` `"center"` (défaut) ou `"start"` dans la cellule. Une icône et son libellé (un groupe) comptent pour **un seul** élément, placé selon la boîte du groupe. Les connecteurs liés suivent ; les connecteurs de `ids` et les objets verrouillés sont ignorés (`skipped_connectors`, `skipped_locked`). Une seule étape d'annulation. Résultat : `columns`, `rows`, `placed` (`id`, `x`, `y` de chaque élément). |
 
 Les groupes ne sont **pas développés** : listez tous les membres pour déplacer, aligner ou dégrouper un groupe entier.
 Les objets verrouillés (et ceux d'un calque verrouillé) sont ignorés par `align_*` et `distribute_*` et listés dans `skipped_locked`. Le moteur seul ne fait rien quand il y a trop peu d'objets non verrouillés (moins de 2 pour aligner, 3 pour répartir) ; l'outil renvoie une erreur à la place.
+
+## `add_frame`
+
+Trace le cadre qu'un agent dimensionnerait sinon à la main. `ids` (les objets à entourer ; les autres membres de leurs groupes, comme le libellé d'une icône, sont inclus) donne **un seul `rect`** dont le texte propre est le titre (`align: left`, `valign: top`, gras) et dont la boîte est l'union des boîtes des `ids` (mêmes bornes que les vérifications de mise en page) plus `padding` (40 par défaut, pas négatif) ; avec un titre, le haut reçoit la hauteur du titre (`title_font_size` × 1,3 pour une ligne) + 12 de plus. Un titre plus large que le cadre l'élargit (`warnings` le dit). Défauts : `fill` `#f1f3f5`, `stroke` `#adb5bd`, `dash` `solid`, `title_font_size` 18, `title_bold` vrai, `roundness` 0,15 (comme un `rect` d'`add_shape`). Renvoie `{id, x, y, w, h}`.
+
+Le cadre est placé **juste sous le plus bas des objets entourés** : un cadre autour d'objets déjà dans un autre cadre est donc dessiné au-dessus du cadre extérieur et sous son propre contenu ; entourer un cadre place le nouveau sous lui. Il n'est pas groupé avec son contenu : après avoir déplacé le contenu, rappelez `add_frame` avec `frame` (son id) et `ids` pour **réajuster** le même cadre (son titre et sa couleur sont conservés ; `title`, `title_color`, `fill`, `stroke`, `dash`, `roundness` ne changent que s'ils sont donnés). `x`, `y`, `w`, `h` (les quatre) donnent un rectangle exact à la place de l'union ; `ids` est alors facultatif et ne sert qu'à l'empilement (sans lui, le cadre va à l'arrière-plan). Le titre est en gris foncé `#343a40` par défaut (`title_color`, `"#rrggbb"` ou `"ink"`, indépendant de la couleur de bordure) et se place à 16 unités des bordures gauche et haute pour dégager le coin arrondi (le haut gagne donc hauteur du titre + 20). Des ids inconnus et un `padding` négatif sont des erreurs.
+
+## `auto_layout`
+
+Dispose les formes, images et tableaux reliés par des connecteurs en graphe en couches (`direction` `TB` par défaut, `LR`, `BT`, `RL`) ; le coin haut gauche de ce qui est disposé reste en place, et les connecteurs coudés sans points de passage deviennent des lignes droites avec points de passage autour des couches. Sans option, l'écart est de 84 entre couches et 48 entre nœuds d'une couche.
+
+- `gap_x`, `gap_y` (0 à 10000) : écarts horizontal et vertical. Pour `TB` / `BT`, `gap_y` sépare les couches et `gap_x` les nœuds d'une couche ; pour `LR` / `RL`, c'est l'inverse.
+- `ids` : ne dispose que ces objets et les connecteurs **entre** eux ; tout le reste n'est pas touché.
+- **Icônes :** une icône et son libellé (un groupe) bougent comme un seul nœud dont la boîte est l'union du groupe. Idem pour tout groupe (un groupe dont un membre est verrouillé ne bouge pas).
+- **Cadres :** un `rect` qui contient d'autres nœuds disposés est un cadre et il est disposé comme un cluster, à la façon d'un `subgraph` Mermaid de `import_mermaid` : son contenu est disposé à part, puis le cadre est réajusté autour (marge 40, plus la place de son titre) et participe comme un seul bloc à la disposition de ce qui l'entoure. Les cadres imbriqués fonctionnent ; un connecteur lié à un cadre relie le bloc. Un cadre est reconnu par sa géométrie (sa boîte contient les boîtes d'autres nœuds de `ids`), qu'il vienne ou non d'`add_frame`.
+
+Résultat : `{layout, objects, nodes, frames}` (`nodes` compte un groupe une fois).
 
 ## `manage_pages`
 

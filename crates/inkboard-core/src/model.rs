@@ -97,18 +97,63 @@ pub struct Label {
     pub size: f64,
     #[serde(default)]
     pub align: Align,
+    /// Vertical placement of the text block in its area; only written when it is not the usual middle.
+    #[serde(default, skip_serializing_if = "VAlign::is_middle")]
+    pub valign: VAlign,
+}
+
+/// Vertical alignment of a text block inside the text area of its object.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VAlign {
+    Top,
+    #[default]
+    Middle,
+    Bottom,
+}
+
+impl VAlign {
+    #[allow(clippy::trivially_copy_pass_by_ref, reason = "the signature serde asks of `skip_serializing_if`")]
+    fn is_middle(&self) -> bool {
+        *self == VAlign::Middle
+    }
+    /// Name used by the MCP server (`top`, `middle`, `bottom`).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            VAlign::Top => "top",
+            VAlign::Middle => "middle",
+            VAlign::Bottom => "bottom",
+        }
+    }
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<VAlign> {
+        [VAlign::Top, VAlign::Middle, VAlign::Bottom].into_iter().find(|v| v.name() == name)
+    }
+    /// Top of a block of height `block` inside an area of height `area_h` starting at `area_y` (a block taller than the area starts at the top).
+    #[must_use]
+    pub fn block_top(self, area_y: f64, area_h: f64, block: f64) -> f64 {
+        if block > area_h {
+            return area_y;
+        }
+        match self {
+            VAlign::Top => area_y,
+            VAlign::Middle => area_y + (area_h - block) / 2.0,
+            VAlign::Bottom => area_y + area_h - block,
+        }
+    }
 }
 
 impl Default for Label {
     fn default() -> Self {
-        Self { text: RichText::default(), family: FontFamily::Sans, size: 20.0, align: Align::Center }
+        Self { text: RichText::default(), family: FontFamily::Sans, size: 20.0, align: Align::Center, valign: VAlign::Middle }
     }
 }
 
 impl Label {
     #[must_use]
     pub fn new(text: &str, size: f64, align: Align) -> Self {
-        Self { text: RichText::plain(text), family: FontFamily::Sans, size, align }
+        Self { text: RichText::plain(text), family: FontFamily::Sans, size, align, valign: VAlign::Middle }
     }
     #[must_use]
     pub fn line_height(&self) -> f64 {
@@ -177,6 +222,11 @@ pub struct BoxObj {
     pub lang: Option<crate::highlight::Lang>,
 }
 
+/// Room a rect keeps between its text area and its border.
+pub const RECT_INSET: f64 = 8.0;
+/// Same on the left (left-aligned text) and on the top (top-aligned text): clears the rounded corner of a rect.
+pub const RECT_CORNER_INSET: f64 = 16.0;
+
 impl BoxObj {
     /// Area (local frame) in which the text is laid out.
     #[must_use]
@@ -190,7 +240,12 @@ impl BoxObj {
             // inscribed rectangle (0.6 + 0.4 = 1): wide rather than tall, so that a word is not split
             BoxGeom::Diamond => Rect::new(-hw * 0.6, -hh * 0.4, w * 0.6, h * 0.4),
             BoxGeom::Triangle => Rect::new(-hw * 0.5, -hh * 0.1, w * 0.5, h * 0.5),
-            BoxGeom::Rect => Rect::new(-hw + 8.0, -hh + 8.0, (w - 16.0).max(1.0), (h - 16.0).max(1.0)),
+            BoxGeom::Rect => {
+                // text hugging the top or left border (a frame title) is pushed further in, to clear the rounded corner
+                let left = if self.label.align == Align::Left { RECT_CORNER_INSET } else { RECT_INSET };
+                let top = if self.label.valign == VAlign::Top { RECT_CORNER_INSET } else { RECT_INSET };
+                Rect::new(-hw + left, -hh + top, (w - left - RECT_INSET).max(1.0), (h - top - RECT_INSET).max(1.0))
+            }
         }
     }
 

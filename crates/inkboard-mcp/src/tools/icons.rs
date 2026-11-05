@@ -5,7 +5,8 @@
 //! (checked by a test on the real pack), names may (`shadcn/ui`) or contain `#` (`F#`), so the id is split at the first `/` only.
 
 use super::{Res, obj, ocolor, origin, os, path_prop, pos_props, s};
-use inkboard_core::{Align, ApproxMeasurer, BoxGeom, Color, Editor, Frame, ImageObj, Kind, Label, Object, Style};
+use inkboard_core::text::layout_rich;
+use inkboard_core::{Align, ApproxMeasurer, BoxGeom, Color, Editor, Frame, ImageObj, Kind, Label, Measurer, Object, Style};
 use inkboard_icons::{IconRef, Library};
 use serde_json::{Value, json};
 
@@ -28,12 +29,16 @@ const MAX_LABEL: usize = 500;
 const LABEL_SIZE: f64 = 16.0;
 /// Space between an icon and its label.
 const LABEL_GAP: f64 = 6.0;
+/// Labels wrap at `max(2 x the icon's longest side, DEFAULT_LABEL_WIDTH)` unless `label_max_width` says otherwise: wide enough that a
+/// short label (the usual case) is never touched, narrow enough that a long one does not run into the neighbouring nodes.
+const DEFAULT_LABEL_WIDTH: f64 = 140.0;
+const MIN_LABEL_WIDTH: f64 = 20.0;
 
 /// Schemas for `tools/list`.
 pub(super) fn specs() -> Vec<Value> {
     let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
     vec![
-        json!({"name": "search_icons", "description": "Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI and diagram symbols...) by keywords; names are in English. Every word of `query` must match (case-insensitive) the icon name, its set or its group. Returns ids to give to add_icon. Use list_icon_groups to see what the library contains, and `group` / `set` to narrow a broad search. Does not modify the board (a board `path` is still needed when the application is not open).",
+        json!({"name": "search_icons", "description": "Searches the built-in icon library (about 28,800 icons: AWS, Azure, Google Cloud, Cisco, Kubernetes, brand logos, UI and diagram symbols...) by keywords; names are in English. Every word of `query` must match (case-insensitive) the icon name, its set or its group. Returns ids to give to add_icon; each icon has its `aspect` (width / height) and `wide: true` when aspect > 2 (wordmark logos, unreadable at 64: give `w`). When nothing matches, a few synonyms are tried (box internet -> router, user team -> users...) and `note` says so. Use list_icon_groups to see what the library contains, and `group` / `set` to narrow a broad search. Does not modify the board (a board `path` is still needed when the application is not open).",
             "inputSchema": obj(json!({"path": path_prop(),
                 "query": {"type": "string", "description": "Keywords, e.g. \"lambda\", \"router\", \"github\", \"database server\"."},
                 "group": {"type": "string", "description": "Only this group, e.g. \"AWS\", \"Brands\", \"General icons\" (list_icon_groups)."},
@@ -41,12 +46,15 @@ pub(super) fn specs() -> Vec<Value> {
                 "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": "Maximum number of icons returned (default 20, at most 100); `truncated` tells when more match."}}), &["query"])}),
         json!({"name": "list_icon_groups", "description": "Lists the groups of the icon library (AWS, Azure, Brands...) with their sets and the number of icons of each, to know what to search for. Does not modify the board (a board `path` is still needed when the application is not open).",
             "inputSchema": obj(json!({"path": path_prop()}), &[])}),
-        json!({"name": "add_icon", "description": "Places an icon of the library on the board, as an image object that can be connected with add_connector. `icon` is an id returned by search_icons. Size: `size` = longest side (default 64, 8 to 2000), or `w` and/or `h` (the icon's ratio is kept when only one is given). Monochrome icons (mono: true in search_icons) take the color `stroke` (default: the theme's text color); colored icons keep their own colors. `label` adds a text centered under the icon, grouped with it. Returns the image `id` (and `label_id`).",
+        json!({"name": "add_icon", "description": "Places an icon of the library on the board, as an image object that can be connected with add_connector. `icon` is an id returned by search_icons. Size: `size` = longest side (default 64, 8 to 2000), or `w` and/or `h` (the icon's ratio is kept when only one is given). Monochrome icons (mono: true in search_icons) take the color `stroke` (default: the theme's text color); colored icons keep their own colors. `label` adds a text grouped with the icon (so move_objects moves both), by default centered under it: `label_side` (bottom, top, right, left) places it elsewhere (6 units gap), `label_font_size` sets its size (default 16), `label_max_width` the width beyond which it wraps at spaces (default max(2 x the icon's longest side, 140); a word is never split). Returns the image `id` (and `label_id`).",
             "inputSchema": obj(pos_props(json!({
                 "icon": {"type": "string", "description": "Icon id from search_icons, e.g. \"drawio-aws4/Lambda\"."},
                 "size": {"type": "number", "minimum": MIN_SIDE, "maximum": MAX_SIDE, "description": "Longest side (default 64). Not combinable with w / h."},
                 "w": {"type": "number", "minimum": MIN_SIDE, "maximum": MAX_SIDE}, "h": {"type": "number", "minimum": MIN_SIDE, "maximum": MAX_SIDE},
                 "stroke": color, "label": {"type": "string", "description": "Text placed under the icon (at most 500 characters)."},
+                "label_font_size": {"type": "number", "minimum": 4, "maximum": 400, "description": "Font size of the label (default 16)."},
+                "label_max_width": {"type": "number", "minimum": MIN_LABEL_WIDTH, "description": "Width at which the label wraps (default max(2 x the icon's longest side, 140))."},
+                "label_side": {"type": "string", "enum": ["bottom", "top", "right", "left"], "description": "Where the label goes (default bottom): top / bottom centered, left / right vertically centered."},
                 "markdown": super::richtext::markdown_prop("`label`")})), &["icon"])}),
     ]
 }
@@ -163,14 +171,81 @@ fn search_icons(a: &Value) -> Res<Value> {
     };
     let group = filter_text(a, "group").map(|g| find_group(lib, g)).transpose()?;
     let set = filter_text(a, "set").map(|n| find_set(lib, n)).transpose()?;
-    let hits: Vec<IconRef> = lib
-        .search(query, usize::MAX)
-        .into_iter()
-        .filter(|r| set.is_none_or(|si| r.set == si) && group.is_none_or(|g| lib.sets[r.set].group == g))
-        .take(limit + 1)
+    let run = |q: &str| -> Vec<IconRef> {
+        lib.search(q, usize::MAX)
+            .into_iter()
+            .filter(|r| set.is_none_or(|si| r.set == si) && group.is_none_or(|g| lib.sets[r.set].group == g))
+            .take(limit + 1)
+            .collect()
+    };
+    let mut hits = run(query);
+    let mut note = None;
+    if hits.is_empty() {
+        // nothing matches: retry with the synonyms of the query, and say so
+        for alt in synonyms(query) {
+            let found = run(alt);
+            if !found.is_empty() {
+                note = Some(format!("no icon matches \"{query}\": showing the results for the synonym \"{alt}\""));
+                hits = found;
+                break;
+            }
+        }
+    }
+    let icons: Vec<Value> = hits
+        .iter()
+        .take(limit)
+        .map(|r| {
+            let mut v = icon_json(lib, *r);
+            if let Some(a) = aspect(lib, *r) {
+                v["aspect"] = json!(a);
+                if a > WIDE_ASPECT {
+                    v["wide"] = json!(true);
+                }
+            }
+            v
+        })
         .collect();
-    let icons: Vec<Value> = hits.iter().take(limit).map(|r| icon_json(lib, *r)).collect();
-    Ok(json!({"count": icons.len(), "truncated": hits.len() > limit, "icons": icons}))
+    let mut out = json!({"count": icons.len(), "truncated": hits.len() > limit, "icons": icons});
+    if let Some(n) = note {
+        out["note"] = json!(n);
+    }
+    Ok(out)
+}
+
+/// Above this width / height ratio an icon is a wordmark logo: unreadable at the default 64 (`wide: true` in `search_icons`).
+const WIDE_ASPECT: f64 = 2.0;
+
+/// Width / height of an icon rounded to 2 decimals, from the viewBox of its SVG. Computed once per icon (the first time decodes the
+/// icon's set of the pack) and kept for the life of the process.
+fn aspect(lib: &Library, r: IconRef) -> Option<f64> {
+    type Cache = std::sync::Mutex<std::collections::HashMap<(usize, usize), Option<f64>>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(v) = cache.lock().ok()?.get(&(r.set, r.icon)) {
+        return *v;
+    }
+    let v = lib.svg(r).and_then(|svg| inkboard_icons::svg_dimensions(&svg)).map(|(w, h)| (w / h * 100.0).round() / 100.0);
+    cache.lock().ok()?.insert((r.set, r.icon), v);
+    v
+}
+
+/// Alternative queries tried, in order, when a query has no result (whole query, lowercase). Small on purpose: the terms agents typed in
+/// real tests that the library names differently.
+const SYNONYMS: &[(&[&str], &[&str])] = &[
+    (&["box internet", "internet box", "box", "modem", "livebox", "freebox", "gateway"], &["router", "modem"]),
+    (&["user team", "group people", "people group", "team", "people", "group of users", "users group"], &["users", "user group", "group"]),
+    (&["registry", "image registry", "docker registry"], &["container registry", "docker"]),
+    (&["phone", "t\u{e9}l\u{e9}phone", "telephone", "mobile", "cellphone"], &["smartphone", "mobile phone"]),
+    (&["laptop"], &["notebook", "computer"]),
+    (&["nas"], &["storage", "synology"]),
+    (&["ubuntu"], &["linux"]),
+];
+
+/// The alternative queries for `query` (empty when it is not in [`SYNONYMS`]).
+fn synonyms(query: &str) -> Vec<&'static str> {
+    let q = query.to_lowercase();
+    let q = q.split_whitespace().collect::<Vec<_>>().join(" ");
+    SYNONYMS.iter().filter(|(from, _)| from.contains(&q.as_str())).flat_map(|(_, to)| to.iter().copied()).collect()
 }
 
 fn list_icon_groups() -> Res<Value> {
@@ -186,6 +261,35 @@ fn list_icon_groups() -> Res<Value> {
     Ok(json!({"total": lib.icon_count(), "groups": groups}))
 }
 
+/// Breaks the lines of `label` wider than `max_w` at its spaces (a real line break, so the free text keeps its own width and its
+/// position stays computable). A word wider than `max_w` is never split: the limit is raised to the widest word.
+fn wrap_label(label: &mut Label, max_w: f64) {
+    let (m, plain) = (ApproxMeasurer, label.text.to_plain());
+    let bold = super::richtext::has_formatting(&label.text);
+    let widest = plain.split_whitespace().map(|w| m.width(w, label.family, label.size, bold)).fold(0.0, f64::max);
+    let max_w = max_w.max(widest);
+    let lay = layout_rich(&label.text, Some(max_w), &m, label.family, label.size);
+    let chars: Vec<char> = plain.chars().collect();
+    // (position, number of spaces replaced) of every automatic break, found by walking the original text line by line
+    let (mut pos, mut breaks) = (0usize, Vec::new());
+    for line in lay.lines.iter().take(lay.lines.len().saturating_sub(1)) {
+        pos += line.iter().map(|r| r.text.chars().count()).sum::<usize>();
+        match chars.get(pos) {
+            Some('\n') => pos += 1,
+            Some(' ') => {
+                let n = chars[pos..].iter().take_while(|c| **c == ' ').count();
+                breaks.push((pos, n));
+                pos += n;
+            }
+            _ => {}
+        }
+    }
+    for (at, n) in breaks.into_iter().rev() {
+        label.text.splice(at, at + n, "\n");
+    }
+}
+
+#[allow(clippy::many_single_char_names)]
 fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
     let lib = library()?;
     let icon = s(a, "icon")?;
@@ -220,7 +324,16 @@ fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
         return Err(format!("label too long (at most {MAX_LABEL} characters)"));
     }
     let markdown = super::richtext::markdown_flag(a)?;
+    let label_size = num(a, "label_font_size", 4.0, 400.0)?.unwrap_or(LABEL_SIZE);
+    let label_width = num(a, "label_max_width", MIN_LABEL_WIDTH, MAX_SIDE * 2.0)?.unwrap_or_else(|| (2.0 * w.max(h)).max(DEFAULT_LABEL_WIDTH));
+    let place = match os(a, "label_side").unwrap_or("bottom") {
+        s @ ("bottom" | "top" | "right" | "left") => s,
+        other => return Err(format!("unknown label_side \"{other}\" (bottom, top, right, left)")),
+    };
     let mut warnings: Vec<String> = Vec::new();
+    if label.is_none() && ["label_font_size", "label_max_width", "label_side"].iter().any(|k| a.get(*k).is_some_and(|v| !v.is_null())) {
+        warnings.push("label_font_size, label_max_width and label_side ignored: no label".to_owned());
+    }
     if stroke.is_some() && !set.mono {
         warnings.push("stroke ignored: this icon is in color and keeps its own colors (only monochrome icons are tinted)".to_owned());
     }
@@ -239,13 +352,24 @@ fn add_icon(ed: &mut Editor, a: &Value) -> Res<Value> {
         let id = ed.insert(Object::new(Kind::Image(ImageObj { frame, asset: aid, latex: None, mono: set.mono, recolor: Vec::new() }), style));
         let label_id = label.map(|text| {
             let text_style = Style { stroke: Color::Ink, fill: None, width: 0.0, roundness: 0.0, ..Style::default() };
-            let mut label = Label::new(text, LABEL_SIZE, Align::Center);
+            let align = match place {
+                "right" => Align::Left,
+                "left" => Align::Right,
+                _ => Align::Center,
+            };
+            let mut label = Label::new(text, label_size, align);
             label.text = super::richtext::rich(text, markdown, &mut warnings);
+            wrap_label(&mut label, label_width);
             let mut caption = Object::new_box(BoxGeom::Text, Frame::new(0.0, 0.0, 10.0, 10.0), text_style, label);
             if let Kind::Box(b) = &mut caption.kind {
                 b.fit(&ApproxMeasurer);
-                b.frame.x = frame.x + (frame.w - b.frame.w) / 2.0;
-                b.frame.y = frame.y + frame.h + LABEL_GAP;
+                let (cx, cy) = (frame.x + (frame.w - b.frame.w) / 2.0, frame.y + (frame.h - b.frame.h) / 2.0);
+                (b.frame.x, b.frame.y) = match place {
+                    "top" => (cx, frame.y - LABEL_GAP - b.frame.h),
+                    "right" => (frame.x + frame.w + LABEL_GAP, cy),
+                    "left" => (frame.x - LABEL_GAP - b.frame.w, cy),
+                    _ => (cx, frame.y + frame.h + LABEL_GAP),
+                };
             }
             let label_id = ed.insert(caption);
             ed.group(&[id.clone(), label_id.clone()]);
