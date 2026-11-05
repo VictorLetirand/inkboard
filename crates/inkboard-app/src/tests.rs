@@ -1941,8 +1941,8 @@ fn the_editor_and_the_final_rendering_agree_when_the_last_word_ends_just_past_th
     let mut t = T::new();
     let m = t.app().measurer.clone();
     let w = |s: &str| inkboard_core::text::Measurer::width(&m, s, FontFamily::Sans, 20.0, false);
-    // a rectangle's text area is 16 units narrower than the frame: make it a quarter of a space narrower than "Victor Letirand"
-    let frame_w = w("Victor Letirand") + 16.0 - w(" ") / 4.0;
+    // the text area of a left-aligned rectangle is 24 units narrower than the frame: make it a quarter of a space narrower than "Victor Letirand"
+    let frame_w = w("Victor Letirand") + 24.0 - w(" ") / 4.0;
     let id = add_text_box(&mut t, BoxGeom::Rect, Frame::new(300.0, 200.0, frame_w, 180.0), "Victor Letirand", Align::Left);
     t.app().sel = vec![id.clone()];
     t.h.step();

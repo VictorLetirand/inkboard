@@ -17,9 +17,9 @@ const EXPORT_WIDTH_MAX: f64 = 20000.0;
 pub(super) fn specs() -> Vec<Value> {
     vec![json!({"name": "check_layout",
         "description": "Lists the measurable layout defects of a page, with the ids of the objects involved, so you can fix them without guessing from a picture. Read-only. \
-            Returns {ok, issues: [{kind, severity, ids, message, ...details}], metrics: {objects, connectors, content_box, aspect, min_text_px, empty_cells}}; `ok` is true when there is no issue (errors and warnings). \
+            Returns {ok, issues: [{kind, severity, ids, message, ...details}], metrics: {objects, connectors, content_box, aspect, min_text_px, empty_cells, coverage, frame_top_offset}}; `ok` is true when there is no issue (errors and warnings). \
             Errors: overlap, text_overflow, word_split, connector_through_object, unbound_connector, duplicate_connector. \
-            Warnings: text_outside_frame, connector_crossing, shared_segment, label_collision, small_text, unbalanced. \
+            Warnings: text_outside_frame, connector_crossing, shared_segment, label_collision, small_text, unbalanced (reason aspect, empty_region, staircase or coverage), sparse_frame. \
             `ids` keeps only the issues that involve one of these objects (page-level `unbalanced` is then left out). `export_width` (pixels, default 1600) is the width the page will be exported at, used for `small_text` and `min_text_px`. \
             Text is measured approximately and objects are compared by their bounding boxes, so a few reports can be false alarms (look at them with `render`). Run it after drawing, fix the errors, run it again.",
         "inputSchema": obj(json!({
@@ -65,6 +65,8 @@ fn check_layout(ed: &mut Editor, a: &Value) -> Res<Value> {
             "aspect": m.aspect.map(round),
             "min_text_px": m.min_text_px.map(round),
             "empty_cells": m.empty_cells,
+            "coverage": m.coverage.map(round),
+            "frame_top_offset": round(m.frame_top_offset),
             "export_width": export_width,
         }
     });

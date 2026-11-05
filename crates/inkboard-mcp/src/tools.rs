@@ -100,8 +100,9 @@ fn pos_props(mut p: Value) -> Value {
 pub fn list() -> Vec<Value> {
     let color = json!({"type": "string", "description": "Color \"#rrggbb\" or \"ink\" (the theme's text color)."});
     let mut tools = vec![
-        json!({"name": "create_board", "description": "Creates an empty board (.inkboard file).",
-            "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &["path"])}),
+        json!({"name": "create_board", "description": "Creates an empty board (.inkboard file). If the file already exists it fails (use the existing board, or pass `overwrite: true` to replace it with a fresh empty board).",
+            "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"},
+                "overwrite": {"type": "boolean", "description": "Replace an existing file with a fresh empty board (default false: an existing file is an error)."}}), &["path"])}),
         json!({"name": "save_board", "description": "Saves the board displayed in the application (live mode; it must already have a file). No effect in file mode: every tool already saves there.",
             "inputSchema": obj(json!({}), &[])}),
         json!({"name": "describe_board", "description": "Lists the pages and objects of a board (id, type, text, position, connector links). In live mode, also reports the user's selection (`selection`). Also reads draw.io, Excalidraw, JSON Canvas and Mermaid files. `detail: \"full\"` adds each object's style, font, stacking order `z`, group, lock, rotation and (connectors) route and arrow; tables also list their `cells`, and SVG images the `colors` found in the file (see `recolor` of update_object).",
@@ -488,6 +489,75 @@ fn check_args(a: &Value) -> Res<()> {
 ///
 /// A message for the agent when the tool is unknown or its arguments are invalid; the board is then unchanged.
 pub fn apply(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
+    let mut out = apply_known(ed, name, a)?;
+    let warnings = unknown_arg_warnings(name, a);
+    if !warnings.is_empty()
+        && let Some(m) = out.as_object_mut()
+    {
+        let list = m.entry("warnings").or_insert_with(|| json!([]));
+        if let Some(l) = list.as_array_mut() {
+            l.extend(warnings.into_iter().map(Value::String));
+        }
+    }
+    Ok(out)
+}
+
+/// Arguments every tool call may carry without listing them (`path` and `page` are common; `data_base64` is filled in from `source`).
+const IMPLICIT_ARGS: [&str; 3] = ["path", "page", "data_base64"];
+/// At most this many unknown arguments are reported per call.
+const MAX_UNKNOWN_ARGS: usize = 10;
+
+/// Property names of each tool's input schema.
+fn schema_props() -> &'static std::collections::HashMap<String, Vec<String>> {
+    static PROPS: std::sync::OnceLock<std::collections::HashMap<String, Vec<String>>> = std::sync::OnceLock::new();
+    PROPS.get_or_init(|| {
+        list()
+            .iter()
+            .filter_map(|t| {
+                let props = t["inputSchema"]["properties"].as_object()?.keys().cloned().collect();
+                Some((t["name"].as_str()?.to_owned(), props))
+            })
+            .collect()
+    })
+}
+
+/// Levenshtein distance between two short names.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = std::mem::replace(&mut row[0], i + 1);
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
+
+/// A `warnings` entry for each argument of the call that is not a property of the tool's schema (the call runs anyway), with the closest
+/// property when it is within an edit distance of 2 or shares a prefix of at least 3 characters.
+fn unknown_arg_warnings(name: &str, a: &Value) -> Vec<String> {
+    let (Some(props), Some(args)) = (schema_props().get(name), a.as_object()) else { return Vec::new() };
+    args.keys()
+        .filter(|k| !props.contains(k) && !IMPLICIT_ARGS.contains(&k.as_str()))
+        .take(MAX_UNKNOWN_ARGS)
+        .map(|k| {
+            let near = props
+                .iter()
+                .map(|p| (if k.len() >= 3 && (p.starts_with(k.as_str()) || k.starts_with(p.as_str()) && p.len() >= 3) { 0 } else { edit_distance(k, p) }, p))
+                .filter(|(d, _)| *d <= 2)
+                .min_by_key(|(d, _)| *d);
+            match near {
+                Some((_, p)) => format!("unknown argument \"{k}\" ignored (did you mean \"{p}\"?)"),
+                None => format!("unknown argument \"{k}\" ignored"),
+            }
+        })
+        .collect()
+}
+
+fn apply_known(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
     if name == "save_board" {
         return Ok(json!({"saved": true}));
     }
@@ -606,8 +676,11 @@ pub fn call(srv: &Server, name: &str, a: &Value) -> Res<String> {
     }
     if name == "create_board" {
         let path = PathBuf::from(s(&a, "path")?);
-        if path.exists() {
-            return Err(format!("{} already exists", path.display()));
+        if path.exists() && !edit::bool_arg(&a, "overwrite")?.unwrap_or(false) {
+            return Err(format!(
+                "{} already exists: use the existing board (describe_board), or pass \"overwrite\": true to replace it with a fresh empty board",
+                path.display()
+            ));
         }
         let doc = Document::new(os(&a, "name").unwrap_or("Board"));
         save(&doc, &path)?;

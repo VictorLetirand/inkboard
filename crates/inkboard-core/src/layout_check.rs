@@ -29,6 +29,15 @@ pub const ASPECT_RANGE: (f64, f64) = (0.6, 2.2);
 pub const BALANCE_MIN_OBJECTS: usize = 6;
 /// ... and at least this many empty cells of the 3×3 grid to be reported.
 pub const EMPTY_CELLS_MIN: usize = 3;
+/// `sparse_frame`: a frame whose content covers less than this share of its area is reported ...
+pub const SPARSE_COVERAGE: f64 = 0.30;
+/// ... and so is one with an empty band wider than this (units) between its content and one of its borders.
+pub const SPARSE_BAND: f64 = 200.0;
+/// `unbalanced` (`staircase`): two top-level frames side by side whose tops differ by more than this (units).
+pub const STAIRCASE_TOP_DELTA: f64 = 60.0;
+/// `unbalanced` (`coverage`): the top-level objects cover less than this share of their bounding box (with at least [`COVERAGE_MIN_OBJECTS`] of them).
+pub const COVERAGE_MIN: f64 = 0.35;
+pub const COVERAGE_MIN_OBJECTS: usize = 3;
 /// At most this many issues of one kind are kept (the report says `truncated`).
 pub const MAX_PER_KIND: usize = 50;
 /// Distance (units) under which two parallel segments are on the same line.
@@ -76,6 +85,10 @@ pub struct Metrics {
     pub min_text_px: Option<f64>,
     /// Cells of the 3×3 grid of the content box that hold no object (0 when there are fewer than [`BALANCE_MIN_OBJECTS`] objects).
     pub empty_cells: usize,
+    /// Share (0 to 1) of the bounding box of the top-level objects (not inside a frame) that their boxes cover (overlaps counted twice).
+    pub coverage: Option<f64>,
+    /// Largest difference between the tops of two top-level frames side by side (0 without such a pair).
+    pub frame_top_offset: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -275,6 +288,9 @@ pub fn check(page: &Page, opts: &Options) -> Report {
     let min_text_px = small_text(&items, &conns, content, opts.export_width, &mut issues);
     let objects = visible.iter().filter(|o| !matches!(o.kind, Kind::Connector(_))).count();
     let empty_cells = balance(page, &visible, &items, content, objects, &mut issues);
+    sparse_frames(&items, &mut issues);
+    let frame_top_offset = staircase(&items, &mut issues);
+    let coverage = coverage(&items, &mut issues);
 
     let mut report = Report {
         issues: Vec::new(),
@@ -285,6 +301,8 @@ pub fn check(page: &Page, opts: &Options) -> Report {
             aspect: content.filter(|r| r.h > 0.0).map(|r| r.w / r.h),
             min_text_px,
             empty_cells,
+            coverage,
+            frame_top_offset,
         },
         truncated: false,
     };
@@ -632,6 +650,104 @@ fn balance(page: &Page, visible: &[&Object], items: &[Item], content: Option<Rec
     empty.len()
 }
 
+/// Items strictly inside the frame `f` (the notion of frame of [`Item::frame`]).
+fn content_of<'a>(items: &'a [Item<'a>], f: &Item) -> impl Iterator<Item = &'a Item<'a>> {
+    let (id, rect) = (f.obj.id.clone(), f.rect);
+    items.iter().filter(move |o| o.obj.id != id && contains(&rect, &o.rect) && !contains(&o.rect, &rect))
+}
+
+fn union(rects: impl Iterator<Item = Rect>) -> Option<Rect> {
+    rects.reduce(|a, b| {
+        let (x, y) = (a.x.min(b.x), a.y.min(b.y));
+        Rect::new(x, y, a.right().max(b.right()) - x, a.bottom().max(b.bottom()) - y)
+    })
+}
+
+/// `sparse_frame` (warning): a frame whose content (the bounding box of the items inside it) covers less than [`SPARSE_COVERAGE`] of its area,
+/// or leaves an empty band wider than [`SPARSE_BAND`] between the content and one of its borders (typically a frame left behind or stretched
+/// after its content moved). The title room at the top is far below the band limit. Details: `coverage`, `band_side`, `band`.
+fn sparse_frames(items: &[Item], out: &mut Vec<Issue>) {
+    for f in items.iter().filter(|i| i.frame) {
+        let Some(c) = union(content_of(items, f).map(|o| o.rect)) else { continue };
+        let coverage = if f.rect.w * f.rect.h > 0.0 { c.w * c.h / (f.rect.w * f.rect.h) } else { 1.0 };
+        let bands = [("left", c.x - f.rect.x), ("right", f.rect.right() - c.right()), ("top", c.y - f.rect.y), ("bottom", f.rect.bottom() - c.bottom())];
+        let (side, band) = bands.into_iter().fold(("left", 0.0), |m, b| if b.1 > m.1 { b } else { m });
+        if coverage < SPARSE_COVERAGE || band > SPARSE_BAND {
+            let id = &f.obj.id.0;
+            out.push(issue(
+                "sparse_frame",
+                Severity::Warning,
+                vec![f.obj.id.clone()],
+                format!(
+                    "frame {id} is mostly empty (its content covers {:.0}% of it, widest empty band {band:.0} on the {side}): call add_frame with frame={id} and ids=[its content] to re-fit it",
+                    coverage * 100.0
+                ),
+                vec![("coverage", json!((coverage * 100.0).round() / 100.0)), ("band_side", json!(side)), ("band", json!(r1(band)))],
+            ));
+        }
+    }
+}
+
+/// Top-level items: those no frame contains.
+fn top_level<'a>(items: &'a [Item<'a>]) -> Vec<&'a Item<'a>> {
+    items.iter().filter(|i| !items.iter().any(|f| f.frame && f.obj.id != i.obj.id && contains(&f.rect, &i.rect) && !contains(&i.rect, &f.rect))).collect()
+}
+
+/// `unbalanced` (warning), reason `staircase`: two top-level frames side by side (their x ranges are disjoint, their y ranges overlap) whose
+/// tops differ by more than [`STAIRCASE_TOP_DELTA`]; ids are the frames involved. Frames in different rows do not overlap vertically, so a
+/// grid of frames is fine. Returns the largest top difference found.
+fn staircase(items: &[Item], out: &mut Vec<Issue>) -> f64 {
+    let frames: Vec<&Item> = top_level(items).into_iter().filter(|i| i.frame).collect();
+    let (mut worst, mut ids) = (0.0_f64, Vec::new());
+    for (i, a) in frames.iter().enumerate() {
+        for b in &frames[i + 1..] {
+            let side_by_side = a.rect.right() <= b.rect.x + OVERLAP_TOL || b.rect.right() <= a.rect.x + OVERLAP_TOL;
+            let diff = (a.rect.y - b.rect.y).abs();
+            if side_by_side && a.rect.y < b.rect.bottom() - OVERLAP_TOL && b.rect.y < a.rect.bottom() - OVERLAP_TOL && diff > STAIRCASE_TOP_DELTA {
+                worst = worst.max(diff);
+                for f in [a, b] {
+                    if !ids.contains(&f.obj.id) {
+                        ids.push(f.obj.id.clone());
+                    }
+                }
+            }
+        }
+    }
+    if !ids.is_empty() {
+        out.push(issue(
+            "unbalanced",
+            Severity::Warning,
+            ids,
+            format!("frames side by side start at different heights (tops differ by up to {worst:.0}, more than {STAIRCASE_TOP_DELTA:.0}): align their tops (arrange_objects align top, or give them the same y)"),
+            vec![("reason", json!("staircase")), ("top_offset", json!(r1(worst)))],
+        ));
+    }
+    worst
+}
+
+/// `unbalanced` (warning), reason `coverage`: with at least [`COVERAGE_MIN_OBJECTS`] top-level objects, their boxes cover less than
+/// [`COVERAGE_MIN`] of their bounding box (a diagonal or scattered layout). Areas are added up, so overlaps count twice (they are reported
+/// on their own). Returns the coverage.
+fn coverage(items: &[Item], out: &mut Vec<Issue>) -> Option<f64> {
+    let top = top_level(items);
+    let bounds = union(top.iter().map(|i| i.rect)).filter(|r| r.w > 0.0 && r.h > 0.0)?;
+    let covered = (top.iter().map(|i| i.rect.w * i.rect.h).sum::<f64>() / (bounds.w * bounds.h)).min(1.0);
+    if top.len() >= COVERAGE_MIN_OBJECTS && covered < COVERAGE_MIN {
+        out.push(issue(
+            "unbalanced",
+            Severity::Warning,
+            vec![],
+            format!(
+                "the objects cover only {:.0}% of the area they span (expected at least {:.0}%): bring them closer together or arrange them in rows and columns",
+                covered * 100.0,
+                COVERAGE_MIN * 100.0
+            ),
+            vec![("reason", json!("coverage")), ("coverage", json!((covered * 100.0).round() / 100.0))],
+        ));
+    }
+    Some(covered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -926,14 +1042,68 @@ mod tests {
         }
         let r = check(&q, &Options::default());
         let u: Vec<&Issue> = r.issues.iter().filter(|i| i.kind == "unbalanced").collect();
-        assert_eq!(u.len(), 1, "{:?}", r.issues);
+        // two far apart clusters also leave most of the span uncovered
+        assert_eq!(u.len(), 2, "{:?}", r.issues);
         assert_eq!(u[0].details[0].1, json!("empty_region"));
+        assert_eq!(u[1].details[0].1, json!("coverage"));
         assert_eq!(r.metrics.empty_cells, 7);
         // fewer than 6 objects: only the aspect is judged
         let mut s = Page::new("t");
         shape(&mut s, BoxGeom::Rect, "n", 0.0, 0.0, 100.0, 60.0);
         shape(&mut s, BoxGeom::Rect, "n", 800.0, 600.0, 100.0, 60.0);
         assert_eq!(check(&s, &Options::default()).metrics.empty_cells, 0);
+    }
+
+    fn frame_with(p: &mut Page, x: f64, y: f64, w: f64, h: f64, inner: (f64, f64, f64, f64)) -> Id {
+        let f = rect(p, x, y, w, h);
+        rect(p, inner.0, inner.1, inner.2, inner.3);
+        f
+    }
+
+    #[test]
+    fn a_mostly_empty_frame_is_sparse_and_a_snug_one_is_not() {
+        let mut p = Page::new("t");
+        let snug = frame_with(&mut p, 0.0, 0.0, 280.0, 180.0, (40.0, 40.0, 200.0, 100.0));
+        let loose = frame_with(&mut p, 0.0, 400.0, 900.0, 600.0, (40.0, 440.0, 200.0, 100.0));
+        let wide = frame_with(&mut p, 1200.0, 0.0, 800.0, 200.0, (1210.0, 10.0, 360.0, 180.0));
+        let s = issues_of(&p, "sparse_frame");
+        assert!(s.iter().all(|i| i.ids != vec![snug.clone()]), "{s:?}");
+        let by = |id: &Id| s.iter().find(|i| &i.ids[0] == id);
+        assert!(by(&loose).unwrap().message.contains("add_frame with frame="));
+        // dense (coverage 0.45) but a 220 wide empty band on the right
+        assert_eq!(by(&wide).unwrap().details.iter().find(|d| d.0 == "band_side").unwrap().1, json!("right"));
+        assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn frames_side_by_side_at_different_heights_are_a_staircase_but_a_grid_is_not() {
+        let mut p = Page::new("t");
+        let a = frame_with(&mut p, 0.0, 0.0, 300.0, 300.0, (40.0, 40.0, 200.0, 200.0));
+        let b = frame_with(&mut p, 400.0, 100.0, 300.0, 300.0, (440.0, 140.0, 200.0, 200.0));
+        let r = check(&p, &Options::default());
+        let u: Vec<&Issue> = r.issues.iter().filter(|i| i.kind == "unbalanced" && i.details[0].1 == json!("staircase")).collect();
+        assert_eq!(u.len(), 1, "{:?}", r.issues);
+        assert_eq!(u[0].ids, vec![a, b]);
+        assert!((r.metrics.frame_top_offset - 100.0).abs() < 1e-9);
+        // same tops: fine; a second row (no vertical overlap): fine
+        let mut q = Page::new("t");
+        frame_with(&mut q, 0.0, 0.0, 300.0, 300.0, (40.0, 40.0, 200.0, 200.0));
+        frame_with(&mut q, 400.0, 0.0, 300.0, 300.0, (440.0, 40.0, 200.0, 200.0));
+        frame_with(&mut q, 400.0, 400.0, 300.0, 300.0, (440.0, 440.0, 200.0, 200.0));
+        let r = check(&q, &Options::default());
+        assert!(r.issues.iter().all(|i| i.details.first().is_none_or(|d| d.1 != json!("staircase"))), "{:?}", r.issues);
+        assert_eq!(r.metrics.frame_top_offset, 0.0);
+    }
+
+    #[test]
+    fn a_diagonal_scatter_covers_too_little_of_its_box() {
+        let mut p = Page::new("t");
+        for i in 0..4 {
+            rect(&mut p, f64::from(i) * 300.0, f64::from(i) * 250.0, 100.0, 100.0);
+        }
+        let r = check(&p, &Options::default());
+        assert!(r.issues.iter().any(|i| i.kind == "unbalanced" && i.details[0].1 == json!("coverage")), "{:?}", r.issues);
+        assert!(r.metrics.coverage.unwrap() < COVERAGE_MIN);
     }
 
     #[test]

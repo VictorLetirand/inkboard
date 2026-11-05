@@ -2,6 +2,7 @@
 
 use super::{Res, edit, find, obj, ocolor, os, page_prop, path_prop, richtext};
 use inkboard_core::editor::Order;
+use inkboard_core::model::{RECT_CORNER_INSET, RECT_INSET};
 use inkboard_core::text::layout_rich;
 use inkboard_core::{Align, ApproxMeasurer, BoxGeom, Color, Editor, Frame, Id, Kind, Label, Object, Rect, RichText, Span, SpanStyle, Style, VAlign, num};
 use serde_json::{Value, json};
@@ -15,8 +16,10 @@ const PADDING: f64 = 40.0;
 const TITLE_SIZE: f64 = 18.0;
 /// Space between the title line and the content, added to the padding on top.
 const TITLE_GAP: f64 = 12.0;
-/// Room the text area of a rect keeps on each side (see `BoxObj::label_rect`), and a margin against rounding.
-const LABEL_INSET: f64 = 8.0;
+/// Extra room on top: the title starts `RECT_CORNER_INSET` below the border instead of `RECT_INSET` (see `BoxObj::label_rect`).
+const TITLE_TOP_EXTRA: f64 = RECT_CORNER_INSET - RECT_INSET;
+/// Default title color (dark grey, readable on the pale fill).
+const TITLE_COLOR: Color = Color::rgb(0x34, 0x3a, 0x40);
 const MAX_SIDE: f64 = 1_000_000.0;
 const FILL: Color = Color::rgb(0xf1, 0xf3, 0xf5);
 const STROKE: Color = Color::rgb(0xad, 0xb5, 0xbd);
@@ -34,7 +37,8 @@ pub(super) fn specs() -> Vec<Value> {
             "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Objects to frame (required unless x, y, w and h are given). The other members of their groups are included."},
             "frame": {"type": "string", "description": "Id of an existing frame (a rect made by add_frame): re-fit it around `ids` instead of creating one."},
             "title": {"type": "string", "description": "Title, inside the frame at the top left."},
-            "padding": {"type": "number", "minimum": 0, "maximum": 10000, "description": "Space between the content and the border (default 40); a title adds its height + 12 on top."},
+            "title_color": color("Title color (default #343a40, dark grey; not the border color). On a re-fit, the existing title color is kept unless given."),
+            "padding": {"type": "number", "minimum": 0, "maximum": 10000, "description": "Space between the content and the border (default 40); a title adds its height + 20 on top."},
             "fill": color("Background (default #f1f3f5)."), "stroke": color("Border (default #adb5bd)."),
             "dash": {"type": "string", "enum": ["solid", "dashed", "dotted"], "description": "Border style (default solid)."},
             "title_font_size": {"type": "number", "minimum": 4, "maximum": 400, "description": "Default 18."},
@@ -57,11 +61,13 @@ fn title_size(label: &Label) -> (f64, f64) {
 }
 
 #[allow(clippy::many_single_char_names)] // x, y, w, h, a: the tool's own parameter names
+#[allow(clippy::too_many_lines)] // one tool: arguments, title, geometry, stacking, edit
 fn add_frame(ed: &mut Editor, a: &Value) -> Res<Value> {
     let padding = edit::num_arg(a, "padding", 0.0, 10_000.0)?.unwrap_or(PADDING);
     let title = os(a, "title");
     let size = edit::num_arg(a, "title_font_size", 4.0, 400.0)?.unwrap_or(TITLE_SIZE);
     let bold = edit::bool_arg(a, "title_bold")?.unwrap_or(true);
+    let title_color = ocolor(a, "title_color")?;
     let (fill, stroke) = (ocolor(a, "fill")?, ocolor(a, "stroke")?);
     let dash = edit::dash_arg(a)?;
     let roundness = edit::num_arg(a, "roundness", 0.0, 1.0)?;
@@ -92,15 +98,24 @@ fn add_frame(ed: &mut Editor, a: &Value) -> Res<Value> {
     let ids = ed.page().expand_groups(&ids);
 
     // the title: the new one, else (re-fit) the one the frame already has
+    let current = existing.as_ref().and_then(|f| ed.page().get(f)).and_then(|o| if let Kind::Box(b) = &o.kind { Some(b.label.clone()) } else { None });
     let label = if let Some(t) = title {
         let mut l = Label::new(t, size, Align::Left);
         l.valign = VAlign::Top;
-        if bold && !t.is_empty() {
-            l.text = RichText(vec![Span { text: t.to_owned(), style: SpanStyle { bold: true, ..SpanStyle::default() } }]);
+        // a re-fit with a new title but no color keeps the color of the old title
+        let color = title_color.or_else(|| current.as_ref().and_then(|c| c.text.0.iter().find_map(|s| s.style.color))).unwrap_or(TITLE_COLOR);
+        if !t.is_empty() {
+            l.text = RichText(vec![Span { text: t.to_owned(), style: SpanStyle { bold, color: Some(color), ..SpanStyle::default() } }]);
         }
         l
     } else {
-        existing.as_ref().and_then(|f| ed.page().get(f)).and_then(|o| if let Kind::Box(b) = &o.kind { Some(b.label.clone()) } else { None }).unwrap_or_default()
+        let mut l = current.unwrap_or_default();
+        if let Some(c) = title_color {
+            for s in &mut l.text.0 {
+                s.style.color = Some(c);
+            }
+        }
+        l
     };
     let (title_h, title_w) = title_size(&label);
 
@@ -108,12 +123,12 @@ fn add_frame(ed: &mut Editor, a: &Value) -> Res<Value> {
     let mut area = match (rect, ed.page().bounds_of(&ids)) {
         (Some(r), _) => r,
         (None, Some(u)) => {
-            let top = if title_h > 0.0 { title_h + TITLE_GAP } else { 0.0 };
+            let top = if title_h > 0.0 { title_h + TITLE_GAP + TITLE_TOP_EXTRA } else { 0.0 };
             Rect::new(u.x - padding, u.y - padding - top, u.w + 2.0 * padding, u.h + 2.0 * padding + top)
         }
         (None, None) => return Err("nothing to frame: the objects have no box".into()),
     };
-    let min_w = title_w.ceil() + 2.0 * LABEL_INSET + 2.0;
+    let min_w = title_w.ceil() + RECT_CORNER_INSET + RECT_INSET + 2.0;
     if title_h > 0.0 && area.w < min_w {
         area.w = min_w;
         warnings.push("the frame was widened to hold its title on one line".to_owned());
@@ -142,7 +157,7 @@ fn add_frame(ed: &mut Editor, a: &Value) -> Res<Value> {
             ed.update(f, |o| {
                 if let Kind::Box(b) = &mut o.kind {
                     b.frame = Frame::new(area.x, area.y, area.w, area.h);
-                    if title.is_some() {
+                    if title.is_some() || title_color.is_some() {
                         b.label = label.clone();
                     }
                 }

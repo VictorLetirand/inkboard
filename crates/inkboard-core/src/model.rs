@@ -222,6 +222,11 @@ pub struct BoxObj {
     pub lang: Option<crate::highlight::Lang>,
 }
 
+/// Room a rect keeps between its text area and its border.
+pub const RECT_INSET: f64 = 8.0;
+/// Same on the left (left-aligned text) and on the top (top-aligned text): clears the rounded corner of a rect.
+pub const RECT_CORNER_INSET: f64 = 16.0;
+
 impl BoxObj {
     /// Area (local frame) in which the text is laid out.
     #[must_use]
@@ -235,7 +240,12 @@ impl BoxObj {
             // inscribed rectangle (0.6 + 0.4 = 1): wide rather than tall, so that a word is not split
             BoxGeom::Diamond => Rect::new(-hw * 0.6, -hh * 0.4, w * 0.6, h * 0.4),
             BoxGeom::Triangle => Rect::new(-hw * 0.5, -hh * 0.1, w * 0.5, h * 0.5),
-            BoxGeom::Rect => Rect::new(-hw + 8.0, -hh + 8.0, (w - 16.0).max(1.0), (h - 16.0).max(1.0)),
+            BoxGeom::Rect => {
+                // text hugging the top or left border (a frame title) is pushed further in, to clear the rounded corner
+                let left = if self.label.align == Align::Left { RECT_CORNER_INSET } else { RECT_INSET };
+                let top = if self.label.valign == VAlign::Top { RECT_CORNER_INSET } else { RECT_INSET };
+                Rect::new(-hw + left, -hh + top, (w - left - RECT_INSET).max(1.0), (h - top - RECT_INSET).max(1.0))
+            }
         }
     }
 

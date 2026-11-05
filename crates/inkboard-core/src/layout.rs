@@ -715,7 +715,7 @@ pub fn auto_layout_with(editor: &mut Editor, ids: &[Id], dir: Direction, opts: &
         if let Some(b) = rect_box(u).filter(|b| !b.label.text.is_empty()) {
             let lay = layout_rich(&b.label.text, None, &ApproxMeasurer, b.label.family, b.label.size);
             top[u] += lay.height.max(b.label.line_height()) + TITLE_GAP;
-            title_w[u] = lay.width.ceil() + 18.0;
+            title_w[u] = lay.width.ceil() + 26.0; // 16 inset on the left of a left-aligned text, 8 on the right, 2 spare
         }
     }
 

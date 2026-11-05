@@ -633,12 +633,12 @@ mod tests {
             let o = Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 200.0, 100.0), Style::default(), label);
             let doc = doc_with(vec![o]);
             let svg = export_approx(&doc, &doc.pages[0]).unwrap();
-            let at = svg.find("<text x=\"-92\" y=\"").expect("text at the left of the area") + "<text x=\"-92\" y=\"".len();
+            let at = svg.find("<text x=\"-84\" y=\"").expect("text at the left of the area") + "<text x=\"-84\" y=\"".len();
             svg[at..].split('"').next().unwrap().parse::<f64>().unwrap()
         };
-        // text area: 8 units inside the 200 x 100 box, one line 26 high
+        // text area: 16 units inside on the left, 8 on the other sides (16 on top for a top-aligned text), one line 26 high
         assert!(y_of(VAlign::Middle).abs() < 1e-6);
-        assert!((y_of(VAlign::Top) - -29.0).abs() < 1e-6, "{}", y_of(VAlign::Top));
+        assert!((y_of(VAlign::Top) - -21.0).abs() < 1e-6, "{}", y_of(VAlign::Top));
         assert!((y_of(VAlign::Bottom) - 29.0).abs() < 1e-6, "{}", y_of(VAlign::Bottom));
     }
 

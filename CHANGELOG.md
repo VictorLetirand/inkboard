@@ -7,6 +7,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ### Added
 
+- **MCP, unknown arguments:** a tool call (also inside `batch`) with an argument that is not in the tool's schema still runs and returns a `warnings` entry (`unknown argument "bold" ignored (did you mean ...?)`), once, in the dispatcher.
+- **MCP, `check_layout`:** new warning `sparse_frame` (content under 30% of the frame, or an empty band over 200 units); `unbalanced` also reports `staircase` (top-level frames side by side with tops more than 60 units apart) and `coverage` (top-level objects under 35% of their bounding box); new metrics `coverage` and `frame_top_offset`.
+- **MCP, `create_board`:** `overwrite: true` replaces an existing file with a fresh empty board; without it an existing file is an error that says so.
+- **MCP, `add_frame`:** `title_color` (default dark grey `#343a40`, kept on a re-fit).
 - **MCP, `add_frame`:** new tool that draws a grouping frame around existing objects in one call: one `rect` with its own title (top left, bold), sized to the union of `ids` plus `padding` (default 40, room added for the title) and placed behind them, also correct inside another frame. Calling it again with `frame` re-fits the same frame after the content moved.
 - **MCP, grid:** `arrange_objects` with `action: "grid"` (`columns`, `gap_x`, `gap_y`, `origin`, `cell` `max` / `fit`, `align` `center` / `start`) lays objects out row by row in the order given; an icon and its label count as one item.
 - **MCP, `auto_layout`:** `gap_x` / `gap_y` set the spacing, `ids` limits the layout to some objects, an icon and its label (any group) are one node, and a frame is laid out as a cluster around its content like a Mermaid subgraph (the engine's `auto_layout_with`; the application's command gets the same group and frame handling).
@@ -21,6 +25,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ### Changed
 
+- **Left/top-aligned text in a rect:** its text area starts 16 units (was 8) from the left border for left-aligned text and from the top border for top-aligned text, so a frame title clears the rounded corner (canvas, export, text fit and `check_layout` agree; `add_frame` and `auto_layout` leave the room needed).
 - **Elbow arrows no longer share a line:** elbow connectors whose middle segments would run along the same line and overlap (one source fanning out to a column of targets, parallel links between two columns) are spread over parallel channels 10 units apart, on screen and in every export; `check_layout` no longer reports them as `shared_segment`, nor two arrows that only share their first segment when leaving the same point. Applies to arrows without waypoints, on pages of at most 150 elbow arrows.
 - **Arrows on icons:** an arrow attached to an image (an icon) with no side now attaches at the middle of the side facing the other end instead of a point of its box that could be a corner.
 - **MCP:** `move_objects` also moves the other members of the groups of the given ids (an icon and its label); `group: false` restores the previous behavior.

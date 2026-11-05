@@ -742,8 +742,8 @@ mod tests {
         let v: Value = serde_json::from_str(&export(&d, &d.pages[0], &ApproxMeasurer)).unwrap();
         let texts: Vec<&Value> = v["elements"].as_array().unwrap().iter().filter(|e| e["type"] == "text").collect();
         assert_eq!((texts[0]["verticalAlign"].as_str(), texts[1]["verticalAlign"].as_str()), (Some("top"), Some("middle")));
-        // the title sits in the top left corner of the text area (8 units inside the frame)
-        assert!((texts[0]["x"].as_f64().unwrap() - 8.0).abs() < 1e-6 && (texts[0]["y"].as_f64().unwrap() - 8.0).abs() < 1e-6, "{}", texts[0]);
+        // the title sits in the top left corner of the text area (16 units inside the frame)
+        assert!((texts[0]["x"].as_f64().unwrap() - 16.0).abs() < 1e-6 && (texts[0]["y"].as_f64().unwrap() - 16.0).abs() < 1e-6, "{}", texts[0]);
         let back = export_import(&d);
         let got: Vec<VAlign> = back.doc.pages[0].objects.iter().filter_map(|o| if let Kind::Box(b) = &o.kind { Some(b.label.valign) } else { None }).collect();
         assert_eq!(got, [VAlign::Top, VAlign::Middle]);
