@@ -8,7 +8,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 ### Added
 
 - **MCP, unknown arguments:** a tool call (also inside `batch`) with an argument that is not in the tool's schema still runs and returns a `warnings` entry (`unknown argument "bold" ignored (did you mean ...?)`), once, in the dispatcher.
-- **MCP, `check_layout`:** new warning `sparse_frame` (content under 30% of the frame, or an empty band over 200 units); `unbalanced` also reports `staircase` (top-level frames side by side with tops more than 60 units apart) and `coverage` (top-level objects under 35% of their bounding box); new metrics `coverage` and `frame_top_offset`.
+- **MCP, `check_layout`:** new warning `sparse_frame` (content under 30% of the frame, or an empty band over 200 units); `unbalanced` also reports `staircase` (top-level frames side by side with tops more than 60 units apart); new metrics `coverage` and `frame_top_offset`.
 - **MCP, `create_board`:** `overwrite: true` replaces an existing file with a fresh empty board; without it an existing file is an error that says so.
 - **MCP, `add_frame`:** `title_color` (default dark grey `#343a40`, kept on a re-fit).
 - **MCP, `add_frame`:** new tool that draws a grouping frame around existing objects in one call: one `rect` with its own title (top left, bold), sized to the union of `ids` plus `padding` (default 40, room added for the title) and placed behind them, also correct inside another frame. Calling it again with `frame` re-fits the same frame after the content moved.

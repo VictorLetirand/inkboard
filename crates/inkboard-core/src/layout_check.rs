@@ -35,9 +35,6 @@ pub const SPARSE_COVERAGE: f64 = 0.30;
 pub const SPARSE_BAND: f64 = 200.0;
 /// `unbalanced` (`staircase`): two top-level frames side by side whose tops differ by more than this (units).
 pub const STAIRCASE_TOP_DELTA: f64 = 60.0;
-/// `unbalanced` (`coverage`): the top-level objects cover less than this share of their bounding box (with at least [`COVERAGE_MIN_OBJECTS`] of them).
-pub const COVERAGE_MIN: f64 = 0.35;
-pub const COVERAGE_MIN_OBJECTS: usize = 3;
 /// At most this many issues of one kind are kept (the report says `truncated`).
 pub const MAX_PER_KIND: usize = 50;
 /// Distance (units) under which two parallel segments are on the same line.
@@ -290,7 +287,7 @@ pub fn check(page: &Page, opts: &Options) -> Report {
     let empty_cells = balance(page, &visible, &items, content, objects, &mut issues);
     sparse_frames(&items, &mut issues);
     let frame_top_offset = staircase(&items, &mut issues);
-    let coverage = coverage(&items, &mut issues);
+    let coverage = coverage(&items);
 
     let mut report = Report {
         issues: Vec::new(),
@@ -725,27 +722,12 @@ fn staircase(items: &[Item], out: &mut Vec<Issue>) -> f64 {
     worst
 }
 
-/// `unbalanced` (warning), reason `coverage`: with at least [`COVERAGE_MIN_OBJECTS`] top-level objects, their boxes cover less than
-/// [`COVERAGE_MIN`] of their bounding box (a diagonal or scattered layout). Areas are added up, so overlaps count twice (they are reported
-/// on their own). Returns the coverage.
-fn coverage(items: &[Item], out: &mut Vec<Issue>) -> Option<f64> {
+/// Metric only (never an issue: icons joined by long arrows are legitimately sparse): the share of the bounding box of the top-level
+/// objects that they cover. Areas are added up, so overlaps count twice.
+fn coverage(items: &[Item]) -> Option<f64> {
     let top = top_level(items);
     let bounds = union(top.iter().map(|i| i.rect)).filter(|r| r.w > 0.0 && r.h > 0.0)?;
-    let covered = (top.iter().map(|i| i.rect.w * i.rect.h).sum::<f64>() / (bounds.w * bounds.h)).min(1.0);
-    if top.len() >= COVERAGE_MIN_OBJECTS && covered < COVERAGE_MIN {
-        out.push(issue(
-            "unbalanced",
-            Severity::Warning,
-            vec![],
-            format!(
-                "the objects cover only {:.0}% of the area they span (expected at least {:.0}%): bring them closer together or arrange them in rows and columns",
-                covered * 100.0,
-                COVERAGE_MIN * 100.0
-            ),
-            vec![("reason", json!("coverage")), ("coverage", json!((covered * 100.0).round() / 100.0))],
-        ));
-    }
-    Some(covered)
+    Some((top.iter().map(|i| i.rect.w * i.rect.h).sum::<f64>() / (bounds.w * bounds.h)).min(1.0))
 }
 
 #[cfg(test)]
@@ -1042,10 +1024,8 @@ mod tests {
         }
         let r = check(&q, &Options::default());
         let u: Vec<&Issue> = r.issues.iter().filter(|i| i.kind == "unbalanced").collect();
-        // two far apart clusters also leave most of the span uncovered
-        assert_eq!(u.len(), 2, "{:?}", r.issues);
+        assert_eq!(u.len(), 1, "{:?}", r.issues);
         assert_eq!(u[0].details[0].1, json!("empty_region"));
-        assert_eq!(u[1].details[0].1, json!("coverage"));
         assert_eq!(r.metrics.empty_cells, 7);
         // fewer than 6 objects: only the aspect is judged
         let mut s = Page::new("t");
@@ -1096,14 +1076,21 @@ mod tests {
     }
 
     #[test]
-    fn a_diagonal_scatter_covers_too_little_of_its_box() {
+    fn a_sparse_but_regular_icon_diagram_is_not_unbalanced() {
         let mut p = Page::new("t");
-        for i in 0..4 {
-            rect(&mut p, f64::from(i) * 300.0, f64::from(i) * 250.0, 100.0, 100.0);
+        let mut ids = Vec::new();
+        for row in 0..2 {
+            for col in 0..3 {
+                ids.push(rect(&mut p, f64::from(col) * 300.0, f64::from(row) * 250.0, 80.0, 150.0));
+            }
         }
+        link(&mut p, &ids[0], &ids[1]);
+        link(&mut p, &ids[1], &ids[2]);
+        link(&mut p, &ids[3], &ids[4]);
+        link(&mut p, &ids[4], &ids[5]);
         let r = check(&p, &Options::default());
-        assert!(r.issues.iter().any(|i| i.kind == "unbalanced" && i.details[0].1 == json!("coverage")), "{:?}", r.issues);
-        assert!(r.metrics.coverage.unwrap() < COVERAGE_MIN);
+        assert!(r.metrics.coverage.unwrap() < 0.35, "{:?}", r.metrics);
+        assert!(r.issues.iter().all(|i| i.kind != "unbalanced"), "{:?}", r.issues);
     }
 
     #[test]
