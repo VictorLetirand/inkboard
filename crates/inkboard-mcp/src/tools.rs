@@ -2,7 +2,7 @@
 
 use crate::Server;
 use base64::Engine;
-use inkboard_core::layout::{Direction, auto_layout};
+use inkboard_core::layout::{Direction, LayoutOptions, auto_layout_with};
 use inkboard_core::model::BoxObj;
 use inkboard_core::svg::{SvgOptions, export as export_svg};
 use inkboard_core::text::layout_rich;
@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 mod batch;
 mod check;
 mod edit;
+mod frame;
 mod icons;
 mod render;
 mod richtext;
@@ -170,8 +171,11 @@ pub fn list() -> Vec<Value> {
         json!({"name": "delete_object", "description": "Deletes an object, or several with `ids` (connectors that were bound to them remain, detached). Give `id` or `ids`.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "id": {"type": "string"},
                 "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Several objects to delete at once (result: `deleted` is then a list)."}}), &[])}),
-        json!({"name": "auto_layout", "description": "Rearranges the shapes joined by connectors into a layered graph.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."}}), &[])}),
+        json!({"name": "auto_layout", "description": "Rearranges the shapes, images and tables joined by connectors into a layered graph (the top-left corner of what is laid out stays).             An icon and its label (a group) move as one node. A rect that holds other laid-out nodes is a frame: its content is laid out on its own, then the frame is re-fitted around it (padding 40, room for its title) and takes part as one block, like a Mermaid subgraph.             `ids` limits the layout to these objects and the connectors between them. Returns `nodes` (groups count once) and `frames`.",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "direction": {"type": "string", "enum": ["TB", "LR", "BT", "RL"], "description": "Default: TB."},
+                "gap_x": {"type": "number", "minimum": 0, "maximum": 10000, "description": "Horizontal gap: between layers for LR / RL, between nodes of a layer for TB / BT (default 84 between layers, 48 between nodes)."},
+                "gap_y": {"type": "number", "minimum": 0, "maximum": 10000, "description": "Vertical gap: between layers for TB / BT, between nodes of a layer for LR / RL (same defaults)."},
+                "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2000, "description": "Only lay out these objects (default: the whole page); the other members of their groups come along."}}), &[])}),
         json!({"name": "add_page", "description": "Adds a page. Returns its number.",
             "inputSchema": obj(json!({"path": path_prop(), "name": {"type": "string"}}), &[])}),
         json!({"name": "export", "description": "Exports a page to a file; the format is chosen by the extension of `output`: .svg, .png, .pdf, .drawio, .excalidraw, .canvas, .inkboard. Missing folders of `output` are created (under the allowed root). For a PNG, `width` fixes the width in pixels (the same width for every diagram, whatever its size) or `scale` the pixels per board unit (default 2).",
@@ -186,15 +190,17 @@ pub fn list() -> Vec<Value> {
 /* ------------------------------------------------- tools of the submodules */
 
 fn ext_specs() -> Vec<Value> {
-    [icons::specs(), render::specs(), check::specs(), edit::specs(), batch::specs(), richtext::specs()].concat()
+    [icons::specs(), render::specs(), check::specs(), edit::specs(), frame::specs(), batch::specs(), richtext::specs()].concat()
 }
 
 fn ext_is_tool(name: &str) -> bool {
-    [icons::NAMES, render::NAMES, check::NAMES, edit::NAMES, batch::NAMES, richtext::NAMES].iter().any(|l| l.contains(&name))
+    [icons::NAMES, render::NAMES, check::NAMES, edit::NAMES, frame::NAMES, batch::NAMES, richtext::NAMES].iter().any(|l| l.contains(&name))
 }
 
 fn ext_is_read_only(name: &str) -> bool {
-    [icons::READ_ONLY, render::READ_ONLY, check::READ_ONLY, edit::READ_ONLY, batch::READ_ONLY, richtext::READ_ONLY].iter().any(|l| l.contains(&name))
+    [icons::READ_ONLY, render::READ_ONLY, check::READ_ONLY, edit::READ_ONLY, frame::READ_ONLY, batch::READ_ONLY, richtext::READ_ONLY]
+        .iter()
+        .any(|l| l.contains(&name))
 }
 
 fn ext_apply(ed: &mut Editor, name: &str, a: &Value) -> Option<Res<Value>> {
@@ -202,6 +208,7 @@ fn ext_apply(ed: &mut Editor, name: &str, a: &Value) -> Option<Res<Value>> {
         .or_else(|| render::apply(ed, name, a))
         .or_else(|| check::apply(ed, name, a))
         .or_else(|| edit::apply(ed, name, a))
+        .or_else(|| frame::apply(ed, name, a))
         .or_else(|| batch::apply(ed, name, a))
         .or_else(|| richtext::apply(ed, name, a))
 }
@@ -541,9 +548,14 @@ fn apply_checked(ed: &mut Editor, name: &str, a: &Value) -> Res<Value> {
                 "RL" => Direction::RightLeft,
                 d => return Err(format!("unknown direction \"{d}\" (TB, LR, BT, RL)")),
             };
-            let ids: Vec<Id> = ed.page().objects.iter().map(|o| o.id.clone()).collect();
-            auto_layout(ed, &ids, dir);
-            Ok(json!({"layout": "ok", "objects": ids.len()}))
+            let gaps = (edit::num_arg(a, "gap_x", 0.0, 10_000.0)?, edit::num_arg(a, "gap_y", 0.0, 10_000.0)?);
+            let ids: Vec<Id> = if a.get("ids").is_some_and(|v| !v.is_null()) {
+                edit::ids_arg(ed, a, "ids")?
+            } else {
+                ed.page().objects.iter().map(|o| o.id.clone()).collect()
+            };
+            let r = auto_layout_with(ed, &ids, dir, &LayoutOptions { gap_x: gaps.0, gap_y: gaps.1 });
+            Ok(json!({"layout": "ok", "objects": ids.len(), "nodes": r.nodes, "frames": r.frames}))
         }
         "add_page" => {
             let n = ed.doc.pages.len() + 1;

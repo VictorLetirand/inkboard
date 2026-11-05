@@ -7,6 +7,9 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ### Added
 
+- **MCP, `add_frame`:** new tool that draws a grouping frame around existing objects in one call: one `rect` with its own title (top left, bold), sized to the union of `ids` plus `padding` (default 40, room added for the title) and placed behind them, also correct inside another frame. Calling it again with `frame` re-fits the same frame after the content moved.
+- **MCP, grid:** `arrange_objects` with `action: "grid"` (`columns`, `gap_x`, `gap_y`, `origin`, `cell` `max` / `fit`, `align` `center` / `start`) lays objects out row by row in the order given; an icon and its label count as one item.
+- **MCP, `auto_layout`:** `gap_x` / `gap_y` set the spacing, `ids` limits the layout to some objects, an icon and its label (any group) are one node, and a frame is laid out as a cluster around its content like a Mermaid subgraph (the engine's `auto_layout_with`; the application's command gets the same group and frame handling).
 - **MCP, connectors:** `add_connector` accepts `dash`, `font_size` (label) and `stroke_width`; the label is `label` or `text` in both `add_connector` and `update_object`.
 - **MCP, icons:** `add_icon` takes `label_font_size`, `label_max_width` (long labels now wrap, default `max(2 × icon size, 140)`) and `label_side` (`bottom`, `top`, `right`, `left`). `search_icons` returns each icon's `aspect` and `wide` (wordmark logos), and retries an empty query with synonyms (`note`).
 - **MCP, shapes:** `fit: "width"` (with `max_lines`) on `add_shape` and `update_object` computes the width that holds the text without splitting a word; both warn when the height had to grow or a word is wider than the text area.

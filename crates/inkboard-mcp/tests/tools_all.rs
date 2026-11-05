@@ -8,8 +8,8 @@ use inkboard_core::{Document, Kind, Object, connector::End, serial};
 use serde_json::{Value, json};
 use std::path::Path;
 
-/// The 28 tools of `docs/MCP.md`.
-const TOOLS: [&str; 28] = [
+/// The 29 tools of `docs/MCP.md`.
+const TOOLS: [&str; 29] = [
     "create_board",
     "save_board",
     "board_changes",
@@ -34,6 +34,7 @@ const TOOLS: [&str; 28] = [
     "find_objects",
     "move_objects",
     "arrange_objects",
+    "add_frame",
     "manage_pages",
     "duplicate_objects",
     "format_text",

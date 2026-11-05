@@ -6,9 +6,10 @@
 use crate::connector::Route;
 use crate::editor::Editor;
 use crate::geom::{Pt, Rect};
-use crate::model::{Id, Kind};
+use crate::model::{BoxGeom, Id, Kind};
 use crate::num;
-use std::collections::HashMap;
+use crate::text::{ApproxMeasurer, layout_rich};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -42,6 +43,19 @@ struct Item {
 
 const NODE_SEP: f64 = 48.0;
 const RANK_SEP: f64 = 84.0;
+
+/// Room kept between nodes of the same rank (`node`) and between two ranks (`rank`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spacing {
+    pub node: f64,
+    pub rank: f64,
+}
+
+impl Default for Spacing {
+    fn default() -> Self {
+        Self { node: NODE_SEP, rank: RANK_SEP }
+    }
+}
 
 /// Room between two relay nodes (the lines of long edges running side by side), and between a relay node and a real one.
 const RELAY_SEP: f64 = 18.0;
@@ -356,11 +370,11 @@ fn transpose(layers: &mut [Vec<usize>], up: &[Vec<usize>], down: &[Vec<usize>], 
 
 /// Coordinates across the ranks: packed side by side, then pulled toward the neighbors (alternating sweeps, no overlap).
 /// `real`: the first items are nodes, the following ones are relays of long edges (they sit closer to each other).
-fn cross_coords(items: &[Item], real: usize, layers: &[Vec<usize>], up: &[Vec<usize>], down: &[Vec<usize>]) -> Vec<f64> {
+fn cross_coords(items: &[Item], real: usize, layers: &[Vec<usize>], up: &[Vec<usize>], down: &[Vec<usize>], node_sep: f64) -> Vec<f64> {
     let (total, max_rank) = (items.len(), layers.len() - 1);
     let sep = |a: usize, b: usize| match (a >= real, b >= real) {
         (true, true) => RELAY_SEP,
-        (false, false) => NODE_SEP,
+        (false, false) => node_sep,
         _ => MIXED_SEP,
     };
     let mut cx = vec![0.0f64; total];
@@ -419,7 +433,14 @@ fn cross_coords(items: &[Item], real: usize, layers: &[Vec<usize>], up: &[Vec<us
 
 /// Computes a readable layout: ranks by longest path, cycles broken,
 /// long edges passing through relay nodes, crossing reduction by barycenters.
+#[must_use]
 pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> Layout {
+    layered_spaced(nodes, edges, dir, Spacing::default())
+}
+
+/// [`layered`] with the room between nodes and between ranks given.
+#[must_use]
+pub fn layered_spaced(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction, spacing: Spacing) -> Layout {
     let n = nodes.len();
     if n == 0 {
         return Layout::default();
@@ -468,14 +489,14 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
     order_ranks(&mut layers, &up, &down, total);
 
     // 5. cross coordinates
-    let cx = cross_coords(&items, n, &layers, &up, &down);
+    let cx = cross_coords(&items, n, &layers, &up, &down, spacing.node);
 
     // 6. coordinates along the ranks
     let mut ra = vec![0.0f64; max_rank + 1];
     let mut prev = 0.0;
     for (r, l) in layers.iter().enumerate() {
         let m = l.iter().map(|&i| items[i].a).fold(0.0, f64::max);
-        ra[r] = if r == 0 { m / 2.0 } else { ra[r - 1] + prev / 2.0 + RANK_SEP + m / 2.0 };
+        ra[r] = if r == 0 { m / 2.0 } else { ra[r - 1] + prev / 2.0 + spacing.rank + m / 2.0 };
         prev = m;
     }
     let place = |id: usize| -> Pt {
@@ -498,51 +519,238 @@ pub fn layered(nodes: &[NodeSpec], edges: &[(usize, usize)], dir: Direction) -> 
     Layout { centers: (0..n).map(place).collect(), routes }
 }
 
+/// Options of [`auto_layout_with`]: the room between nodes, `None` for the default of the direction (48 between nodes of a rank, 84 between ranks).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayoutOptions {
+    /// Horizontal gap: between ranks for `LeftRight` / `RightLeft`, between nodes of a rank otherwise.
+    pub gap_x: Option<f64>,
+    /// Vertical gap: between ranks for `TopDown` / `BottomUp`, between nodes of a rank otherwise.
+    pub gap_y: Option<f64>,
+}
+
+/// What [`auto_layout_with`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayoutReport {
+    /// Nodes laid out (a group, such as an icon with its label, is one).
+    pub nodes: usize,
+    /// Frames laid out as clusters around their content.
+    pub frames: usize,
+}
+
+/// Margin kept between a frame and the content laid out inside it, and extra room above for its title.
+const FRAME_PAD: f64 = 40.0;
+const TITLE_GAP: f64 = 12.0;
+
+/// What is laid out: the objects of a group move as one node.
+struct Unit {
+    members: Vec<Id>,
+    rect: Rect,
+}
+
+/// What a level of the layout arranges: a node, or the content of a frame (a block).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Slot {
+    Node(usize),
+    Block(usize),
+}
+
+/// A laid-out level, relative to the top-left corner of its content.
+#[derive(Default)]
+struct Placed {
+    w: f64,
+    h: f64,
+    centers: Vec<(usize, Pt)>,
+    frames: Vec<(usize, Rect)>,
+    routes: Vec<(usize, Vec<Pt>)>,
+}
+
+struct Cluster<'a> {
+    units: &'a [Unit],
+    /// Smallest frame that holds each unit.
+    parent: Vec<Option<usize>>,
+    /// Frames that hold at least one unit.
+    is_frame: Vec<bool>,
+    /// Room above the content of a frame (padding + title), and the width its title needs.
+    top: Vec<f64>,
+    title_w: Vec<f64>,
+    edges: &'a [(usize, usize)],
+    dir: Direction,
+    spacing: Spacing,
+}
+
+impl Cluster<'_> {
+    /// What stands for `unit` at level `g` (`None`: the page): the node itself, or the block of the frame that holds it; `None` if it is outside `g`.
+    fn item_of(&self, unit: usize, g: Option<usize>) -> Option<Slot> {
+        let mut cur = unit;
+        loop {
+            if self.parent[cur] == g {
+                return Some(if self.is_frame[cur] { Slot::Block(cur) } else { Slot::Node(cur) });
+            }
+            cur = self.parent[cur]?;
+        }
+    }
+
+    fn level(&self, g: Option<usize>) -> Placed {
+        let mut items: Vec<Slot> = Vec::new();
+        let mut children: HashMap<usize, Placed> = HashMap::new();
+        for u in (0..self.units.len()).filter(|&u| self.parent[u] == g) {
+            if self.is_frame[u] {
+                children.insert(u, self.level(Some(u)));
+                items.push(Slot::Block(u));
+            } else {
+                items.push(Slot::Node(u));
+            }
+        }
+        if items.is_empty() {
+            return Placed::default();
+        }
+        let specs: Vec<NodeSpec> = items
+            .iter()
+            .map(|it| match *it {
+                Slot::Node(u) => NodeSpec { w: self.units[u].rect.w, h: self.units[u].rect.h },
+                Slot::Block(u) => NodeSpec { w: (children[&u].w + 2.0 * FRAME_PAD).max(self.title_w[u]), h: children[&u].h + self.top[u] + FRAME_PAD },
+            })
+            .collect();
+        let position: HashMap<Slot, usize> = items.iter().enumerate().map(|(i, it)| (*it, i)).collect();
+        let (mut edges, mut edge_ids) = (Vec::new(), Vec::new());
+        for (k, &(a, b)) in self.edges.iter().enumerate() {
+            if let (Some(ia), Some(ib)) = (self.item_of(a, g), self.item_of(b, g))
+                && ia != ib
+            {
+                edges.push((position[&ia], position[&ib]));
+                edge_ids.push(k);
+            }
+        }
+        let lay = layered_spaced(&specs, &edges, self.dir, self.spacing);
+        let (mut lo, mut hi) = (Pt::new(f64::INFINITY, f64::INFINITY), Pt::new(f64::NEG_INFINITY, f64::NEG_INFINITY));
+        for (c, sp) in lay.centers.iter().zip(&specs) {
+            lo = Pt::new(lo.x.min(c.x - sp.w / 2.0), lo.y.min(c.y - sp.h / 2.0));
+            hi = Pt::new(hi.x.max(c.x + sp.w / 2.0), hi.y.max(c.y + sp.h / 2.0));
+        }
+        let shift = Pt::new(-lo.x, -lo.y);
+        let mut out = Placed { w: hi.x - lo.x, h: hi.y - lo.y, ..Placed::default() };
+        for (i, it) in items.iter().enumerate() {
+            let c = lay.centers[i] + shift;
+            match *it {
+                Slot::Node(u) => out.centers.push((u, c)),
+                Slot::Block(u) => {
+                    let block = Rect::new(c.x - specs[i].w / 2.0, c.y - specs[i].h / 2.0, specs[i].w, specs[i].h);
+                    let child = &children[&u];
+                    // the content is centered when the frame was widened for its title
+                    let origin = Pt::new(block.x + (block.w - child.w) / 2.0, block.y + self.top[u]);
+                    out.frames.push((u, block));
+                    out.centers.extend(child.centers.iter().map(|&(n, p)| (n, p + origin)));
+                    out.frames.extend(child.frames.iter().map(|&(n, r)| (n, Rect::new(r.x + origin.x, r.y + origin.y, r.w, r.h))));
+                    out.routes.extend(child.routes.iter().map(|(k, r)| (*k, r.iter().map(|&p| p + origin).collect())));
+                }
+            }
+        }
+        out.routes.extend(edge_ids.iter().zip(&lay.routes).map(|(&k, r)| (k, r.iter().map(|&p| p + shift).collect())));
+        out
+    }
+}
+
 /// Rearranges the selected shapes according to the connectors that link them.
 /// The connectors concerned receive waypoints to go around the intermediate ranks.
 pub fn auto_layout(editor: &mut Editor, ids: &[Id], dir: Direction) {
+    auto_layout_with(editor, ids, dir, &LayoutOptions::default());
+}
+
+/// [`auto_layout`] with options. Only `ids` and the connectors between them are touched. The objects of a group (an icon and its label) move as one
+/// node, whose box is the union of theirs. A rect that holds other laid-out nodes is a frame: its content is laid out on its own, then the frame is
+/// resized around it (with room for its title) and takes part in the layout of what surrounds it as one block, like a Mermaid subgraph.
+pub fn auto_layout_with(editor: &mut Editor, ids: &[Id], dir: Direction, opts: &LayoutOptions) -> LayoutReport {
     let page = editor.page().clone();
-    let nodes: Vec<&crate::model::Object> = page.objects.iter().filter(|o| ids.contains(&o.id) && o.is_attachable() && !page.is_locked(o)).collect();
-    if nodes.len() < 2 {
-        return;
+    // groups move whole: a group with a locked member stays where it is
+    let wanted: HashSet<Id> = page.expand_groups(ids).into_iter().collect();
+    let mut units: Vec<Unit> = Vec::new();
+    let mut unit_of: HashMap<Id, usize> = HashMap::new();
+    for o in page.objects.iter().filter(|o| wanted.contains(&o.id) && o.is_attachable()) {
+        if unit_of.contains_key(&o.id) {
+            continue;
+        }
+        let members: Vec<Id> = match &o.group {
+            Some(_) => page.expand_groups(std::slice::from_ref(&o.id)),
+            None => vec![o.id.clone()],
+        };
+        let objs: Vec<&crate::model::Object> = members.iter().filter_map(|m| page.get(m)).filter(|m| m.is_attachable()).collect();
+        if objs.iter().any(|m| page.is_locked(m)) || objs.is_empty() {
+            continue;
+        }
+        let rect = objs.iter().filter_map(|m| m.frame()).map(|f| f.aabb()).reduce(|a, b| a.union(&b)).unwrap_or_default();
+        for m in &objs {
+            unit_of.insert(m.id.clone(), units.len());
+        }
+        units.push(Unit { members: objs.iter().map(|m| m.id.clone()).collect(), rect });
     }
-    let index: HashMap<&Id, usize> = nodes.iter().enumerate().map(|(i, o)| (&o.id, i)).collect();
+    if units.len() < 2 {
+        return LayoutReport::default();
+    }
     let mut edges: Vec<(usize, usize)> = Vec::new();
     let mut edge_ids: Vec<Id> = Vec::new();
     for o in &page.objects {
         if let Kind::Connector(c) = &o.kind
-            && let (Some(a), Some(b)) = (c.start.target().and_then(|t| index.get(t)), c.end.target().and_then(|t| index.get(t)))
+            && let (Some(a), Some(b)) = (c.start.target().and_then(|t| unit_of.get(t)), c.end.target().and_then(|t| unit_of.get(t)))
         {
             edges.push((*a, *b));
             edge_ids.push(o.id.clone());
         }
     }
-    let specs: Vec<NodeSpec> = nodes
-        .iter()
-        .map(|o| {
-            let r = o.frame().map(|f| f.aabb()).unwrap_or_default();
-            NodeSpec { w: r.w, h: r.h }
-        })
-        .collect();
-    let lay = layered(&specs, &edges, dir);
-    let origin = nodes.iter().filter_map(|o| o.frame()).map(|f| f.aabb()).reduce(|a, b| a.union(&b)).unwrap_or(Rect::default());
-    let bb = Rect::from_points(
-        lay.centers.iter().zip(&specs).flat_map(|(c, s)| [Pt::new(c.x - s.w / 2.0, c.y - s.h / 2.0), Pt::new(c.x + s.w / 2.0, c.y + s.h / 2.0)]),
-    )
-    .unwrap_or_default();
-    let shift = Pt::new(origin.x - bb.x, origin.y - bb.y);
-    let node_ids: Vec<Id> = nodes.iter().map(|o| o.id.clone()).collect();
+
+    // frames: a lone rect (not grouped) that holds the box of another unit; the smallest holder is the parent
+    let n = units.len();
+    let area = |u: usize| units[u].rect.w * units[u].rect.h;
+    let rect_box = |u: usize| match units[u].members.as_slice() {
+        [only] => page.get(only).and_then(|o| if let Kind::Box(b) = &o.kind { Some(b) } else { None }).filter(|b| b.geom == BoxGeom::Rect),
+        _ => None,
+    };
+    let holds = |f: usize, u: usize| f != u && rect_box(f).is_some() && area(f) > area(u) && units[f].rect.expand(0.5).contains_rect(&units[u].rect);
+    let parent: Vec<Option<usize>> = (0..n).map(|u| (0..n).filter(|&f| holds(f, u)).min_by(|&p, &q| area(p).total_cmp(&area(q)))).collect();
+    let mut is_frame = vec![false; n];
+    for p in parent.iter().flatten() {
+        is_frame[*p] = true;
+    }
+    let (mut top, mut title_w) = (vec![FRAME_PAD; n], vec![0.0; n]);
+    for u in (0..n).filter(|&u| is_frame[u]) {
+        if let Some(b) = rect_box(u).filter(|b| !b.label.text.is_empty()) {
+            let lay = layout_rich(&b.label.text, None, &ApproxMeasurer, b.label.family, b.label.size);
+            top[u] += lay.height.max(b.label.line_height()) + TITLE_GAP;
+            title_w[u] = lay.width.ceil() + 18.0;
+        }
+    }
+
+    let horiz = matches!(dir, Direction::LeftRight | Direction::RightLeft);
+    let (gap_x, gap_y) = (opts.gap_x.map(|g| g.max(0.0)), opts.gap_y.map(|g| g.max(0.0)));
+    let spacing = if horiz {
+        Spacing { node: gap_y.unwrap_or(NODE_SEP), rank: gap_x.unwrap_or(RANK_SEP) }
+    } else {
+        Spacing { node: gap_x.unwrap_or(NODE_SEP), rank: gap_y.unwrap_or(RANK_SEP) }
+    };
+    let placed = Cluster { units: &units, parent, is_frame, top, title_w, edges: &edges, dir, spacing }.level(None);
+
+    // the layout keeps the top-left corner of what it laid out
+    let origin = units.iter().map(|u| u.rect).reduce(|a, b| a.union(&b)).unwrap_or_default();
+    let shift = Pt::new(origin.x, origin.y);
+    let mut routes: Vec<&[Pt]> = vec![&[]; edges.len()];
+    for (k, r) in &placed.routes {
+        routes[*k] = r;
+    }
     editor.transact(|e| {
-        for (i, id) in node_ids.iter().enumerate() {
-            let target = lay.centers[i] + shift;
-            e.update(id, |o| {
-                if let Some(f) = o.frame() {
-                    o.translate(Pt::new(target.x - f.center().x, target.y - f.center().y));
+        for &(u, c) in &placed.centers {
+            let d = c + shift - units[u].rect.center();
+            for m in &units[u].members {
+                e.update(m, |o| o.translate(d));
+            }
+        }
+        for &(u, r) in &placed.frames {
+            e.update(&units[u].members[0], |o| {
+                if let Kind::Box(b) = &mut o.kind {
+                    (b.frame.x, b.frame.y, b.frame.w, b.frame.h) = (r.x + shift.x, r.y + shift.y, r.w, r.h);
                 }
             });
         }
         for (k, id) in edge_ids.iter().enumerate() {
-            let route = &lay.routes[k];
+            let route = routes[k];
             let via: Vec<Pt> = if route.len() > 2 { route[1..route.len() - 1].iter().map(|p| *p + shift).collect() } else { Vec::new() };
             e.update(id, |o| {
                 if let Kind::Connector(c) = &mut o.kind {
@@ -554,6 +762,7 @@ pub fn auto_layout(editor: &mut Editor, ids: &[Id], dir: Direction) {
             });
         }
     });
+    LayoutReport { nodes: placed.centers.len(), frames: placed.frames.len() }
 }
 
 #[cfg(test)]

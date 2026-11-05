@@ -63,7 +63,7 @@ docker build -f packaging/docker/mcp.Dockerfile -t inkboard-mcp .
 docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
 ```
 
-Le serveur parle MCP sur l'entrée et la sortie standard (d'où `-i`). L'image tourne sous un utilisateur sans droits (uid 10001) : le dossier monté doit être modifiable par lui. Elle a été vérifiée avec une vraie session MCP (`initialize`, `tools/list` renvoyant les 27 outils, puis `create_board`, `add_shape` et `describe_board` sur un fichier du dossier monté, et un chemin hors de `/data` refusé). Le mode direct (modifier le tableau ouvert à l'écran) demande l'application de bureau et n'existe pas dans un conteneur.
+Le serveur parle MCP sur l'entrée et la sortie standard (d'où `-i`). L'image tourne sous un utilisateur sans droits (uid 10001) : le dossier monté doit être modifiable par lui. Elle a été vérifiée avec une vraie session MCP (`initialize`, `tools/list` renvoyant les 29 outils, puis `create_board`, `add_shape` et `describe_board` sur un fichier du dossier monté, et un chemin hors de `/data` refusé). Le mode direct (modifier le tableau ouvert à l'écran) demande l'application de bureau et n'existe pas dans un conteneur.
 
 ### Pointes de flèche
 
@@ -114,10 +114,11 @@ avant la transmission. Options : `--no-live` désactive le mode direct ; `--live
 | `update_object` | Modifier le texte ([texte enrichi](#texte-enrichi) facultatif), la position, la taille, les couleurs, le [style de trait, la police, le verrou, la rotation](#update_object), le tracé / les pointes / les extrémités d'un connecteur, ou une cellule de tableau. |
 | `delete_object` | Supprime un objet (`id`) ou plusieurs (`ids`). |
 | `move_objects` | Déplace des objets ensemble (en relatif ou vers une position) ; les connecteurs liés suivent. |
-| `arrange_objects` | Aligne, répartit, empile (premier plan / arrière-plan), groupe, dégroupe, verrouille, déverrouille. |
+| `arrange_objects` | Aligne, répartit, dispose en grille (`grid`), empile (premier plan / arrière-plan), groupe, dégroupe, verrouille, déverrouille. |
+| `add_frame` | **Cadre de regroupement** autour d'objets existants en un appel : un seul `rect` ajusté à l'union des `ids` plus `padding`, avec son propre titre en haut à gauche, placé derrière eux ; `frame` le réajuste plus tard. Voir [`add_frame`](#add_frame). |
 | `duplicate_objects` | Copie des objets (une ou plusieurs copies, avec un décalage) ; les connecteurs entre objets copiés sont conservés. |
 | `format_text` | Gras, italique, souligné, barré, couleur, surlignage sur du texte **déjà présent sur le tableau** : une partie du texte d'une forme, l'étiquette d'un connecteur ou une cellule de tableau. |
-| `auto_layout` | Réorganise un graphe de formes reliées (TB, LR, BT, RL). |
+| `auto_layout` | Réorganise un graphe de formes, images et tableaux reliés (TB, LR, BT, RL) ; `gap_x` / `gap_y`, `ids` ; une icône et son libellé forment un seul nœud et un cadre est disposé autour de son contenu. Voir [`auto_layout`](#auto_layout). |
 | `add_page` | Nouvelle page. |
 | `manage_pages` | Liste, renomme ou supprime des pages (`add_page` les crée). |
 | `batch` | **Plusieurs appels d'outils en une seule demande** (1 à 200), exécutés dans l'ordre sur un même tableau, avec des références aux résultats précédents (`"$0.id"`), tout ou rien par défaut, une seule étape d'annulation. |
@@ -263,9 +264,27 @@ Les connecteurs liés aux objets déplacés suivent ; un connecteur déplacé se
 | `group` | Au moins 2 objets partagent un nouveau groupe ; le résultat contient `group`. |
 | `ungroup` | Libère les objets listés (résultat : `ungrouped`). |
 | `lock`, `unlock` | Verrouille / déverrouille les objets. |
+| `grid` | Dispose les objets en grille : `columns` (obligatoire, ≥ 1), ligne par ligne dans l'ordre de `ids`. `gap_x`, `gap_y` (80 par défaut) ; `origin` `{x, y}` = coin haut gauche de la grille (par défaut : coin haut gauche de la boîte actuelle des objets) ; `cell` `"max"` (défaut : chaque cellule aussi grande que le plus grand objet) ou `"fit"` (chaque colonne aussi large et chaque ligne aussi haute que son plus grand membre) ; `align` `"center"` (défaut) ou `"start"` dans la cellule. Une icône et son libellé (un groupe) comptent pour **un seul** élément, placé selon la boîte du groupe. Les connecteurs liés suivent ; les connecteurs de `ids` et les objets verrouillés sont ignorés (`skipped_connectors`, `skipped_locked`). Une seule étape d'annulation. Résultat : `columns`, `rows`, `placed` (`id`, `x`, `y` de chaque élément). |
 
 Les groupes ne sont **pas développés** : listez tous les membres pour déplacer, aligner ou dégrouper un groupe entier.
 Les objets verrouillés (et ceux d'un calque verrouillé) sont ignorés par `align_*` et `distribute_*` et listés dans `skipped_locked`. Le moteur seul ne fait rien quand il y a trop peu d'objets non verrouillés (moins de 2 pour aligner, 3 pour répartir) ; l'outil renvoie une erreur à la place.
+
+## `add_frame`
+
+Trace le cadre qu'un agent dimensionnerait sinon à la main. `ids` (les objets à entourer ; les autres membres de leurs groupes, comme le libellé d'une icône, sont inclus) donne **un seul `rect`** dont le texte propre est le titre (`align: left`, `valign: top`, gras) et dont la boîte est l'union des boîtes des `ids` (mêmes bornes que les vérifications de mise en page) plus `padding` (40 par défaut, pas négatif) ; avec un titre, le haut reçoit la hauteur du titre (`title_font_size` × 1,3 pour une ligne) + 12 de plus. Un titre plus large que le cadre l'élargit (`warnings` le dit). Défauts : `fill` `#f1f3f5`, `stroke` `#adb5bd`, `dash` `solid`, `title_font_size` 18, `title_bold` vrai, `roundness` 0,15 (comme un `rect` d'`add_shape`). Renvoie `{id, x, y, w, h}`.
+
+Le cadre est placé **juste sous le plus bas des objets entourés** : un cadre autour d'objets déjà dans un autre cadre est donc dessiné au-dessus du cadre extérieur et sous son propre contenu ; entourer un cadre place le nouveau sous lui. Il n'est pas groupé avec son contenu : après avoir déplacé le contenu, rappelez `add_frame` avec `frame` (son id) et `ids` pour **réajuster** le même cadre (son titre est conservé ; `title`, `fill`, `stroke`, `dash`, `roundness` ne changent que s'ils sont donnés). `x`, `y`, `w`, `h` (les quatre) donnent un rectangle exact à la place de l'union ; `ids` est alors facultatif et ne sert qu'à l'empilement (sans lui, le cadre va à l'arrière-plan). Des ids inconnus et un `padding` négatif sont des erreurs.
+
+## `auto_layout`
+
+Dispose les formes, images et tableaux reliés par des connecteurs en graphe en couches (`direction` `TB` par défaut, `LR`, `BT`, `RL`) ; le coin haut gauche de ce qui est disposé reste en place, et les connecteurs coudés sans points de passage deviennent des lignes droites avec points de passage autour des couches. Sans option, l'écart est de 84 entre couches et 48 entre nœuds d'une couche.
+
+- `gap_x`, `gap_y` (0 à 10000) : écarts horizontal et vertical. Pour `TB` / `BT`, `gap_y` sépare les couches et `gap_x` les nœuds d'une couche ; pour `LR` / `RL`, c'est l'inverse.
+- `ids` : ne dispose que ces objets et les connecteurs **entre** eux ; tout le reste n'est pas touché.
+- **Icônes :** une icône et son libellé (un groupe) bougent comme un seul nœud dont la boîte est l'union du groupe. Idem pour tout groupe (un groupe dont un membre est verrouillé ne bouge pas).
+- **Cadres :** un `rect` qui contient d'autres nœuds disposés est un cadre et il est disposé comme un cluster, à la façon d'un `subgraph` Mermaid de `import_mermaid` : son contenu est disposé à part, puis le cadre est réajusté autour (marge 40, plus la place de son titre) et participe comme un seul bloc à la disposition de ce qui l'entoure. Les cadres imbriqués fonctionnent ; un connecteur lié à un cadre relie le bloc. Un cadre est reconnu par sa géométrie (sa boîte contient les boîtes d'autres nœuds de `ids`), qu'il vienne ou non d'`add_frame`.
+
+Résultat : `{layout, objects, nodes, frames}` (`nodes` compte un groupe une fois).
 
 ## `manage_pages`
 

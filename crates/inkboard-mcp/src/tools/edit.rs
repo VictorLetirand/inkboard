@@ -77,7 +77,7 @@ pub(super) fn head_arg(a: &Value, k: &str) -> Res<Option<HeadKind>> {
 }
 
 const TYPES: [&str; 11] = ["rect", "ellipse", "diamond", "triangle", "sticky", "text", "connector", "table", "image", "formula", "pen"];
-const ACTIONS: [&str; 16] = [
+const ACTIONS: [&str; 17] = [
     "align_left",
     "align_center_x",
     "align_right",
@@ -86,6 +86,7 @@ const ACTIONS: [&str; 16] = [
     "align_bottom",
     "distribute_horizontal",
     "distribute_vertical",
+    "grid",
     "bring_to_front",
     "bring_forward",
     "send_backward",
@@ -796,6 +797,7 @@ fn arrange_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
         "align_bottom" => ed.align(&ids, AlignMode::Bottom),
         "distribute_horizontal" => ed.distribute(&ids, Axis::Horizontal),
         "distribute_vertical" => ed.distribute(&ids, Axis::Vertical),
+        "grid" => grid(ed, a, &ids, &mut out)?,
         "bring_to_front" => ed.reorder(&ids, Order::Front),
         "bring_forward" => ed.reorder(&ids, Order::Forward),
         "send_backward" => ed.reorder(&ids, Order::Backward),
@@ -815,6 +817,87 @@ fn arrange_objects(ed: &mut Editor, a: &Value) -> Res<Value> {
         out["skipped_locked"] = json!(locked);
     }
     Ok(out)
+}
+
+/// `arrange_objects` with `action: "grid"`: the objects (a group, such as an icon with its label, counts as one) in the order given, row by row.
+fn grid(ed: &mut Editor, a: &Value, ids: &[Id], out: &mut Value) -> Res<()> {
+    if a.get("columns").is_none_or(Value::is_null) {
+        return Err(format!("grid needs \"columns\" (an integer from 1 to {MAX_IDS})"));
+    }
+    let columns = usize::try_from(int_arg(a, "columns", 1, MAX_IDS as u64, 1)?).map_err(|e| e.to_string())?;
+    let (gap_x, gap_y) = (num_arg(a, "gap_x", 0.0, MAX_COORD)?.unwrap_or(80.0), num_arg(a, "gap_y", 0.0, MAX_COORD)?.unwrap_or(80.0));
+    let fit = match opt_str(a, "cell")?.unwrap_or("max") {
+        "max" => false,
+        "fit" => true,
+        c => {
+            return Err(format!(
+                "unknown cell \"{c}\" (max: every cell as large as the largest object, fit: each column and row as large as its largest object)"
+            ));
+        }
+    };
+    let start = match opt_str(a, "align")?.unwrap_or("center") {
+        "center" => false,
+        "start" => true,
+        c => return Err(format!("unknown align \"{c}\" for a grid (center, start)")),
+    };
+    let origin = match a.get("origin").filter(|v| !v.is_null()) {
+        None => None,
+        Some(o) => {
+            let n = |k: &str| o.get(k).and_then(Value::as_f64).filter(|v| v.abs() <= MAX_COORD).ok_or("\"origin\" needs numeric x and y");
+            Some(Pt::new(n("x")?, n("y")?))
+        }
+    };
+    // items: a group is one (positioned by the box of all its members), in the order of the first id met; connectors and locked objects are left alone
+    let page = ed.page();
+    let mut items: Vec<(Vec<Id>, Rect)> = Vec::new();
+    let (mut seen, mut skipped_locked, mut skipped_connectors) = (HashSet::new(), Vec::new(), Vec::new());
+    for id in ids {
+        let Some(o) = page.get(id) else { continue };
+        if matches!(o.kind, Kind::Connector(_)) {
+            skipped_connectors.push(id.0.clone());
+            continue;
+        }
+        let members = page.expand_groups(std::slice::from_ref(id));
+        if !seen.insert(members[0].clone()) {
+            continue;
+        }
+        if members.iter().filter_map(|m| page.get(m)).any(|m| page.is_locked(m)) {
+            skipped_locked.push(id.0.clone());
+            continue;
+        }
+        let rect = members.iter().filter_map(|m| page.get(m)).map(|m| frame_box(page, m)).reduce(|p, q| p.union(&q)).ok_or("object without a box")?;
+        items.push((members, rect));
+    }
+    if items.is_empty() {
+        return Err("grid needs at least one unlocked object that is not a connector".into());
+    }
+    let union = items.iter().map(|i| i.1).reduce(|p, q| p.union(&q)).unwrap_or_default();
+    let at = origin.unwrap_or(Pt::new(union.x, union.y));
+    let rows = items.len().div_ceil(columns);
+    let (max_w, max_h) = items.iter().fold((0.0f64, 0.0f64), |m, i| (m.0.max(i.1.w), m.1.max(i.1.h)));
+    let col_w: Vec<f64> =
+        (0..columns.min(items.len())).map(|c| if fit { items.iter().skip(c).step_by(columns).map(|i| i.1.w).fold(0.0, f64::max) } else { max_w }).collect();
+    let row_h: Vec<f64> = (0..rows).map(|r| if fit { items[r * columns..].iter().take(columns).map(|i| i.1.h).fold(0.0, f64::max) } else { max_h }).collect();
+    let mut placed = Vec::new();
+    ed.transact(|ed| {
+        for (k, (members, rect)) in items.iter().enumerate() {
+            let (c, r) = (k % columns, k / columns);
+            let cell = Pt::new(at.x + col_w[..c].iter().sum::<f64>() + num::f64_of(c) * gap_x, at.y + row_h[..r].iter().sum::<f64>() + num::f64_of(r) * gap_y);
+            let target = if start { cell } else { Pt::new(cell.x + (col_w[c] - rect.w) / 2.0, cell.y + (row_h[r] - rect.h) / 2.0) };
+            ed.translate(members, Pt::new(target.x - rect.x, target.y - rect.y));
+            placed.push(json!({"id": members[0].0, "x": r3(target.x), "y": r3(target.y)}));
+        }
+    });
+    out["columns"] = json!(columns);
+    out["rows"] = json!(rows);
+    out["placed"] = json!(placed);
+    if !skipped_locked.is_empty() {
+        out["skipped_locked"] = json!(skipped_locked);
+    }
+    if !skipped_connectors.is_empty() {
+        out["skipped_connectors"] = json!(skipped_connectors);
+    }
+    Ok(())
 }
 
 fn manage_pages(ed: &mut Editor, a: &Value) -> Res<Value> {
@@ -892,8 +975,15 @@ pub(super) fn specs() -> Vec<Value> {
                 "dx": {"type": "number", "description": "Horizontal offset (right is positive)."}, "dy": {"type": "number", "description": "Vertical offset (down is positive)."},
                 "x": {"type": "number", "description": "New left edge of the group of objects."}, "y": {"type": "number", "description": "New top edge of the group of objects."}}), &["ids"])}),
         json!({"name": "arrange_objects",
-            "description": "Aligns, distributes, stacks, groups or locks objects. align_*: at least 2 unlocked objects, aligned on their common bounding box. distribute_*: at least 3 unlocked objects, equal gaps between the two outermost (an error otherwise; the engine alone would do nothing). Locked objects are skipped by align/distribute and reported in `skipped_locked`. bring_to_front/bring_forward/send_backward/send_to_back change the stacking order (`z` of describe_board detail \"full\"). group (2+ objects, returns `group`), ungroup, lock, unlock.",
-            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "ids": ids("to arrange"), "action": {"type": "string", "enum": ACTIONS}}), &["ids", "action"])}),
+            "description": "Aligns, distributes, arranges in a grid, stacks, groups or locks objects. align_*: at least 2 unlocked objects, aligned on their common bounding box. distribute_*: at least 3 unlocked objects, equal gaps between the two outermost (an error otherwise; the engine alone would do nothing). Locked objects are skipped by align/distribute and reported in `skipped_locked`. bring_to_front/bring_forward/send_backward/send_to_back change the stacking order (`z` of describe_board detail \"full\"). group (2+ objects, returns `group`), ungroup, lock, unlock. \
+            grid: lays the objects out in `columns` columns, in the order of `ids`, row by row (an icon and its label move together and count as one; connectors and locked objects are skipped and reported; bound arrows follow). \
+            `gap_x`, `gap_y` (default 80) between cells; `origin` {x, y} is the top-left of the grid (default: top-left of the current box of the objects); `cell` \"max\" (default: every cell as large as the largest object) or \"fit\" (each column as wide and each row as tall as its largest object); `align` \"center\" (default) or \"start\" (top-left) inside the cell. Returns `columns`, `rows` and `placed` (id, x, y of each item).",
+            "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "ids": ids("to arrange"), "action": {"type": "string", "enum": ACTIONS},
+                "columns": {"type": "integer", "minimum": 1, "maximum": MAX_IDS, "description": "grid only (required): number of columns."},
+                "gap_x": {"type": "number", "minimum": 0, "description": "grid only: horizontal gap between cells (default 80)."}, "gap_y": {"type": "number", "minimum": 0, "description": "grid only: vertical gap between cells (default 80)."},
+                "origin": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"], "description": "grid only: top-left corner of the grid (default: top-left of the objects' current box)."},
+                "cell": {"type": "string", "enum": ["max", "fit"], "description": "grid only: max (default) or fit."},
+                "align": {"type": "string", "enum": ["center", "start"], "description": "grid only: placement inside the cell (default center)."}}), &["ids", "action"])}),
         json!({"name": "manage_pages",
             "description": "Lists, renames or deletes pages (add_page creates them). `list` returns number, name and object count. `rename` and `delete` need `page` (number from 1, or name); rename also needs `name`. The last page of a board cannot be deleted; deleting a page deletes its objects.",
             "inputSchema": obj(json!({"path": path_prop(), "page": page_prop(), "action": {"type": "string", "enum": ["rename", "delete", "list"]},

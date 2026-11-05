@@ -64,7 +64,7 @@ docker build -f packaging/docker/mcp.Dockerfile -t inkboard-mcp .
 docker run -i --rm -v "$PWD/boards:/data" inkboard-mcp
 ```
 
-The server speaks MCP over standard input and output (hence `-i`). The image runs as a non-root user (uid 10001): the mounted folder must be writable by it. It was checked with a real MCP session (`initialize`, `tools/list` returning the 27 tools, then `create_board`, `add_shape` and `describe_board` on a file of the mounted folder, and a path outside `/data` refused). Live mode (editing the board that is open on screen) needs the desktop application and is not available in a container.
+The server speaks MCP over standard input and output (hence `-i`). The image runs as a non-root user (uid 10001): the mounted folder must be writable by it. It was checked with a real MCP session (`initialize`, `tools/list` returning the 29 tools, then `create_board`, `add_shape` and `describe_board` on a file of the mounted folder, and a path outside `/data` refused). Live mode (editing the board that is open on screen) needs the desktop application and is not available in a container.
 
 ### Arrowheads
 
@@ -115,10 +115,11 @@ before forwarding. Options: `--no-live` disables live mode; `--live-file` change
 | `update_object` | Modify text ([rich text](#rich-text) optional), position, size, colors, [line style, font, lock, rotation](#update_object), a connector's route / arrowheads / ends, or one table cell. |
 | `delete_object` | Deletes one object (`id`) or several (`ids`). |
 | `move_objects` | Moves objects together (relative or to a position); the other members of the groups of `ids` move too (an icon and its label) unless `group: false`; bound connectors follow. |
-| `arrange_objects` | Aligns, distributes, stacks (front/back), groups, ungroups, locks, unlocks. |
+| `arrange_objects` | Aligns, distributes, lays out in a grid (`grid`), stacks (front/back), groups, ungroups, locks, unlocks. |
+| `add_frame` | **Grouping frame** around existing objects in one call: one `rect` sized to the union of `ids` plus `padding`, its own title at the top left, placed behind them; `frame` re-fits it later. See [`add_frame`](#add_frame). |
 | `duplicate_objects` | Copies objects (one or several copies, with an offset); connectors between copied objects are kept. |
 | `format_text` | Bold, italic, underline, strike, color, highlight on text **already on the board**: a part of a shape's text, a connector's label or a table cell. |
-| `auto_layout` | Rearranges a graph of connected shapes (TB, LR, BT, RL). |
+| `auto_layout` | Rearranges a graph of connected shapes, images and tables (TB, LR, BT, RL); `gap_x` / `gap_y`, `ids`; an icon and its label are one node and a frame is laid out around its content. See [`auto_layout`](#auto_layout). |
 | `add_page` | New page. |
 | `manage_pages` | Lists, renames or deletes pages (`add_page` creates them). |
 | `batch` | **Several tool calls in one request** (1 to 200), run in order on one board, with references to earlier results (`"$0.id"`), all-or-nothing by default, one undo step. |
@@ -292,9 +293,27 @@ Connectors bound to the moved objects follow; a connector moved alone only moves
 | `group` | At least 2 objects share a new group; the result has `group`. |
 | `ungroup` | Releases the listed objects (result: `ungrouped`). |
 | `lock`, `unlock` | Locks / unlocks the objects. |
+| `grid` | Lays the objects out in a grid: `columns` (required, ≥ 1), row by row in the order of `ids`. `gap_x`, `gap_y` (default 80); `origin` `{x, y}` = top-left of the grid (default: top-left of the objects' current box); `cell` `"max"` (default: every cell as large as the largest object) or `"fit"` (each column as wide and each row as tall as its largest member); `align` `"center"` (default) or `"start"` inside the cell. An icon and its label (a group) count as **one** item, placed by the group's box. Bound connectors follow; connectors in `ids` and locked objects are skipped (`skipped_connectors`, `skipped_locked`). One undo step. Result: `columns`, `rows`, `placed` (`id`, `x`, `y` of each item). |
 
 Groups are **not expanded**: list every member to move, align or ungroup a whole group.
 Locked objects (and objects on a locked layer) are skipped by `align_*` and `distribute_*` and listed in `skipped_locked`. The engine alone does nothing when there are too few unlocked objects (fewer than 2 to align, 3 to distribute); the tool returns an error instead.
+
+## `add_frame`
+
+Draws the frame an agent would otherwise size by hand. `ids` (the objects to surround; the other members of their groups, such as an icon's label, are included) gives **one `rect`** whose own text is the title (`align: left`, `valign: top`, bold) and whose box is the union of the boxes of `ids` (same bounds as the layout checks) plus `padding` (default 40, not negative); with a title, the top gets the title's height (`title_font_size` × 1.3 for one line) + 12 more. A title wider than the frame widens it (`warnings` says so). Defaults: `fill` `#f1f3f5`, `stroke` `#adb5bd`, `dash` `solid`, `title_font_size` 18, `title_bold` true, `roundness` 0.15 (as a `rect` of `add_shape`). Returns `{id, x, y, w, h}`.
+
+The frame is placed **just under the lowest of the framed objects**, so a frame around objects that already sit inside another frame is drawn above the outer one and below its own content; framing a frame puts the new one under it. It is not grouped with its content: after moving the content, call `add_frame` again with `frame` (its id) and `ids` to **re-fit** the same frame (its title is kept; `title`, `fill`, `stroke`, `dash`, `roundness` change only if given). `x`, `y`, `w`, `h` (all four) give an exact rectangle instead of the union; `ids` is then optional and only decides the stacking (without it, the frame goes to the back). Unknown ids and a negative `padding` are errors.
+
+## `auto_layout`
+
+Lays out the shapes, images and tables joined by connectors as a layered graph (`direction` `TB` default, `LR`, `BT`, `RL`); the top-left corner of what is laid out stays where it was, and elbow connectors without waypoints become straight lines with waypoints around the layers. Without options the spacing is 84 between layers and 48 between nodes of a layer.
+
+- `gap_x`, `gap_y` (0 to 10000): the horizontal and vertical gap. For `TB` / `BT`, `gap_y` is between layers and `gap_x` between nodes of a layer; for `LR` / `RL` it is the other way round.
+- `ids`: lay out only these objects and the connectors **between** them; everything else stays untouched.
+- **Icons:** an icon and its label (a group) move as one node whose box is the union of the group. The same goes for any group (a group with a locked member stays put).
+- **Frames:** a `rect` that holds other laid-out nodes is a frame and is laid out as a cluster, like a Mermaid `subgraph` in `import_mermaid`: its content is laid out on its own, then the frame is re-fitted around it (padding 40, plus room for its title) and takes part as one block in the layout of what surrounds it. Nested frames work; a connector bound to a frame links the block. A frame is recognized by geometry (its box holds the boxes of other nodes in `ids`), whether or not `add_frame` made it.
+
+Result: `{layout, objects, nodes, frames}` (`nodes` counts a group once).
 
 ## `manage_pages`
 

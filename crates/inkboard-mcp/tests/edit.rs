@@ -897,7 +897,7 @@ fn the_new_tools_are_listed_with_complete_schemas() {
         assert!(t["inputSchema"]["properties"]["path"].is_object() && t["inputSchema"]["properties"]["page"].is_object(), "{n}");
     }
     assert_eq!(get("move_objects")["inputSchema"]["required"], json!(["ids"]));
-    assert_eq!(get("arrange_objects")["inputSchema"]["properties"]["action"]["enum"].as_array().unwrap().len(), 16);
+    assert_eq!(get("arrange_objects")["inputSchema"]["properties"]["action"]["enum"].as_array().unwrap().len(), 17);
     assert_eq!(get("describe_board")["inputSchema"]["properties"]["detail"]["enum"], json!(["brief", "full"]));
     assert_eq!(get("delete_object")["inputSchema"]["properties"]["ids"]["type"], json!("array"));
     for p in ["stroke_width", "dash", "opacity", "roundness", "font_size", "font_family", "align", "locked", "rotation", "route", "arrow", "from", "to", "cell"]
