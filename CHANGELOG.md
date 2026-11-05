@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+## [0.2.0-rc.4] - 2026-11-05
+
+**Release candidate.** The MCP server learns to draw clean diagrams on its own: a `check_layout` tool that lists the layout defects with their ids, titled frames (`add_frame`), arrow attachment sides and label positions, grids and a richer `auto_layout`. Live sharing moves to protocol v6: update every app that hosts or joins a session.
+
 ### Added
 
 - **MCP, unknown arguments:** a tool call (also inside `batch`) with an argument that is not in the tool's schema still runs and returns a `warnings` entry (`unknown argument "bold" ignored (did you mean ...?)`), once, in the dispatcher.
@@ -149,7 +153,8 @@ has been tried by hand on a few devices and networks, but not widely. See the kn
   private address (S-06), and a single frame over 1 MiB from the host (S-04, recovered by a snapshot).
 - Linux and macOS builds pass CI but have not been used by hand yet.
 
-[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.3...HEAD
+[Unreleased]: https://github.com/VictorLetirand/inkboard/compare/v0.2.0-rc.4...HEAD
+[0.2.0-rc.4]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.4
 [0.2.0-rc.3]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/VictorLetirand/inkboard/releases/tag/v0.2.0-rc.1
