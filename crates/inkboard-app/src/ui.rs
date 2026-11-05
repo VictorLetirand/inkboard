@@ -75,6 +75,7 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
     match dialog {
         Dialog::Mermaid { text, new_board, error } => keep = mermaid_dialog(app, ctx, text, new_board, error),
         Dialog::Formula { src, editing, preview } => keep = formula_dialog(app, ctx, src, editing, preview),
+        Dialog::Export { ext, pages, selection_only, scale } => keep = export_dialog(app, ctx, ext, pages, selection_only, scale),
         Dialog::Shortcuts { filter, recording } => {
             keep = shortcuts_dialog(app, ctx, filter, recording);
         }
@@ -144,6 +145,79 @@ fn mermaid_dialog(app: &mut App, ctx: &egui::Context, mut text: String, mut new_
         return Some(Dialog::Mermaid { text, new_board, error });
     }
     None
+}
+
+/// Export dialog: which pages (or only the selection), the PNG scale; returns it when it stays open.
+fn export_dialog(app: &mut App, ctx: &egui::Context, ext: &'static str, mut pages: Vec<bool>, mut selection_only: bool, mut scale: u8) -> Option<Dialog> {
+    let title = match ext {
+        "png" => t("Export as PNG"),
+        "svg" => t("Export as SVG"),
+        "pdf" => t("Export as PDF"),
+        "excalidraw" => t("Export as Excalidraw"),
+        _ => t("Export as JSON Canvas (.canvas)"),
+    };
+    let cur = app.page_index();
+    pages.resize(app.ed.doc.pages.len(), false);
+    let can_select = !app.sel.is_empty() && matches!(ext, "png" | "svg" | "pdf");
+    selection_only &= can_select;
+    let mut open = true;
+    let mut go = false;
+    let mut cancel = false;
+    modal(title).open(&mut open).collapsible(false).default_width(380.0).show(ctx, |ui| {
+        if can_select {
+            ui.checkbox(&mut selection_only, t("Selection only (current page)"));
+        }
+        ui.add_enabled_ui(!selection_only, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button(t("All")).clicked() {
+                    pages.fill(true);
+                }
+                if ui.button(t("None")).clicked() {
+                    pages.fill(false);
+                }
+                if ui.button(t("Current page")).clicked() {
+                    pages = (0..pages.len()).map(|i| i == cur).collect();
+                }
+                let n = pages.iter().filter(|p| **p).count();
+                ui.label(tr!("{} of {} pages", n, pages.len()));
+            });
+            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                for (i, on) in pages.iter_mut().enumerate() {
+                    let name = &app.ed.doc.pages[i].name;
+                    ui.checkbox(on, format!("{}. {name}", i + 1));
+                }
+            });
+        });
+        if ext == "png" {
+            ui.horizontal(|ui| {
+                ui.label(t("Scale"));
+                for k in 1..=3u8 {
+                    ui.radio_value(&mut scale, k, format!("{k}x"));
+                }
+            });
+        }
+        ui.label(
+            ERich::new(if ext == "pdf" { t("One PDF, one page per ticked page.") } else { t("Several pages: one file per page, in a folder.") }).small().weak(),
+        );
+        ui.horizontal(|ui| {
+            let ready = selection_only || pages.iter().any(|p| *p);
+            go = ui.add_enabled(ready, egui::Button::new(t("Export"))).clicked();
+            cancel = ui.button(t("Cancel")).clicked();
+        });
+    });
+    let (esc, enter) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
+    if esc || cancel {
+        open = false;
+    }
+    if enter && (selection_only || pages.iter().any(|p| *p)) {
+        go = true;
+    }
+    if go && open {
+        let chosen = if selection_only { vec![cur] } else { pages.iter().enumerate().filter(|(_, p)| **p).map(|(i, _)| i).collect() };
+        app.run_export(&crate::app::ExportReq { ext, pages: chosen, selection_only, scale });
+        return None;
+    }
+    open.then_some(Dialog::Export { ext, pages, selection_only, scale })
 }
 
 /// Formula dialog (insertion or editing); returns it when it stays open.

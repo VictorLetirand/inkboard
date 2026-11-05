@@ -2695,6 +2695,7 @@ dependencies = [
  "inkboard-core",
  "inkboard-icons",
  "latex-rust",
+ "pdf-writer",
  "percent-encoding",
  "proptest",
  "quick-xml 0.41.0",

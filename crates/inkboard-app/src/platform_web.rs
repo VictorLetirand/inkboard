@@ -278,6 +278,11 @@ pub fn pick_save_path(_name: &str, _label: &str, _exts: &[&str]) -> Option<PathB
     None
 }
 
+/// There is no folder dialog in a browser (see [`DOWNLOADS`]).
+pub fn pick_folder() -> Option<PathBuf> {
+    None
+}
+
 /// Opens the browser's file picker; the images arrive later through [`poll`].
 pub fn pick_images() -> Vec<PathBuf> {
     spawn_local(async {

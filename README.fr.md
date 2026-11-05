@@ -120,6 +120,8 @@ Mêmes icônes (jeu SVG du prototype), mêmes couleurs, mêmes boutons segmenté
 | Mermaid (`flowchart`, `stateDiagram`, `sequenceDiagram`, `classDiagram`, `erDiagram`) | ✔ | – |
 | SVG, PNG, PDF | – | ✔ |
 
+**Fenêtre d'export :** *Exporter en PNG / SVG / PDF* (et Excalidraw / JSON Canvas) demande quelles pages exporter (toutes, aucune, la page courante ou une sélection cochée), « Sélection uniquement » et, pour le PNG, l'échelle. Plusieurs pages donnent un fichier par page dans un dossier choisi une fois (`<tableau>-<NN>-<page>.<ext>` ; la version web les télécharge un par un), ou un seul PDF multi-pages.
+
 Les tableaux s'enregistrent en `.inkboard` (du JSON ; l'installeur associe l'extension : un double-clic ouvre le fichier). Les fichiers `.inkboard.json` des versions précédentes et les `.tableau.json` du prototype restent lisibles ; un `.inkboard.json` rouvert est réenregistré sous son propre nom.
 
 ## Performances (mesurées)

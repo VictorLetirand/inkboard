@@ -38,7 +38,7 @@ dossier (les liens sont relatifs) ; pour l'essayer en local, lancez `trunk serve
 |---|---|---|
 | Bibliothèque d'icônes | embarquée dans le programme | `icons.bin` est téléchargé à la première ouverture de la bibliothèque (un indicateur de chargement s'affiche), puis mis en cache par le navigateur |
 | Ouvrir | boîte de dialogue | le sélecteur de fichiers du navigateur, ou déposer une image sur la page |
-| Enregistrer / Exporter | écrit le fichier | **télécharge** le fichier |
+| Enregistrer / Exporter | écrit le fichier | **télécharge** le fichier (plusieurs pages : un téléchargement par page, sans zip ; le PDF reste un seul fichier multi-pages) |
 | Presse-papiers | presse-papiers système | coller du texte et des images avec Ctrl+V ; « copier comme image » passe par le presse-papiers asynchrone du navigateur (pages sécurisées seulement : HTTPS ou localhost) ; le menu « Coller » ne colle que le presse-papiers interne du tableau |
 | Sauvegarde automatique, réglages, raccourcis personnalisés | fichiers du dossier de données | **non conservés** d'une visite à l'autre (téléchargez le tableau pour le garder) |
 | Polices | polices du système | polices intégrées (le texte peut se replier autrement que sur un tableau de bureau) |
