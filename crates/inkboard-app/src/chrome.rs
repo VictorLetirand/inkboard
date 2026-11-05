@@ -268,50 +268,207 @@ fn help_card(app: &mut App, ctx: &Context) {
     });
 }
 
+/// Height of a page tab and width of the buttons of the page card.
+const TAB_H: f32 = 34.0;
+/// Spacing between the items of the page card.
+const TAB_GAP: f32 = 2.0;
+/// Widest tab before its name is cut with an ellipsis, then the narrowest it may shrink to.
+const TAB_MAX: f32 = 140.0;
+const TAB_MIN: f32 = 72.0;
+/// Free space kept between the page card and its neighbours; padding and border of the card itself.
+const PAGES_MARGIN: f32 = 12.0;
+const CARD_PAD: f32 = 10.0;
+/// From this many pages the page list of the compact mode gets a search field.
+const PAGES_SEARCH: usize = 12;
+
+/// How the page card is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PagesLevel {
+    /// Every tab at its natural width.
+    Full,
+    /// Tabs capped at the given width (names cut with an ellipsis).
+    Ellipsis(f32),
+    /// `◀ name ▾ ▶ +`.
+    Compact,
+}
+
+/// Decides how the page tabs are drawn: `natural` are the tab widths, `available` the room for the tabs (gaps included, "+" excluded).
+fn pages_level(natural: &[f32], available: f32) -> PagesLevel {
+    let gaps = TAB_GAP * f32::from(u16::try_from(natural.len().saturating_sub(1)).unwrap_or(u16::MAX));
+    let total = |cap: f32| natural.iter().map(|w| w.min(cap)).sum::<f32>() + gaps;
+    if total(f32::INFINITY) <= available {
+        return PagesLevel::Full;
+    }
+    if total(TAB_MIN) > available {
+        return PagesLevel::Compact;
+    }
+    if total(TAB_MAX) <= available {
+        return PagesLevel::Ellipsis(TAB_MAX);
+    }
+    let (mut lo, mut hi) = (TAB_MIN, TAB_MAX);
+    for _ in 0..20 {
+        let mid = f32::midpoint(lo, hi);
+        if total(mid) <= available {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    PagesLevel::Ellipsis(lo)
+}
+
+/// `text` cut with an ellipsis so that it is at most `max` wide.
+fn ellipsize(ui: &Ui, text: &str, font: &FontId, max: f32) -> String {
+    let width = |s: &str| ui.painter().layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x;
+    if width(text) <= max {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let cut = |n: usize| chars[..n].iter().collect::<String>().trim_end().to_owned() + "…";
+    let (mut lo, mut hi) = (0, chars.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if width(&cut(mid)) <= max {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    cut(lo)
+}
+
+/// Room for the page card: the width between the cards at the bottom left (zoom) and bottom right (help), as drawn on the previous frame.
+fn pages_room(ctx: &Context) -> f32 {
+    let screen = ctx.content_rect();
+    let c = screen.center().x;
+    let left = ctx.memory(|m| m.area_rect(egui::Id::new("zoom"))).map_or(screen.left() + 330.0, |r| r.right());
+    let right = ctx.memory(|m| m.area_rect(egui::Id::new("help"))).map_or(screen.right() - 170.0, |r| r.left());
+    2.0 * (c - left).min(right - c) - 2.0 * PAGES_MARGIN
+}
+
+fn goto_page(app: &mut App, id: &Id) {
+    app.commit_editing();
+    app.ed.current = id.clone();
+    app.sel.clear();
+}
+
+/// Right-click menu of a page (rename, delete).
+fn page_menu(app: &mut App, ui: &mut Ui, id: &Id, name: &str, count: usize) {
+    theme::menu_style(ui);
+    if theme::menu_item(ui, Some("edit"), "Rename…", "", false, true) {
+        app.dialog = Some(Dialog::RenamePage { id: id.clone(), name: name.to_owned() });
+        ui.close();
+    }
+    if theme::menu_item(ui, Some("trash"), "Delete page", "", false, count > 1) {
+        app.commit_editing();
+        app.ed.remove_page(id);
+        app.sel.clear();
+        ui.close();
+    }
+}
+
 fn pages_card(app: &mut App, ctx: &Context) {
+    let room = pages_room(ctx);
     theme::floating(ctx, "pages", Align2::CENTER_BOTTOM, vec2(0.0, -12.0), 3, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().item_spacing.x = TAB_GAP;
             let pages: Vec<(Id, String)> = app.ed.doc.pages.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
-            for (id, name) in &pages {
-                let on = &app.ed.current == id;
-                let p = theme::current(ui.ctx());
-                let g = ui.painter().layout_no_wrap(name.clone(), FontId::proportional(13.0), if on { p.ac } else { p.tx });
-                let (r, resp) = ui.allocate_exact_size(vec2((g.size().x + 20.0).max(48.0), 34.0), Sense::click());
-                if on {
-                    ui.painter().rect_filled(r, 8.0, p.acbg);
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(r, 8.0, p.ui2);
-                }
-                ui.painter().galley(r.center() - g.size() / 2.0, g, p.tx);
-                if resp.clicked() {
-                    app.commit_editing();
-                    app.ed.current = id.clone();
-                    app.sel.clear();
-                }
-                resp.context_menu(|ui| {
-                    theme::menu_style(ui);
-                    if theme::menu_item(ui, Some("edit"), "Rename…", "", false, true) {
-                        app.dialog = Some(Dialog::RenamePage { id: id.clone(), name: name.clone() });
-                        ui.close();
+            let font = FontId::proportional(13.0);
+            let natural: Vec<f32> =
+                pages.iter().map(|(_, n)| (ui.painter().layout_no_wrap(n.clone(), font.clone(), Color32::WHITE).size().x + 20.0).max(48.0)).collect();
+            let level = pages_level(&natural, room - CARD_PAD - TAB_H - TAB_GAP);
+            if level == PagesLevel::Compact {
+                compact_pages(app, ui, &pages, room - CARD_PAD);
+            } else {
+                let cap = if let PagesLevel::Ellipsis(w) = level { w } else { f32::INFINITY };
+                for ((id, name), nat) in pages.iter().zip(&natural) {
+                    let on = &app.ed.current == id;
+                    let p = theme::current(ui.ctx());
+                    let w = nat.min(cap);
+                    let shown = if w < *nat { ellipsize(ui, name, &font, w - 20.0) } else { name.clone() };
+                    let g = ui.painter().layout_no_wrap(shown, font.clone(), if on { p.ac } else { p.tx });
+                    let (r, resp) = ui.allocate_exact_size(vec2(w, TAB_H), Sense::click());
+                    if on {
+                        ui.painter().rect_filled(r, 8.0, p.acbg);
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(r, 8.0, p.ui2);
                     }
-                    if theme::menu_item(ui, Some("trash"), "Delete page", "", false, pages.len() > 1) {
-                        app.commit_editing();
-                        app.ed.remove_page(id);
-                        app.sel.clear();
-                        ui.close();
+                    ui.painter().galley(r.center() - g.size() / 2.0, g, p.tx);
+                    if resp.clicked() {
+                        goto_page(app, id);
                     }
-                });
+                    let resp = if w < *nat { resp.on_hover_text(name) } else { resp };
+                    resp.context_menu(|ui| page_menu(app, ui, id, name, pages.len()));
+                }
             }
-            if theme::icon_button(ui, "plus", false, true).on_hover_text(t("New page")).clicked() {
-                app.commit_editing();
-                let n = app.ed.doc.pages.len() + 1;
-                app.ed.add_page(&format!("Page {n}"));
-                app.sel.clear();
-                app.fit_pending = true;
+            new_page_button(app, ui);
+        });
+    });
+}
+
+fn new_page_button(app: &mut App, ui: &mut Ui) {
+    if theme::icon_button(ui, "plus", false, true).on_hover_text(t("New page")).clicked() {
+        app.commit_editing();
+        let n = app.ed.doc.pages.len() + 1;
+        app.ed.add_page(&format!("Page {n}"));
+        app.sel.clear();
+        app.fit_pending = true;
+    }
+}
+
+/// Compact page card: `◀ name ▾ ▶` (the "+" is added by the caller).
+fn compact_pages(app: &mut App, ui: &mut Ui, pages: &[(Id, String)], room: f32) {
+    let pal = theme::current(ui.ctx());
+    let font = FontId::proportional(13.0);
+    let cur = pages.iter().position(|(id, _)| *id == app.ed.current).unwrap_or(0);
+    let step = |ui: &mut Ui, glyph: &str, enabled: bool, tip: String| -> bool {
+        let (rect, resp) = ui.allocate_exact_size(vec2(TAB_H, TAB_H), if enabled { Sense::click() } else { Sense::hover() });
+        if resp.hovered() && enabled {
+            ui.painter().rect_filled(rect, 8.0, pal.ui2);
+        }
+        let color = if enabled { pal.tx } else { pal.tx.gamma_multiply(0.35) };
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, glyph, font.clone(), color);
+        resp.on_hover_text(tip).clicked() && enabled
+    };
+    if step(ui, "◀", cur > 0, t("Previous page")) {
+        goto_page(app, &pages[cur - 1].0.clone());
+    }
+    let (id, name) = &pages[cur];
+    let name_w = (room - 3.0 * TAB_H - 4.0 * TAB_GAP - 34.0).clamp(40.0, 220.0);
+    let label = ellipsize(ui, &format!("{} · {name}", cur + 1), &font, name_w - 36.0);
+    let gal = ui.painter().layout_no_wrap(label, font.clone(), pal.ac);
+    let width = (gal.size().x + 36.0).min(name_w);
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, TAB_H), Sense::click());
+    ui.painter().rect_filled(rect, 8.0, if resp.hovered() { pal.ui2 } else { pal.acbg });
+    ui.painter().galley(egui::pos2(rect.left() + 10.0, rect.center().y - gal.size().y / 2.0), gal, pal.ac);
+    ui.painter().text(egui::pos2(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER, "▾", font.clone(), pal.ac);
+    let resp = resp.on_hover_text(name);
+    resp.context_menu(|ui| page_menu(app, ui, id, name, pages.len()));
+    egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(240.0).show(|ui| {
+        let search_id = egui::Id::new("pages-search");
+        let mut query: String = ui.data(|d| d.get_temp(search_id)).unwrap_or_default();
+        if pages.len() > PAGES_SEARCH {
+            ui.add(egui::TextEdit::singleline(&mut query).hint_text(t("Search pages…")).desired_width(f32::INFINITY));
+            ui.data_mut(|d| d.insert_temp(search_id, query.clone()));
+        }
+        let q = query.trim().to_lowercase();
+        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            for (i, (pid, pname)) in pages.iter().enumerate() {
+                if !q.is_empty() && !pname.to_lowercase().contains(&q) {
+                    continue;
+                }
+                let row = ui.add_sized([ui.available_width(), 28.0], egui::Button::selectable(*pid == app.ed.current, format!("{}  {pname}", i + 1)));
+                if row.clicked() {
+                    goto_page(app, pid);
+                    ui.close();
+                }
+                row.context_menu(|ui| page_menu(app, ui, pid, pname, pages.len()));
             }
         });
     });
+    if step(ui, "▶", cur + 1 < pages.len(), t("Next page")) {
+        goto_page(app, &pages[cur + 1].0.clone());
+    }
 }
 
 /* ------------------------------------------------------------ menu principal */
@@ -643,5 +800,52 @@ fn table_menu(app: &mut App, ui: &mut Ui, sel: &[Id]) {
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod pages_tests {
+    use super::*;
+
+    fn full(n: usize, w: f32) -> f32 {
+        w * f32::from(u16::try_from(n).unwrap()) + TAB_GAP * f32::from(u16::try_from(n.saturating_sub(1)).unwrap())
+    }
+
+    #[test]
+    fn everything_fits() {
+        assert_eq!(pages_level(&[80.0, 90.0], 172.0), PagesLevel::Full);
+        assert!(matches!(pages_level(&[80.0, 90.0], 171.9), PagesLevel::Ellipsis(_)));
+        assert_eq!(pages_level(&[], 0.0), PagesLevel::Full);
+    }
+
+    #[test]
+    fn one_page() {
+        assert_eq!(pages_level(&[100.0], 100.0), PagesLevel::Full);
+        assert_eq!(pages_level(&[500.0], 300.0), PagesLevel::Ellipsis(TAB_MAX));
+        assert_eq!(pages_level(&[500.0], 50.0), PagesLevel::Compact);
+    }
+
+    #[test]
+    fn long_names_are_capped_then_shrunk() {
+        let n = [300.0; 4];
+        assert_eq!(pages_level(&n, full(4, TAB_MAX)), PagesLevel::Ellipsis(TAB_MAX));
+        match pages_level(&n, full(4, 100.0)) {
+            PagesLevel::Ellipsis(w) => assert!((w - 100.0).abs() < 0.01, "{w}"),
+            other => panic!("{other:?}"),
+        }
+        match pages_level(&n, full(4, TAB_MIN)) {
+            PagesLevel::Ellipsis(w) => assert!((w - TAB_MIN).abs() < 0.01, "{w}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(pages_level(&n, full(4, TAB_MIN) - 0.1), PagesLevel::Compact);
+    }
+
+    #[test]
+    fn many_pages_go_compact() {
+        let n = [60.0; 50];
+        assert_eq!(pages_level(&n, 1000.0), PagesLevel::Compact);
+        assert_eq!(pages_level(&n, full(50, 60.0)), PagesLevel::Full);
+        let long = [400.0; 50];
+        assert_eq!(pages_level(&long, 1500.0), PagesLevel::Compact);
     }
 }

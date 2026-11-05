@@ -1046,3 +1046,17 @@ fn bug_10_a_keymap_file_that_cannot_be_read_is_reported() {
         assert!(loaded || toast_of(&mut t).is_some(), "the file was neither loaded nor reported");
     });
 }
+
+#[test]
+fn thirty_long_named_pages_stay_in_a_narrow_window() {
+    let mut t = harness((700.0, 500.0), false);
+    for i in 0..30 {
+        t.app().ed.add_page(&format!("A very long page name number {i}"));
+    }
+    for _ in 0..4 {
+        t.h.step();
+    }
+    let (screen, pages) = (egui::Rect::from_min_size(Pos2::ZERO, vec2(700.0, 500.0)), card(&t, "pages"));
+    assert!(screen.contains_rect(pages), "page card leaves the window: {pages:?}");
+    assert!(!rects_overlap(pages, card(&t, "zoom")) && !rects_overlap(pages, card(&t, "help")), "page card on top of another card: {pages:?}");
+}

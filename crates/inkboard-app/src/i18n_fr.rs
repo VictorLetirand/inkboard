@@ -279,6 +279,9 @@ pub const FR: &[(&str, &str)] = &[
     ("New board", "Nouveau tableau"),
     ("New links (the old ones stop working)", "Nouveaux liens (les anciens cessent de fonctionner)"),
     ("New page", "Nouvelle page"),
+    ("Next page", "Page suivante"),
+    ("Previous page", "Page précédente"),
+    ("Search pages…", "Rechercher une page…"),
     (
         "No connection: this computer does not seem to be connected to the Internet. Check your network and try again.",
         "Pas de connexion : cet ordinateur ne semble pas relié à Internet. Vérifiez votre réseau et réessayez.",

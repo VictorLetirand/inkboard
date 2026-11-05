@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Changed
+
+- **Page switcher:** the page bar no longer grows under the other cards. It measures the room left between the zoom and help cards, caps long tab names with an ellipsis (full name in a tooltip), then falls back to a compact `◀ name ▾ ▶ +` mode with a drop-down list of all pages (search field above 12 pages).
+
 ## [0.2.0-rc.4] - 2026-11-05
 
 **Release candidate.** The MCP server learns to draw clean diagrams on its own: a `check_layout` tool that lists the layout defects with their ids, titled frames (`add_frame`), arrow attachment sides and label positions, grids and a richer `auto_layout`. Live sharing moves to protocol v6: update every app that hosts or joins a session.
