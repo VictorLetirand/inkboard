@@ -98,6 +98,29 @@ pub fn file_name(doc_name: &str, ext: &str) -> String {
     format!("{}.{ext}", file_stem(doc_name))
 }
 
+/// Output files of a multi-page export: `<board>-<NN>-<page name>.<ext>` for each ticked page (`ticked`: page indices, in order).
+/// `NN` is the page number padded to at least two digits; an empty page name leaves `<board>-<NN>.<ext>`; a name already taken
+/// (compared without case, as Windows does) gets `-2`, `-3`... Returns `(file name, page index)`; out-of-range indices are dropped.
+pub fn page_file_names(board: &str, ext: &str, page_names: &[&str], ticked: &[usize]) -> Vec<(String, usize)> {
+    let width = page_names.len().to_string().len().max(2);
+    let stem = file_stem(board);
+    let mut taken = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for &i in ticked.iter().filter(|&&i| i < page_names.len()) {
+        let raw = page_names[i];
+        let page = if clean_name(raw).is_some() { file_stem(raw) } else { String::new() };
+        let base = if page.is_empty() { format!("{stem}-{:0width$}", i + 1) } else { format!("{stem}-{:0width$}-{page}", i + 1) };
+        let mut name = format!("{base}.{ext}");
+        let mut n = 1;
+        while !taken.insert(name.to_lowercase()) {
+            n += 1;
+            name = format!("{base}-{n}.{ext}");
+        }
+        out.push((name, i));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +174,27 @@ mod tests {
         assert_eq!(file_stem("\u{3164}"), "board");
         assert_eq!(file_stem(&"x".repeat(500)).chars().count(), 100);
         assert_eq!(file_name("a/b", "svg"), "ab.svg");
+    }
+
+    #[test]
+    fn multi_page_file_names_are_padded_sanitized_and_unique() {
+        let names = ["Intro", "", "a/b:c", "CON", "intro", "Intro"];
+        let got = page_file_names("My board", "png", &names, &[0, 1, 2, 3, 4, 5, 9]);
+        let files: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            files,
+            ["My board-01-Intro.png", "My board-02.png", "My board-03-abc.png", "My board-04-_CON.png", "My board-05-intro.png", "My board-06-Intro.png"]
+        );
+        assert_eq!(got.iter().map(|(_, i)| *i).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 5]);
+        // only the ticked pages, in the order given; the board name is sanitized too
+        let got = page_file_names("a/b", "svg", &["x", "y", "z"], &[2, 0]);
+        assert_eq!(got, [("ab-03-z.svg".to_owned(), 2), ("ab-01-x.svg".to_owned(), 0)]);
+        // more than 99 pages: wider numbers
+        let many: Vec<&str> = vec!["p"; 120];
+        assert_eq!(page_file_names("b", "svg", &many, &[4])[0].0, "b-005-p.svg");
+        // a repeated index or a name that collides once sanitized gets a suffix
+        let got = page_file_names("b", "svg", &["x"], &[0, 0]);
+        assert_eq!(got[1].0, "b-01-x-2.svg");
+        assert!(page_file_names("b", "svg", &["x"], &[]).is_empty());
     }
 }

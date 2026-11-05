@@ -95,6 +95,7 @@ To build the installers yourself: `cargo install cargo-packager --locked`, then 
   | SVG, PNG, PDF (vector) | – | ✔ |
 
 - **Customizable shortcuts** (41 commands, several shortcuts per command, conflict handling) and a **light/dark theme** that follows the board background.
+- **Export dialog:** *Export as PNG / SVG / PDF* (and Excalidraw / JSON Canvas) asks which pages to export (all, none, current, or any ticked), "Selection only" and, for PNG, the scale. Several pages give one file per page in a folder chosen once (named `<board>-<NN>-<page>.<ext>`; the web build downloads them one by one), or a single multi-page PDF.
 - **File extension:** boards are saved as `.inkboard` (a JSON file; the installer makes a double-click open it). Boards saved by earlier builds as `.inkboard.json` (and the prototype's `.tableau.json`) still open, and are saved back under their own name.
 - **Command line:** `ink convert diagram.mmd diagram.drawio`, `ink convert board.inkboard board.png`, `ink info file.drawio`.
 

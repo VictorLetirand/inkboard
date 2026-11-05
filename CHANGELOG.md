@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Added
+
+- **Export dialog:** *Export as PNG / SVG / PDF / Excalidraw / JSON Canvas* now lets you tick the pages to export (All / None / Current page), export the selection only, and pick the PNG scale. Several pages give one file per page in a chosen folder (one download each on the web), PDF gives a single multi-page file.
+
 ### Changed
 
 - **Page switcher:** the page bar no longer grows under the other cards. It measures the room left between the zoom and help cards, caps long tab names with an ellipsis (full name in a tooltip), then falls back to a compact `◀ name ▾ ▶ +` mode with a drop-down list of all pages (search field above 12 pages).

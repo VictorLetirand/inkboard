@@ -14,6 +14,27 @@ use inkboard_core::{Arrowhead, Asset, BgPreset, BoxGeom, Color, Document, Editor
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// What the export dialog asked for.
+pub struct ExportReq {
+    pub ext: &'static str,
+    /// Page indices, in board order.
+    pub pages: Vec<usize>,
+    /// Export only the selected objects (of the current page).
+    pub selection_only: bool,
+    /// PNG scale (1 to 3).
+    pub scale: u8,
+}
+
+/// A file produced by an export; `Err("")` means "nothing to export" for that file.
+pub struct ExportFile {
+    pub name: String,
+    pub data: Result<Vec<u8>, String>,
+}
+
+fn static_ext(ext: &str) -> &'static str {
+    ["png", "svg", "pdf", "excalidraw", "canvas"].into_iter().find(|e| *e == ext).unwrap_or("drawio")
+}
+
 pub enum Dialog {
     Mermaid {
         text: String,
@@ -27,6 +48,13 @@ pub enum Dialog {
     Shortcuts {
         filter: String,
         recording: Option<Action>,
+    },
+    /// Export of `ext` (png, svg, pdf, excalidraw, canvas): the pages ticked, the selection-only option and the PNG scale (1 to 3).
+    Export {
+        ext: &'static str,
+        pages: Vec<bool>,
+        selection_only: bool,
+        scale: u8,
     },
     /// Confirmation before replacing a board that has unsaved changes with a new one.
     ConfirmNew,
@@ -502,51 +530,165 @@ impl App {
         }
     }
 
-    /// Exports to an interchange format; `ext`: drawio, excalidraw, canvas, svg, png, pdf.
+    /// Exports the whole board to draw.io (a single file); the other formats go through [`Self::open_export`].
     pub fn export(&mut self, ext: &str) {
-        let page = self.ed.page().clone();
-        let ids: Option<Vec<Id>> = (!self.sel.is_empty()).then(|| self.sel.clone());
-        let text: Option<String> = match ext {
-            "drawio" => Some(inkboard_formats::drawio::export(&self.ed.doc, &self.measurer)),
-            "excalidraw" => Some(inkboard_formats::excalidraw::export(&self.ed.doc, &page, &self.measurer)),
+        let req = ExportReq { ext: static_ext(ext), pages: vec![self.page_index()], selection_only: false, scale: 2 };
+        self.run_export(&req);
+    }
+
+    /// Opens the export dialog of `ext` (png, svg, pdf, excalidraw, canvas): only the current page is ticked, and "Selection only"
+    /// is on when something is selected (the image formats).
+    pub fn open_export(&mut self, ext: &'static str) {
+        let cur = self.page_index();
+        let pages = (0..self.ed.doc.pages.len()).map(|i| i == cur).collect();
+        let selection_only = !self.sel.is_empty() && matches!(ext, "png" | "svg" | "pdf");
+        self.dialog = Some(Dialog::Export { ext, pages, selection_only, scale: 2 });
+    }
+
+    /// Text of one page in the interchange format `ext` (`None`: nothing to export) and the number of elements the format cannot hold.
+    fn page_text(&self, ext: &str, page: &Page, ids: Option<&[Id]>) -> (Option<String>, usize) {
+        match ext {
+            "drawio" => (Some(inkboard_formats::drawio::export(&self.ed.doc, &self.measurer)), 0),
+            "excalidraw" => (Some(inkboard_formats::excalidraw::export(&self.ed.doc, page, &self.measurer)), 0),
             "canvas" => {
-                let (json, dropped) = inkboard_formats::jsoncanvas::export(&page);
-                if dropped > 0 {
-                    self.toast(&tr!("JSON Canvas: {} elements that cannot be represented were skipped", dropped));
-                }
-                Some(json)
+                let (json, dropped) = inkboard_formats::jsoncanvas::export(page);
+                (Some(json), dropped)
             }
-            "svg" | "png" | "pdf" => {
-                inkboard_core::svg::export(&self.ed.doc, &page, ids.as_deref(), &self.measurer, &inkboard_core::svg::SvgOptions::default())
-            }
-            _ => None,
-        };
-        let Some(text) = text else { return self.toast(&t("Nothing to export")) };
-        let name = crate::names::file_name(&self.ed.doc.name, ext);
-        let to_bytes = |text: String| -> Result<Vec<u8>, String> {
+            "svg" | "png" | "pdf" => (inkboard_core::svg::export(&self.ed.doc, page, ids, &self.measurer, &inkboard_core::svg::SvgOptions::default()), 0),
+            _ => (None, 0),
+        }
+    }
+
+    /// Builds the files of an export without writing anything; an empty error means "nothing to export".
+    /// One page (or draw.io, or a multi-page PDF) gives one file named like the board; several pages give one file per page.
+    /// Also returns the number of elements the format could not hold.
+    pub fn export_files(&self, req: &ExportReq) -> (Vec<ExportFile>, usize) {
+        let ext = req.ext;
+        let ids: Option<Vec<Id>> = (req.selection_only && !self.sel.is_empty()).then(|| self.sel.clone());
+        let pages: Vec<usize> = if ext == "drawio" { vec![0] } else { req.pages.iter().copied().filter(|&i| i < self.ed.doc.pages.len()).collect() };
+        let board = self.ed.doc.name.as_str();
+        let scale = f32::from(req.scale.clamp(1, 3));
+        let render = |text: String| -> Result<Vec<u8>, String> {
             match ext {
-                "png" => inkboard_formats::raster::svg_to_png(&text, 2.0).map_err(|e| e.to_string()),
+                "png" => inkboard_formats::raster::svg_to_png(&text, scale).map_err(|e| e.to_string()),
                 "pdf" => inkboard_formats::raster::svg_to_pdf(&text).map_err(|e| e.to_string()),
                 _ => Ok(text.into_bytes()),
             }
         };
-        if platform::DOWNLOADS {
-            let mime = match ext {
-                "png" => "image/png",
-                "pdf" => "application/pdf",
-                "svg" => "image/svg+xml",
-                _ => "application/octet-stream",
+        let mut dropped = 0;
+        let mut texts = Vec::new();
+        for &i in &pages {
+            let (text, d) = self.page_text(ext, &self.ed.doc.pages[i], ids.as_deref());
+            dropped += d;
+            texts.push((i, text));
+        }
+        let mut out = Vec::new();
+        if pages.len() <= 1 {
+            let name = crate::names::file_name(board, ext);
+            let data = match texts.pop().and_then(|(_, t)| t) {
+                Some(text) => render(text),
+                None => Err(String::new()),
             };
-            match to_bytes(text).and_then(|b| platform::download(&name, mime, &b)) {
-                Ok(()) => self.toast(&tr!("Downloaded: {}", name)),
-                Err(e) => self.toast(&tr!("Cannot export: {}", e)),
+            out.push(ExportFile { name, data });
+        } else if ext == "pdf" {
+            let mut svgs = Vec::new();
+            for (i, text) in texts {
+                match text {
+                    Some(text) => svgs.push(text),
+                    None => out.push(ExportFile { name: self.page_label(i), data: Err(String::new()) }),
+                }
             }
-        } else if let Some(p) = platform::pick_save_path(&name, ext, &[ext]) {
-            match to_bytes(text).and_then(|b| std::fs::write(&p, b).map_err(|e| e.to_string())) {
-                Ok(()) => self.toast(&tr!("Exported: {}", p.display())),
-                Err(e) => self.toast(&tr!("Cannot export: {}", e)),
+            let data = if svgs.is_empty() { Err(String::new()) } else { inkboard_formats::raster::svgs_to_pdf(&svgs).map_err(|e| e.to_string()) };
+            out.insert(0, ExportFile { name: crate::names::file_name(board, ext), data });
+        } else {
+            let names: Vec<&str> = self.ed.doc.pages.iter().map(|p| p.name.as_str()).collect();
+            let mut texts: std::collections::HashMap<usize, Option<String>> = texts.into_iter().collect();
+            for (name, i) in crate::names::page_file_names(board, ext, &names, &pages) {
+                let data = match texts.get_mut(&i).and_then(Option::take) {
+                    Some(text) => render(text),
+                    None => Err(String::new()),
+                };
+                out.push(ExportFile { name, data });
             }
         }
+        (out, dropped)
+    }
+
+    /// Position of the current page in the board.
+    pub fn page_index(&self) -> usize {
+        self.ed.doc.pages.iter().position(|p| p.id == self.ed.current).unwrap_or(0)
+    }
+
+    /// "3 (Name)": a page as shown in error messages.
+    fn page_label(&self, i: usize) -> String {
+        let n = &self.ed.doc.pages[i].name;
+        if n.trim().is_empty() { (i + 1).to_string() } else { format!("{} ({n})", i + 1) }
+    }
+
+    /// Exports to an interchange format and tells the result in a toast. A save dialog for one file, a folder dialog for several
+    /// (the web build downloads each file instead).
+    pub fn run_export(&mut self, req: &ExportReq) {
+        let (files, dropped) = self.export_files(req);
+        if dropped > 0 {
+            self.toast(&tr!("JSON Canvas: {} elements that cannot be represented were skipped", dropped));
+        }
+        let ext = req.ext;
+        let mime = match ext {
+            "png" => "image/png",
+            "pdf" => "application/pdf",
+            "svg" => "image/svg+xml",
+            _ => "application/octet-stream",
+        };
+        let nothing = t("Nothing to export");
+        if let [f] = files.as_slice() {
+            let bytes = match &f.data {
+                Ok(b) => b,
+                Err(e) if e.is_empty() => return self.toast(&nothing),
+                Err(e) => return self.toast(&tr!("Cannot export: {}", e)),
+            };
+            if platform::DOWNLOADS {
+                match platform::download(&f.name, mime, bytes) {
+                    Ok(()) => self.toast(&tr!("Downloaded: {}", f.name)),
+                    Err(e) => self.toast(&tr!("Cannot export: {}", e)),
+                }
+            } else if let Some(p) = platform::pick_save_path(&f.name, ext, &[ext]) {
+                match std::fs::write(&p, bytes) {
+                    Ok(()) => self.toast(&tr!("Exported: {}", p.display())),
+                    Err(e) => self.toast(&tr!("Cannot export: {}", e)),
+                }
+            }
+            return;
+        }
+        let folder = if platform::DOWNLOADS {
+            None
+        } else {
+            let Some(dir) = platform::pick_folder() else { return };
+            Some(dir)
+        };
+        let (mut done, mut problems) = (0, Vec::new());
+        for f in files {
+            let res = match f.data {
+                Err(e) if e.is_empty() => Err(nothing.clone()),
+                Err(e) => Err(e),
+                Ok(bytes) => match &folder {
+                    Some(dir) => std::fs::write(dir.join(&f.name), bytes).map_err(|e| e.to_string()),
+                    None => platform::download(&f.name, mime, &bytes),
+                },
+            };
+            match res {
+                Ok(()) => done += 1,
+                Err(e) => problems.push(tr!("{}: {}", f.name, e)),
+            }
+        }
+        let mut msg = match (&folder, done) {
+            (_, 0) => t("Nothing exported"),
+            (Some(dir), n) => tr!("Exported {} files to {}", n, dir.display()),
+            (None, n) => tr!("Downloaded {} files", n),
+        };
+        if !problems.is_empty() {
+            msg = format!("{msg} · {}", problems.join(" · "));
+        }
+        self.toast(&msg);
     }
 
     pub fn import_mermaid(&mut self, text: &str, new_board: bool) -> Result<(), String> {

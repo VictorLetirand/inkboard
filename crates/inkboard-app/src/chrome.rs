@@ -495,13 +495,13 @@ fn export_items(app: &mut App, ui: &mut Ui) {
     theme::menu_sep(ui);
     let sel = !app.sel.is_empty();
     if mi(ui, "download", if sel { "Export selection as PNG" } else { "Export as PNG" }, "") {
-        app.export("png");
+        app.open_export("png");
     }
     if mi(ui, "download", "Export as SVG", "") {
-        app.export("svg");
+        app.open_export("svg");
     }
     if mi(ui, "download", "Export as PDF", "") {
-        app.export("pdf");
+        app.open_export("pdf");
     }
     if mi(ui, "copy", "Copy image to clipboard", "") {
         app.copy_as_image();
@@ -511,10 +511,10 @@ fn export_items(app: &mut App, ui: &mut Ui) {
         app.export("drawio");
     }
     if mi(ui, "download", "Export as Excalidraw", "") {
-        app.export("excalidraw");
+        app.open_export("excalidraw");
     }
     if mi(ui, "download", "Export as JSON Canvas (.canvas)", "") {
-        app.export("canvas");
+        app.open_export("canvas");
     }
 }
 

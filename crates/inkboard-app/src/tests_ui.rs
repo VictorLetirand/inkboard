@@ -1060,3 +1060,86 @@ fn thirty_long_named_pages_stay_in_a_narrow_window() {
     assert!(screen.contains_rect(pages), "page card leaves the window: {pages:?}");
     assert!(!rects_overlap(pages, card(&t, "zoom")) && !rects_overlap(pages, card(&t, "help")), "page card on top of another card: {pages:?}");
 }
+
+/* ------------------------------------------------------------ export dialog */
+
+fn export_state(t: &mut T) -> Option<(Vec<bool>, bool)> {
+    match &t.app().dialog {
+        Some(Dialog::Export { pages, selection_only, .. }) => Some((pages.clone(), *selection_only)),
+        _ => None,
+    }
+}
+
+#[test]
+fn the_export_dialog_ticks_the_current_page_and_the_shortcuts_change_the_choice() {
+    let (mut t, _) = board();
+    t.app().ed.add_page("Two");
+    t.app().ed.add_page("Three");
+    let first = t.app().ed.doc.pages[0].id.clone();
+    t.app().ed.current = first;
+    t.app().open_export("svg");
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert_eq!(export_state(&mut t), Some((vec![true, false, false], false)));
+    t.h.get_by_label("1 of 3 pages");
+    t.h.get_by_label("All").click();
+    t.h.step();
+    t.h.step();
+    assert_eq!(export_state(&mut t).unwrap().0, vec![true; 3]);
+    t.h.get_by_label("None").click();
+    t.h.step();
+    t.h.step();
+    assert_eq!(export_state(&mut t).unwrap().0, vec![false; 3]);
+    t.key(Key::Escape);
+    assert!(export_state(&mut t).is_none(), "Escape closes the dialog");
+}
+
+#[test]
+fn the_export_dialog_offers_the_selection_when_there_is_one() {
+    let (mut t, [x, ..]) = board();
+    t.app().sel = vec![x];
+    t.app().open_export("png");
+    for _ in 0..3 {
+        t.h.step();
+    }
+    assert_eq!(export_state(&mut t).map(|s| s.1), Some(true));
+    t.h.get_by_label("Selection only (current page)");
+    t.h.get_by_label("Cancel").click();
+    t.h.step();
+    t.h.step();
+    assert!(export_state(&mut t).is_none());
+    // the image-less formats have no such option
+    t.app().open_export("canvas");
+    assert_eq!(export_state(&mut t).map(|s| s.1), Some(false));
+}
+
+#[test]
+fn a_multi_page_export_builds_one_file_per_page_or_one_pdf() {
+    let (mut t, [x, ..]) = board();
+    t.app().ed.add_page("Deux");
+    t.add_rect(10.0, 10.0, 50.0, 50.0);
+    t.app().ed.add_page("Trois");
+    t.add_rect(10.0, 10.0, 60.0, 60.0);
+    let req = |ext, pages: Vec<usize>, selection_only| crate::app::ExportReq { ext, pages, selection_only, scale: 1 };
+    let (files, _) = t.app().export_files(&req("svg", vec![0, 1, 2], false));
+    assert_eq!(files.len(), 3);
+    assert!(files.iter().all(|f| f.data.as_ref().is_ok_and(|b| b.starts_with(b"<svg") || b.starts_with(b"<?xml"))));
+    assert!(files[1].name.ends_with("-02-Deux.svg") && files[2].name.ends_with("-03-Trois.svg"), "{:?}", files.iter().map(|f| &f.name).collect::<Vec<_>>());
+    // one page: the name of today
+    let (files, _) = t.app().export_files(&req("svg", vec![1], false));
+    assert_eq!(files.len(), 1);
+    assert!(!files[0].name.contains("-02-"));
+    // PDF: a single document with three pages
+    let (files, _) = t.app().export_files(&req("pdf", vec![0, 1, 2], false));
+    assert_eq!(files.len(), 1);
+    let pdf = String::from_utf8_lossy(files[0].data.as_ref().unwrap()).into_owned();
+    assert!(pdf.contains("/Count 3"));
+    // PNG at 1x for two pages
+    let (files, _) = t.app().export_files(&req("png", vec![0, 2], false));
+    assert!(files.len() == 2 && files.iter().all(|f| f.data.as_ref().is_ok_and(|b| b.starts_with(b"\x89PNG"))));
+    // Excalidraw: one file per page too
+    let (files, _) = t.app().export_files(&req("excalidraw", vec![0, 1], false));
+    assert_eq!(files.len(), 2);
+    let _ = x;
+}
