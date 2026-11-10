@@ -10,6 +10,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 - **Live sharing protocol v7:** update every app that hosts or joins a session. From this version on, a neighbouring version joins read-only instead of being refused, with a message telling the guest to update Inkboard (or reload the page) to edit.
 - **File format version 3:** a board that uses shadow, SVG recoloring, arrowhead size, stroke arrows, connector attachment side, label position or vertical text alignment is now saved as version 3, so versions before 0.2.0 refuse it cleanly instead of silently dropping those settings. A board that uses none of them is saved exactly as before (version 2).
 - **Empty board help:** an empty board now shows a discreet hint (pick a tool, double-click to type, and the shortcut to open a draw.io, Excalidraw or Mermaid file). It disappears with the first object and is never part of a screenshot or export.
+- **Main menu:** the export entries are grouped in one "Export…" sub-menu (PNG, SVG, PDF, draw.io, Excalidraw, JSON Canvas), so the menu fits a small window. Copying the image to the clipboard stays at the first level.
 
 ### Fixed
 

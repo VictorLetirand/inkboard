@@ -490,31 +490,39 @@ fn key(app: &App, a: Action) -> String {
     app.keymap.label(a)
 }
 
-/// Export entries of the main menu.
+/// Export entries of the main menu: one "Export…" sub-menu, and the clipboard copy.
 fn export_items(app: &mut App, ui: &mut Ui) {
     theme::menu_sep(ui);
     let sel = !app.sel.is_empty();
-    if mi(ui, "download", if sel { "Export selection as PNG" } else { "Export as PNG" }, "") {
-        app.open_export("png");
-    }
-    if mi(ui, "download", "Export as SVG", "") {
-        app.open_export("svg");
-    }
-    if mi(ui, "download", "Export as PDF", "") {
-        app.open_export("pdf");
-    }
+    // as wide as the menu, so that the sub-menu opens on the menu's right edge
+    let button = egui::Button::new(egui::RichText::new(t("Export…")).size(13.0))
+        .right_text(egui::containers::menu::SubMenuButton::RIGHT_ARROW)
+        .min_size(vec2(ui.available_width(), 32.0));
+    egui::containers::menu::SubMenuButton::from_button(button).ui(ui, |ui| {
+        theme::menu_style(ui);
+        ui.set_width(230.0);
+        if mi(ui, "download", if sel { "Export selection as PNG" } else { "Export as PNG" }, "") {
+            app.open_export("png");
+        }
+        if mi(ui, "download", "Export as SVG", "") {
+            app.open_export("svg");
+        }
+        if mi(ui, "download", "Export as PDF", "") {
+            app.open_export("pdf");
+        }
+        theme::menu_sep(ui);
+        if mi(ui, "download", "Export as draw.io (.drawio)", "") {
+            app.export("drawio");
+        }
+        if mi(ui, "download", "Export as Excalidraw", "") {
+            app.open_export("excalidraw");
+        }
+        if mi(ui, "download", "Export as JSON Canvas (.canvas)", "") {
+            app.open_export("canvas");
+        }
+    });
     if mi(ui, "copy", "Copy image to clipboard", "") {
         app.copy_as_image();
-    }
-    theme::menu_label(ui, "Exchange with other tools");
-    if mi(ui, "download", "Export as draw.io (.drawio)", "") {
-        app.export("drawio");
-    }
-    if mi(ui, "download", "Export as Excalidraw", "") {
-        app.open_export("excalidraw");
-    }
-    if mi(ui, "download", "Export as JSON Canvas (.canvas)", "") {
-        app.open_export("canvas");
     }
 }
 

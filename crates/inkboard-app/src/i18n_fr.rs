@@ -181,7 +181,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Eraser end detected", "Extrémité gomme détectée"),
     ("Esc", "Échap"),
     ("Everybody who opens a link needs your approval to enter.", "Toute personne qui ouvre un lien doit être acceptée par vous pour entrer."),
-    ("Exchange with other tools", "Échange avec d'autres outils"),
+    ("Export…", "Exporter…"),
     ("Export as Excalidraw", "Exporter en Excalidraw"),
     ("Export as JSON Canvas (.canvas)", "Exporter en JSON Canvas (.canvas)"),
     ("Export as PDF", "Exporter en PDF"),

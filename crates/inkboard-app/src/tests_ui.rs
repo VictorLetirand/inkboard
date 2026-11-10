@@ -1201,3 +1201,43 @@ fn empty_board_shows_a_hint_that_goes_away_and_never_blocks_the_pointer() {
     t.app().screenshot = Some(std::path::PathBuf::from("x.png"));
     assert!(crate::ui::empty_hint_text(t.app()).is_none());
 }
+
+#[test]
+fn the_main_menu_groups_the_exports_in_a_sub_menu_that_fits_a_700_px_window() {
+    let mut t = harness((1024.0, 700.0), false);
+    t.add_rect(100.0, 100.0, 80.0, 50.0);
+    for _ in 0..3 {
+        t.h.step();
+    }
+    open_main_menu(&mut t);
+    let before = clickable_rects(&t).iter().filter(|r| r.width() < 600.0).count();
+    t.h.get_by_label_contains("Export…");
+    let menu = t.h.ctx.memory(|m| {
+        m.areas()
+            .visible_layer_ids()
+            .into_iter()
+            .filter(|l| l.order == egui::Order::Foreground)
+            .filter_map(|l| m.area_rect(l.id))
+            .max_by(|a, b| a.area().total_cmp(&b.area()))
+    });
+    let menu = menu.expect("the menu is open");
+    assert!(menu.max.y <= 700.0, "the menu is taller than the window: {menu:?}");
+
+    let b = t.h.get_by_label_contains("Export…").accesskit_node().bounding_box().expect("the button has a box");
+    t.mv(Pos2::new(num::f32(b.x0.midpoint(b.x1)), num::f32(b.y0.midpoint(b.y1))));
+    for _ in 0..4 {
+        t.h.step();
+    }
+    let rects = clickable_rects(&t);
+    assert!(rects.len() > before, "the sub-menu is open");
+    let mut sub: Vec<egui::Rect> =
+        rects.into_iter().filter(|r| r.min.x >= menu.max.x - 1.0 && r.width() > 150.0 && r.height() < 40.0 && r.min.y < 640.0).collect();
+    sub.sort_by(|a, b| a.min.y.total_cmp(&b.min.y));
+    assert_eq!(sub.len(), 6, "entries on the right of the main menu: {sub:?}");
+    let pdf = sub[2].center(); // PNG, SVG, PDF
+    t.mv(pdf);
+    t.button(pdf, true, egui::Modifiers::NONE);
+    t.button(pdf, false, egui::Modifiers::NONE);
+    t.h.step();
+    assert!(matches!(&t.app().dialog, Some(Dialog::Export { ext, .. }) if *ext == "pdf"), "the PDF export dialog is not open");
+}
