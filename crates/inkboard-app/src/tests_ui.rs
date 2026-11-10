@@ -1241,3 +1241,27 @@ fn the_main_menu_groups_the_exports_in_a_sub_menu_that_fits_a_700_px_window() {
     t.h.step();
     assert!(matches!(&t.app().dialog, Some(Dialog::Export { ext, .. }) if *ext == "pdf"), "the PDF export dialog is not open");
 }
+
+#[test]
+fn the_font_buttons_show_a_word_in_their_font_that_fits_the_button() {
+    let mut t = T::new();
+    t.h.step();
+    for (family, _, word) in crate::panel::FONT_BUTTONS {
+        let width = t.h.ctx.fonts_mut(|f| {
+            f.layout_no_wrap(word.to_owned(), crate::fonts::font_id(family, crate::panel::FONT_WORD_SIZE, false), egui::Color32::WHITE).size().x
+        });
+        assert!(width <= 37.0 - 2.0, "{word} is {width} px wide, too much for the 37 px button");
+    }
+}
+
+#[test]
+fn join_is_the_main_button_and_both_buttons_are_tall_in_a_narrow_window() {
+    let mut t = harness((1024.0, 700.0), false);
+    t.app().open_join_window(None);
+    for _ in 0..4 {
+        t.h.step();
+    }
+    let height = |t: &mut T, name: &str| t.h.get_by_label(name).accesskit_node().bounding_box().map_or(0.0, |b| b.y1 - b.y0);
+    assert!(height(&mut t, "Join") >= 40.0, "Join is too short for a finger");
+    assert!(height(&mut t, "Cancel") >= 40.0, "Cancel is too short for a finger");
+}

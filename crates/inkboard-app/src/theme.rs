@@ -166,6 +166,13 @@ pub fn text_button(ui: &mut Ui, text: &str) -> Response {
     resp
 }
 
+/// Main action of a window: accent background, contrasted text, at least `min_height` tall. The text is translated.
+pub fn primary_button(ui: &mut Ui, text: &str, min_height: f32) -> Response {
+    let p = current(ui.ctx());
+    let fg = if p.dark { p.ui } else { Color32::WHITE };
+    ui.add(egui::Button::new(egui::RichText::new(crate::i18n::t(text)).color(fg)).fill(p.ac).min_size(vec2(0.0, min_height)))
+}
+
 /// Vertical separator (`.sep`).
 pub fn vsep(ui: &mut Ui) {
     let p = current(ui.ctx());

@@ -650,11 +650,20 @@ fn head_preview(p: &egui::Painter, r: egui::Rect, col: egui::Color32, e: HeadExt
     crate::render::paint_head(p, &head_glyph(tip, from, 9.0, Arrowhead::None, Some(e)), &|q| egui::pos2(num::f32(q.x), num::f32(q.y)), 1.0, 1.5, col, hollow);
 }
 
+/// The four font buttons: family, tooltip, and a short word drawn in that font (typographic names, not translated).
+pub(crate) const FONT_BUTTONS: [(FontFamily, &str, &str); 4] = [
+    (FontFamily::Sans, "Sans serif", "Sans"),
+    (FontFamily::Hand, "Handwriting", "Hand"),
+    (FontFamily::Serif, "Serif", "Serif"),
+    (FontFamily::Mono, "Monospace", "Mono"),
+];
+pub(crate) const FONT_WORD_SIZE: f32 = 13.0;
+
 /// Font, size and alignment of the text.
 fn text_section(app: &mut App, ui: &mut Ui, target: &Target) {
     row(ui, "Font", |ui| {
-        for (f, tip) in [(FontFamily::Sans, "Sans serif"), (FontFamily::Hand, "Handwriting"), (FontFamily::Serif, "Serif"), (FontFamily::Mono, "Monospace")] {
-            if theme::seg_button(ui, target.label.family == f, tip, |p, r, c| text_in(p, "Aa", r, c, fonts::font_id(f, 15.0, false))).clicked() {
+        for (f, tip, word) in FONT_BUTTONS {
+            if theme::seg_button(ui, target.label.family == f, tip, |p, r, c| text_in(p, word, r, c, fonts::font_id(f, FONT_WORD_SIZE, false))).clicked() {
                 app.label.family = f;
                 let m = app.measurer.clone();
                 app.ed.update_many(&target.ids, |o| {
