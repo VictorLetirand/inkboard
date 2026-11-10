@@ -591,6 +591,8 @@ struct Member {
     name: String,
     color: (u8, u8, u8),
     role: Role,
+    /// Admitted with another version of the protocol (see `Conn::version_view`): it stays read-only, the host cannot make it an editor.
+    version_view: bool,
     /// Transport identity of the guest: only the same identity can resume the place.
     peer: String,
     conn: Option<u64>,
@@ -938,7 +940,8 @@ impl SessionHost {
 
     pub fn set_role(&mut self, pid: ParticipantId, role: Role) {
         let Some(m) = self.members.get_mut(&pid) else { return };
-        if m.role == role {
+        // a guest of another version would drop the fields it does not know: it never becomes an editor
+        if m.role == role || (role == Role::Edit && m.version_view) {
             return;
         }
         m.role = role;
@@ -1646,6 +1649,7 @@ impl SessionHost {
             name: name.clone(),
             color: color_for(pid, &used),
             role,
+            version_view: self.conns[i].version_view,
             peer,
             conn: Some(self.conns[i].id),
             away_since: None,

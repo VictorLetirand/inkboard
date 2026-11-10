@@ -1961,6 +1961,12 @@ fn a_guest_of_another_version_is_admitted_read_only_and_one_below_the_floor_is_r
     w.rounds(6);
     let got = newer.received();
     assert!(got.iter().any(|m| matches!(m, Message::Welcome(wl) if wl.role == Role::View)), "{got:?}");
+    // and the host cannot make it an editor afterwards
+    let id = w.host.members()[0].id;
+    w.host.set_role(id, Role::Edit);
+    w.rounds(3);
+    assert_eq!(w.host.members()[0].role, Role::View);
+    assert!(!newer.received().iter().any(|m| matches!(m, Message::RoleChange { .. })));
     // below MIN_PROTO: refused as before
     let mut old = Raw::new(&w.net, "old", &ticket);
     let h = Hello {
