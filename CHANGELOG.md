@@ -5,6 +5,10 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Changed
+
+- **File format version 3:** a board that uses shadow, SVG recoloring, arrowhead size, stroke arrows, connector attachment side, label position or vertical text alignment is now saved as version 3, so versions before 0.2.0 refuse it cleanly instead of silently dropping those settings. A board that uses none of them is saved exactly as before (version 2).
+
 ## [0.2.0-rc.5] - 2026-11-05
 
 **Release candidate.** Two points of friction from daily use: the page bar adapts to the room available (ellipsized tabs, then a compact drop-down) and exports can cover several pages at once. No change to the file format or to live sharing.
