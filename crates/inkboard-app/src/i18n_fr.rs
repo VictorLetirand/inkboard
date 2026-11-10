@@ -68,6 +68,7 @@ pub const FR: &[(&str, &str)] = &[
     ("At most {} relays.", "{} relais au maximum."),
     ("Auto", "Auto"),
     ("Automatic (system language)", "Automatique (langue du système)"),
+    ("Automatic backup failed: {}", "Échec de la sauvegarde automatique : {}"),
     ("Automatic layout", "Mise en page automatique"),
     ("Back to 100 %", "Revenir à 100 %"),
     ("Background", "Arrière-plan"),

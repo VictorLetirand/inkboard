@@ -1143,3 +1143,37 @@ fn a_multi_page_export_builds_one_file_per_page_or_one_pdf() {
     assert_eq!(files.len(), 2);
     let _ = x;
 }
+
+/// A failing automatic backup is reported once, not every 10 seconds, and the report is re-armed by the next success.
+#[test]
+fn a_failing_autosave_is_reported_once_until_it_works_again() {
+    isolated("a_failing_autosave_is_reported_once_until_it_works_again", |_| {
+        // a folder where the file should be: writing the safety copy fails, whatever the platform
+        std::fs::create_dir_all(autosave_file()).unwrap();
+        let (mut t, _) = board();
+        assert!(t.app().dirty());
+        let overdue = |t: &mut T| {
+            t.app().last_autosave = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap();
+            t.h.step();
+        };
+
+        overdue(&mut t);
+        let first = t.app().toast.clone().map(|(m, _)| m);
+        assert!(first.as_deref().is_some_and(|m| m.starts_with("Automatic backup failed")), "the failure is shown: {first:?}");
+        assert!(t.app().autosave_failed);
+
+        t.app().toast = None;
+        overdue(&mut t);
+        overdue(&mut t);
+        assert!(t.app().toast.is_none(), "the same failure is not repeated");
+
+        // the problem goes away: success re-arms the report
+        std::fs::remove_dir(autosave_file()).unwrap();
+        overdue(&mut t);
+        assert!(!t.app().autosave_failed && autosave_file().is_file());
+        std::fs::remove_file(autosave_file()).unwrap();
+        std::fs::create_dir_all(autosave_file()).unwrap();
+        overdue(&mut t);
+        assert!(t.app().toast.is_some(), "a new failure is reported again");
+    });
+}
