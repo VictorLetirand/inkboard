@@ -528,6 +528,8 @@ pub enum Notice {
     /// Modifications made while disconnected could not be kept (the host had forgotten this guest).
     PendingDiscarded(usize),
     RoleChanged(Role),
+    /// The host runs another version of the protocol: this guest can view but not edit.
+    OtherVersion,
     /// An image is over the size limit: the modification was cancelled.
     ImageTooLarge {
         size: u64,
@@ -1383,6 +1385,8 @@ impl GuestSession {
                 }
                 if matches!(self.stage, Stage::Reconnecting) {
                     self.stage = Stage::Live;
+                } else if self.client.version_view() {
+                    self.changes.notices.push(Notice::OtherVersion);
                 }
             }
             ClientEvent::SnapshotLoaded => {
@@ -1768,6 +1772,9 @@ impl App {
             Notice::PendingDiscarded(_) => t("Changes made while you were disconnected could not be kept."),
             Notice::RoleChanged(Role::Edit) => t("The host lets you edit now."),
             Notice::RoleChanged(Role::View) => t("The host changed your access to read-only."),
+            Notice::OtherVersion => {
+                t("This session uses another version of Inkboard: you can view it but not edit. Update Inkboard (or reload the page) to edit.")
+            }
             Notice::ImageTooLarge { max, .. } => tr!("Image too large ({} MB maximum): this change was cancelled.", max >> 20),
             Notice::ImageUnreadable => t("Unreadable image"),
             Notice::ImageNotAllowed => {

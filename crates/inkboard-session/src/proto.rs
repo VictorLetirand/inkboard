@@ -1,4 +1,4 @@
-//! Messages of the session protocol (version 6). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
+//! Messages of the session protocol (version 7). All messages travel encrypted (see `crypto`) and encoded by a `Codec`.
 
 use crate::error::{Error, Result};
 use crate::wire::WireOp;
@@ -13,11 +13,31 @@ use serde::{Deserialize, Serialize};
 /// v5: freehand strokes carry an arrowhead (`PenObj.head_end`) that a v4 peer would drop when it edits them.
 /// v6: connectors carry an attachment side (`End::Bound.side`) and a label position (`Connector.label_pos`, `label_offset`), and texts a vertical
 /// alignment (`Label.valign`), that a v5 peer would drop when it edits them.
-pub const PROTO_VERSION: u32 = 6;
+/// v7: a peer whose version is between `MIN_PROTO` and `PROTO_VERSION` is admitted read-only instead of refused.
+pub const PROTO_VERSION: u32 = 7;
 
-/// Fails with a clear message when the peer speaks another version of the protocol.
-pub fn check_proto(theirs: u32) -> Result<()> {
-    if theirs == PROTO_VERSION { Ok(()) } else { Err(Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs }) }
+/// Oldest version that can still join (read-only) a session of a newer one.
+/// Rule when the protocol changes: adding an optional field to an object or to a message only raises `PROTO_VERSION`; adding an enum
+/// variant, a message type, or changing the meaning of a field also raises `MIN_PROTO` (an older peer could not decode it).
+pub const MIN_PROTO: u32 = 7;
+
+/// How two peers of different (or equal) versions get along.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compat {
+    Same,
+    /// Different versions, both recent enough: the peer may look but not modify (it would drop fields it does not know).
+    ReadOnly,
+}
+
+/// Fails with a clear message when the peer speaks a version of the protocol that is too old to be admitted, even read-only.
+pub fn compat(ours: u32, theirs: u32) -> Result<Compat> {
+    if theirs == ours {
+        Ok(Compat::Same)
+    } else if ours >= MIN_PROTO && theirs >= MIN_PROTO {
+        Ok(Compat::ReadOnly)
+    } else {
+        Err(Error::IncompatibleProtocol { ours, theirs })
+    }
 }
 
 /// Sequence number of an accepted modification, assigned by the host (the first one is 1; 0 is the initial state).

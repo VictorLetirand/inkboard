@@ -437,6 +437,10 @@ pub const FR: &[(&str, &str)] = &[
         "This link was made by a newer version of Inkboard: please update Inkboard.",
         "Ce lien vient d'une version plus récente d'Inkboard : mettez Inkboard à jour.",
     ),
+    (
+        "This session uses another version of Inkboard: you can view it but not edit. Update Inkboard (or reload the page) to edit.",
+        "Cette session utilise une autre version d'Inkboard : vous pouvez la consulter mais pas la modifier. Mettez Inkboard à jour (ou rechargez la page) pour modifier.",
+    ),
     ("This text is too long to be an invitation link.", "Ce texte est trop long pour être un lien d'invitation."),
     ("Tilt detected", "Inclinaison détectée"),
     ("Time's up", "Temps écoulé"),

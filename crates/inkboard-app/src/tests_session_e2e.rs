@@ -382,7 +382,7 @@ fn a_guest_leaving_frees_its_place_and_the_host_can_share_again() {
 
 #[test]
 fn an_incompatible_protocol_version_is_refused_by_the_host() {
-    a_peer_of_protocol_is_refused(PROTO_VERSION + 1);
+    a_peer_of_protocol_is_refused(inkboard_session::proto::MIN_PROTO - 1);
 }
 
 #[test]

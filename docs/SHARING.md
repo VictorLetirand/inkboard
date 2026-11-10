@@ -128,6 +128,17 @@ If you use Inkboard with an AI agent through MCP (see [MCP.md](MCP.md)), the age
 
 ---
 
+## Versions
+
+Host and guests do not need the exact same version. A guest whose version is close to the host's (protocol v7 or later on both sides) joins **read-only**, whatever link it used, with a message saying so: updating Inkboard (or reloading the web page) lets it edit again. A version older than that is refused.
+
+For developers, when the protocol changes:
+
+- adding an **optional field** to an object or to a message: raise `PROTO_VERSION` only;
+- adding an **enum variant**, a **message type**, or changing the meaning of a field: raise `MIN_PROTO` too (an older peer could not decode it).
+
+---
+
 ## Known limits
 
 - **Number of people**: 10 by default (you included), adjustable. Designed for about 20; protocol tests simulate 50 and 100 guests, but no real session of that size has been tried.

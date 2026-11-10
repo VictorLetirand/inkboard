@@ -127,16 +127,31 @@ fn hello_bytes(proto: u32) -> Vec<u8> {
 #[test]
 fn the_first_message_carries_the_protocol_version_and_a_mismatch_is_explicit() {
     assert!(read_hello(&JsonCodec, &hello_bytes(PROTO_VERSION)).is_ok());
-    let err = read_hello(&JsonCodec, &hello_bytes(PROTO_VERSION + 1)).unwrap_err();
-    assert_eq!(err, Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: PROTO_VERSION + 1 });
+    // a neighbouring version is read (the host admits it read-only)
+    assert!(read_hello(&JsonCodec, &hello_bytes(PROTO_VERSION + 1)).is_ok());
+    let err = read_hello(&JsonCodec, &hello_bytes(MIN_PROTO - 1)).unwrap_err();
+    assert_eq!(err, Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: MIN_PROTO - 1 });
     let text = err.to_string();
     assert!(text.contains("incompatible protocol") && text.contains("update Inkboard"), "{text}");
 }
 
 #[test]
-fn a_future_hello_with_other_fields_still_gets_the_version_error() {
-    let future = br#"{"t":"hello","proto":99,"something_new":{"nested":[1,2,3]}}"#;
-    assert_eq!(read_hello(&JsonCodec, future).unwrap_err(), Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: 99 });
+fn a_hello_below_the_floor_with_other_fields_still_gets_the_version_error() {
+    let old = br#"{"t":"hello","proto":3,"something_new":{"nested":[1,2,3]}}"#;
+    assert_eq!(read_hello(&JsonCodec, old).unwrap_err(), Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: 3 });
+}
+
+#[test]
+fn compat_table() {
+    use inkboard_session::proto::{Compat, compat};
+    assert_eq!(compat(7, 7), Ok(Compat::Same));
+    assert_eq!(compat(MIN_PROTO, MIN_PROTO), Ok(Compat::Same));
+    assert_eq!(compat(PROTO_VERSION, PROTO_VERSION + 1), Ok(Compat::ReadOnly));
+    assert_eq!(compat(PROTO_VERSION + 1, PROTO_VERSION), Ok(Compat::ReadOnly));
+    assert_eq!(compat(PROTO_VERSION, 99), Ok(Compat::ReadOnly));
+    assert_eq!(compat(PROTO_VERSION, MIN_PROTO - 1), Err(Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: MIN_PROTO - 1 }));
+    assert_eq!(compat(PROTO_VERSION + 1, MIN_PROTO - 1), Err(Error::IncompatibleProtocol { ours: PROTO_VERSION + 1, theirs: MIN_PROTO - 1 }));
+    assert!(compat(PROTO_VERSION, 0).is_err());
 }
 
 #[test]
