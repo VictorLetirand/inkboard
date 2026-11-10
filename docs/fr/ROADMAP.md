@@ -30,6 +30,11 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 | Export PDF | Whiteboard | ✔ vectoriel |
 | Bibliothèque d'icônes et de formes (draw.io, logos de marques) | draw.io, Miro | ✔ 28 800 icônes hors ligne, avec recherche, teintées par la couleur de contour |
 | Interface en plusieurs langues | – | ✔ anglais et français, détectés d'après le système, modifiables dans le menu |
+| Collaboration en temps réel | – | ✔ partage en direct (bêta) : l'ordinateur de l'hôte fait office de serveur, liens en édition ou en lecture seule, chiffré de bout en bout, invités depuis l'application ou une page web ([SHARING.md](SHARING.md)) |
+| Collage depuis un tableur | – | ✔ une plage copiée depuis Excel, LibreOffice ou Google Sheets devient un tableau |
+| Ombre portée | – | ✔ formes, images, tableaux et connecteurs ; exports SVG / PNG / PDF et draw.io |
+| Recoloration des images SVG importées | – | ✔ une pastille par couleur, ou une seule couleur pour tout ; les exports suivent |
+| Export de plusieurs pages | – | ✔ choix des pages, un fichier par page, ou un PDF multipage |
 
 ## Reste à faire
 
@@ -40,14 +45,14 @@ Recherche faite en octobre 2026 (avis G2/Capterra/GetApp, tickets GitHub d'Excal
 - **Validation de la pression et de la gomme du stylet sur du matériel réel** (procédure : docs/STYLET.md) ; gomme sous macOS/Linux (non gérée).
 - Alignement par ligne dans le champ de saisie pendant l'édition d'un texte centré multiligne.
 - Plus de jeux d'icônes (la bibliothèque est construite par `scripts/build_icon_library.py` ; voir [ICONS.md](../ICONS.md)) et glisser-déposer depuis la palette.
-- Version WASM du moteur (même code) si un usage web est souhaité.
 
 ## Limites connues
 
-- Pas de tests visuels automatisés (la capture d'écran `--screenshot` sert au contrôle manuel).
+- Les tests visuels ne tournent que dans le workflow `Visual` (`.github/workflows/visual.yml`) : les images de référence sont celles de Linux en rendu logiciel, elles ne correspondent donc pas sur un autre système. La capture d'écran `--screenshot` sert au contrôle manuel.
 - Les traits au crayon sont exportés en images vers draw.io (pas d'équivalent éditable).
 - Les formats d'échange n'ont été confrontés qu'à leurs propres exports et à des fichiers écrits à la main, à l'exception de
   l'export draw.io vérifié dans le visualiseur officiel ; des fichiers Excalidraw et Obsidian Canvas écrits comme les vrais outils (`inkboard-formats/tests/realistic.rs`) s'importent correctement, mais aucun fichier réel d'utilisateur n'a été testé.
-- Le workflow CI (`.github/workflows/ci.yml`, Windows + Linux + macOS) est vert. Linux et macOS : les tests automatiques passent, mais l'application n'y a jamais été lancée à la main ; le workflow de publication (installeurs) n'a jamais été exécuté.
+- Le workflow CI (`.github/workflows/ci.yml`, Windows + Linux + macOS) est vert. Linux et macOS : les tests automatiques passent, mais l'application n'y a jamais été lancée à la main ; le workflow de publication (installeurs) a été exécuté de bout en bout (rc.1 à rc.5).
+- La sauvegarde automatique est un fichier unique partagé par toutes les fenêtres : deux fenêtres ouvertes en même temps écrasent la sauvegarde l'une de l'autre.
 - Le routage coudé avec contournement est désactivé au-delà de 5 000 objets (coût linéaire par connecteur).
 - Les formules dépendent du crate `latex-rust` 2.1.1 (récent, peu éprouvé ; la 3.x exige Rust 1.99) : une commande non gérée est signalée dans la fenêtre de saisie. Une formule est rastérisée à l'écran (×4) mais reste vectorielle dans les exports SVG et PDF.

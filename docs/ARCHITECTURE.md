@@ -72,6 +72,17 @@ Strokes (`Pen`) store their points in world coordinates in an `Arc<Vec<_>>` (che
 `inkboard-pen` (Windows) installs a window *subclass* that reads `WM_POINTER*` without consuming them and exposes `eraser_active()` and `last_sample()` (pressure, flags, tilt; used by the `--pen-test` diagnostic, `inkboard-app::pen_test`); the application then replaces the tool with the eraser
 for the gesture (`App::eraser_probe`, substitutable in tests). It is the only crate that allows `unsafe`.
 
+## Live sharing
+
+Live sharing is split across three crates and the application (details: [SHARING.md](SHARING.md)).
+
+- `inkboard-session`: the protocol, independent of the network and of the interface; it builds natively and for `wasm32`. `proto` holds the versioned messages, `codec` their encoding,
+  `crypto` the invitation link and the end-to-end encryption (ChaCha20-Poly1305, one key for the edit link and one for the read-only link, on top of the transport's own encryption).
+  `sequencer` is the host side of consistency (it orders the accepted modifications, ignores duplicates, answers "what did I miss"); `client` is the optimistic guest; `limits` validates everything a guest sends.
+- `inkboard-net`: the transport, `inkboard_session::transport` over iroh (QUIC, direct path or relay; public n0 relays by default, a custom list, or none), and its browser counterpart (guest side only, through a relay).
+- `inkboard-crowd`: load tests with simulated guests, each one the real `Client` with a degraded link (latency, loss, freeze); the host side is in `inkboard-app` (`tests_crowd`).
+- The host manager (permissions, quotas, relaying) and the guest side live in `inkboard-app` (`session_host.rs`, `session_guest.rs`).
+
 ### Why egui?
 
 A single language and a native executable, offline by construction, with a drawing API that gives full control over the board's
@@ -81,11 +92,19 @@ limited accessibility. If rendering ever outgrew egui
 
 ## Tests
 
-| Crate | Tests | What is covered |
-|---|---|---|
-| `inkboard-core` | 101 | geometry, model, connectors (rotation, elbow, curve), selection, history, saving, SVG, layout, handles, rich text (insert/delete/style toggling), obstacle routing, spatial index, pen pressure, highlighting |
-| `inkboard-formats` | 46 | draw.io / Excalidraw / JSON Canvas round trips, foreign imports, compressed draw.io, Mermaid (flowchart, state, sequence, class, ER), PNG, PDF, LaTeX typesetting, realistic Excalidraw/Canvas files |
-| `inkboard-mcp` | 8 | full session on the real binary (handshake, tools, root confinement, exports, resources and notifications); live mode and live `board_changes` are tested in `inkboard-app` (editing with undo, targeting the open file, token, resources and notifications, changes and images) |
-| `inkboard-app` | 88 | creation, moving with bound arrows, resizing, rotation, lasso, eraser, undoing a gesture, text, tables, import, zoom; **rich text** (typing, keyboard selection, bold/color/highlight); **shortcuts** (reassigning, removing, recording a key, persistence, shortcuts while editing); **waypoints**, obstacle avoidance, code block (colored), typeset formula (insert, edit, tinted export), vote, pen eraser, presentation, timer, clipboard, pen, languages |
+| Crate | What is covered |
+|---|---|
+| `inkboard-core` | geometry, model, connectors (rotation, elbow, curve), selection, history, saving, SVG, layout, handles, rich text (insert/delete/style toggling), obstacle routing, spatial index, pen pressure, highlighting |
+| `inkboard-formats` | draw.io / Excalidraw / JSON Canvas round trips, foreign imports, compressed draw.io, Mermaid (flowchart, state, sequence, class, ER), PNG, PDF, LaTeX typesetting, realistic Excalidraw/Canvas files |
+| `inkboard-mcp` | full session on the real binary (handshake, tools, root confinement, exports, resources and notifications); live mode and live `board_changes` are tested in `inkboard-app` (editing with undo, targeting the open file, token, resources and notifications, changes and images) |
+| `inkboard-app` | creation, moving with bound arrows, resizing, rotation, lasso, eraser, undoing a gesture, text, tables, import, zoom; **rich text** (typing, keyboard selection, bold/color/highlight); **shortcuts** (reassigning, removing, recording a key, persistence, shortcuts while editing); **waypoints**, obstacle avoidance, code block (colored), typeset formula (insert, edit, tinted export), vote, pen eraser, presentation, timer, clipboard, pen, languages; **live sharing** (host, guest, images, end to end, simulated crowds); visual regression (`tests_visual`, run by the `Visual` workflow only) |
+| `inkboard-session` | protocol, encryption, hostile inputs sent by a guest |
+| `inkboard-net` | loopback transport, relay policy and diagnostics, wire format |
+| `inkboard-crowd` | seed boards, generated PNGs, load profiles and statistics |
+| `inkboard-cli` | saving interrupted by a kill, native file extensions, release metadata |
+| `inkboard-pen` | synthetic pointer messages |
+| `inkboard-fonts`, `inkboard-icons` | the embedded fonts and the icon library reader |
+
+`inkboard-fonts` embeds the fonts shared by the application and the web client, so that text lays out identically everywhere; `inkboard-icons` reads the icon library packed by `scripts/build_icon_library.py`.
 
 In addition: the draw.io export was opened in the official diagrams.net viewer (shapes, bound arrows, dashes, rotation).

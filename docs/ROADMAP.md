@@ -31,6 +31,11 @@ Research done in October 2026 (G2/Capterra/GetApp reviews, Excalidraw GitHub iss
 | PDF export | Whiteboard | ✔ vector |
 | Icon / shape library (draw.io, brand logos) | draw.io, Miro | ✔ 28,800 icons offline, searchable, tinted by the outline color |
 | Interface in several languages | – | ✔ English and French, detected from the system, switchable in the menu |
+| Real-time collaboration | – | ✔ live sharing (beta): the host's computer is the server, edit or read-only links, end-to-end encrypted, guests from the application or from a web page ([SHARING.md](SHARING.md)) |
+| Paste from a spreadsheet | – | ✔ a range copied from Excel, LibreOffice or Google Sheets becomes a table |
+| Drop shadow | – | ✔ shapes, images, tables and connectors; SVG / PNG / PDF exports and draw.io |
+| Recolor imported SVG images | – | ✔ one swatch per color, or all one color; exports follow |
+| Export several pages | – | ✔ pick the pages, one file per page, or a multi-page PDF |
 
 ## To do
 
@@ -41,14 +46,14 @@ Research done in October 2026 (G2/Capterra/GetApp reviews, Excalidraw GitHub iss
 - **Validation of pen pressure and eraser on real hardware** (procedure: docs/STYLET.md); eraser on macOS/Linux (not handled).
 - Per-line alignment in the input field while editing multi-line centered text.
 - More icon sets (the library is built from `scripts/build_icon_library.py`; see [ICONS.md](ICONS.md)) and drag-and-drop from the palette.
-- WASM build of the engine (same code) if a web use is wanted.
 
 ## Known limits
 
-- No automated visual tests (the `--screenshot` capture is for manual checking).
+- Visual tests run only in the `Visual` workflow (`.github/workflows/visual.yml`): the reference images are those of Linux with software rendering, so they do not match on another system. The `--screenshot` capture is for manual checking.
 - Pen strokes are exported as images to draw.io (no editable equivalent).
 - The exchange formats have only been checked against their own exports and hand-written files, except for the
   draw.io export verified in the official viewer; Excalidraw and Obsidian Canvas files written like the real tools do (`inkboard-formats/tests/realistic.rs`) import correctly, but no real user file has been tested.
-- The CI workflow (`.github/workflows/ci.yml`, Windows + Linux + macOS) is green. On Linux and macOS the automated tests pass, but the application has never been launched by hand there; the release workflow (installers) has not yet completed a full run.
+- The CI workflow (`.github/workflows/ci.yml`, Windows + Linux + macOS) is green. On Linux and macOS the automated tests pass, but the application has never been launched by hand there; the release workflow (installers) has completed full runs (rc.1 to rc.5).
+- The automatic backup is a single file shared by all windows: two windows open at the same time overwrite each other's backup.
 - Elbow routing with avoidance is disabled beyond 5,000 objects (linear cost per connector).
 - Formulas depend on the `latex-rust` 2.1.1 crate (recent, little battle-tested; 3.x requires Rust 1.99): an unsupported command is reported in the input window. A formula is rasterized on screen (×4) but stays vector in SVG and PDF exports.

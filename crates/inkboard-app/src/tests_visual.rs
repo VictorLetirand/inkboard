@@ -12,8 +12,8 @@
 //! INKBOARD_SNAPSHOTS=1 UPDATE_SNAPSHOTS=force cargo test -p inkboard-app tests_visual  # replace all references
 //! ```
 //!
-//! To regenerate the references: run the `Visual` workflow by hand (`workflow_dispatch`, `update: true`), download its
-//! artifact `visual-references` (kept 3 days) and copy the PNG files into `crates/inkboard-app/tests/snapshots/`.
+//! To regenerate the references: run the `Visual` workflow by hand (`workflow_dispatch`, `update: true`); it pushes the images to the
+//! branch `visual-references`: fetch that branch and copy the PNG files into `crates/inkboard-app/tests/snapshots/`.
 //! `INKBOARD_SNAPSHOT_DIR=<folder>` redirects the references (and the `.new.png` / `.diff.png` files) elsewhere.
 //!
 //! Tolerance (`THRESHOLD`, `MAX_DIFFERENT_PIXELS`): a pixel counts as different when its perceptual color distance
