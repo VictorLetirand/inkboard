@@ -16,6 +16,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 ### Fixed
 
 - **Automatic backup:** a failed backup (full disk, unreadable folder) is now reported by a message, once, instead of being ignored silently.
+- **Live mode (MCP):** the token that protects the local server now comes from the operating system's random source, and on Linux and macOS the file that holds it is readable by its owner only.
 
 ## [0.2.0-rc.5] - 2026-11-05
 
