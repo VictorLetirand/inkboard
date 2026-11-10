@@ -313,6 +313,8 @@ pub const FR: &[(&str, &str)] = &[
     ("Original color: {}", "Couleur d'origine : {}"),
     ("Original colors", "Couleurs d'origine"),
     ("Open / import", "Ouvrir / importer"),
+    ("Pick a tool and draw, or double-click to type", "Choisissez un outil et dessinez, ou double-cliquez pour écrire"),
+    ("Open a draw.io, Excalidraw or Mermaid file: {}", "Ouvrez un fichier draw.io, Excalidraw ou Mermaid : {}"),
     ("Open / import a file…", "Ouvrir / importer un fichier…"),
     (
         "Open the address of the service in your browser (https://{}) and accept the warning if there is one, then try again.",

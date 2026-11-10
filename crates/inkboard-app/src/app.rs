@@ -1326,6 +1326,7 @@ impl eframe::App for App {
             crate::chrome::show(self, ctx);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| crate::tools::canvas(self, ui));
+        ui::empty_hint(self, ctx);
         ui::dialogs(self, ctx);
         crate::join_ui::show(self, ctx);
         if !self.presenting {

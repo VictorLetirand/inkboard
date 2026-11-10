@@ -8,6 +8,30 @@ use eframe::egui::{self, Color32, RichText as ERich, vec2};
 use inkboard_core::{Asset, Id};
 use std::time::Duration;
 
+/// The two lines of help of an empty board, when it should be shown: nothing on the page, no dialog, no gesture,
+/// not presenting, not a read-only guest, and not a screenshot.
+pub fn empty_hint_text(app: &App) -> Option<[String; 2]> {
+    let idle = app.ed.page().objects.is_empty()
+        && app.dialog.is_none()
+        && app.join.window.is_none()
+        && app.drag.is_none()
+        && app.editing.is_none()
+        && !app.presenting
+        && !app.view_only()
+        && app.screenshot.is_none();
+    idle.then(|| [t("Pick a tool and draw, or double-click to type"), tr!("Open a draw.io, Excalidraw or Mermaid file: {}", app.keymap.label(Action::Open))])
+}
+
+/// Discreet help in the middle of an empty board. Painted, not laid out as widgets: it cannot take any pointer event.
+pub fn empty_hint(app: &App, ctx: &egui::Context) {
+    let Some([first, second]) = empty_hint_text(app) else { return };
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("empty_hint")));
+    let weak = ctx.style().visuals.weak_text_color();
+    let c = app.canvas_rect.center();
+    let line = painter.text(c, egui::Align2::CENTER_BOTTOM, first, egui::FontId::proportional(15.0), weak);
+    painter.text(line.center_bottom() + vec2(0.0, 6.0), egui::Align2::CENTER_TOP, second, egui::FontId::proportional(13.0), weak);
+}
+
 /* ------------------------------------------------------- Presentation */
 
 /// Remaining timer as "m:ss"; `None` when no timer is running.

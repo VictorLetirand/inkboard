@@ -1177,3 +1177,27 @@ fn a_failing_autosave_is_reported_once_until_it_works_again() {
         assert!(t.app().toast.is_some(), "a new failure is reported again");
     });
 }
+
+#[test]
+fn empty_board_shows_a_hint_that_goes_away_and_never_blocks_the_pointer() {
+    let mut t = T::new();
+    assert!(t.objects().is_empty());
+    let open = t.app().keymap.label(Action::Open);
+    let hint = crate::ui::empty_hint_text(t.app()).expect("hint on an empty board");
+    assert_eq!(hint[0], "Pick a tool and draw, or double-click to type");
+    assert_eq!(hint[1], format!("Open a draw.io, Excalidraw or Mermaid file: {open}"));
+
+    // a click in the middle of the empty board with the rectangle tool still draws
+    t.tool(Tool::Shape(BoxGeom::Rect));
+    let c = t.app().canvas_rect.center();
+    let r = t.app().canvas_rect;
+    let v = t.app().ed.page().view;
+    t.click((f64::from(c.x - r.min.x) - v.x, f64::from(c.y - r.min.y) - v.y));
+    assert_eq!(t.objects().len(), 1, "the hint must not capture the click");
+    assert!(crate::ui::empty_hint_text(t.app()).is_none(), "the hint goes away with the first object");
+
+    // never shown in a screenshot
+    let mut t = T::new();
+    t.app().screenshot = Some(std::path::PathBuf::from("x.png"));
+    assert!(crate::ui::empty_hint_text(t.app()).is_none());
+}
