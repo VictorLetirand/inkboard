@@ -8,8 +8,8 @@
 use crate::error::{Error, Result};
 use crate::limits::{Limits, Violation, check_id, check_manifest, check_message, check_name, check_ops, check_pages, check_seq, check_snapshot_shape};
 use crate::proto::{
-    Applied, ByeReason, Hello, Message, PROTO_VERSION, ParticipantId, RefuseReason, RejectReason, Resume, Role, Seq, Snapshot, SnapshotPart, Submit, Welcome,
-    check_proto,
+    Applied, ByeReason, Compat, Hello, Message, PROTO_VERSION, ParticipantId, RefuseReason, RejectReason, Resume, Role, Seq, Snapshot, SnapshotPart, Submit,
+    Welcome, compat,
 };
 use crate::snapshot::{MAX_PARTS, SnapshotAssembler};
 use crate::wire::{WireOp, apply_wire_all, rollback};
@@ -102,6 +102,8 @@ pub struct Client {
     phase: Phase,
     participant: Option<ParticipantId>,
     role: Role,
+    /// The host speaks another version of the protocol: we stay read-only whatever role it gives.
+    version_view: bool,
     color: (u8, u8, u8),
     doc: Document,
     have_snapshot: bool,
@@ -136,6 +138,7 @@ impl Client {
             phase: Phase::Idle,
             participant: None,
             role,
+            version_view: false,
             color: (128, 128, 128),
             doc: Document::default(),
             have_snapshot: false,
@@ -173,6 +176,11 @@ impl Client {
     #[must_use]
     pub fn role(&self) -> Role {
         self.role
+    }
+    /// True when we are read-only because the host runs another version of the protocol.
+    #[must_use]
+    pub fn version_view(&self) -> bool {
+        self.version_view
     }
     #[must_use]
     pub fn color(&self) -> (u8, u8, u8) {
@@ -386,8 +394,8 @@ impl Client {
                 Ok(())
             }
             Message::RoleChange { participant, role } if Some(participant) == self.participant => {
-                self.role = role;
-                self.events.push(ClientEvent::RoleChanged(role));
+                self.role = if self.version_view { Role::View } else { role };
+                self.events.push(ClientEvent::RoleChanged(self.role));
                 Ok(())
             }
             Message::Ping { nonce } => {
@@ -419,10 +427,20 @@ impl Client {
     }
 
     fn on_welcome(&mut self, w: &Welcome, now: u64) -> Result<()> {
-        if let Err(e) = check_proto(w.host_proto) {
-            self.phase = Phase::Closed;
-            return Err(e);
-        }
+        // a host of another version is followed read-only; a newer one must say so itself (it checked our version against its MIN_PROTO)
+        let role = match compat(PROTO_VERSION, w.host_proto) {
+            Ok(Compat::Same) => w.role,
+            Ok(Compat::ReadOnly) if w.host_proto < PROTO_VERSION => Role::View,
+            Ok(Compat::ReadOnly) if w.role == Role::View => Role::View,
+            Ok(Compat::ReadOnly) => {
+                self.phase = Phase::Closed;
+                return Err(Error::IncompatibleProtocol { ours: PROTO_VERSION, theirs: w.host_proto });
+            }
+            Err(e) => {
+                self.phase = Phase::Closed;
+                return Err(e);
+            }
+        };
         if let Some(prev) = self.participant
             && prev != w.participant
         {
@@ -439,12 +457,13 @@ impl Client {
             }
         }
         self.participant = Some(w.participant);
-        self.role = w.role;
+        self.role = role;
+        self.version_view = w.host_proto != PROTO_VERSION;
         self.color = w.color;
         if self.phase != Phase::Live {
             self.phase = Phase::Live;
             self.last_sync = now;
-            self.events.push(ClientEvent::Joined { participant: w.participant, role: w.role });
+            self.events.push(ClientEvent::Joined { participant: w.participant, role });
             // reconnection: send again what the host may not have received (it ignores what it already applied)
             for p in self.pending.iter_mut().filter(|p| p.parked_until.is_none()) {
                 p.sent_at = Some(now);

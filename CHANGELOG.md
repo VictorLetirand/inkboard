@@ -5,6 +5,19 @@ follows [Semantic Versioning](https://semver.org/) (pre-releases carry a hyphen,
 
 ## [Unreleased]
 
+### Changed
+
+- **Live sharing protocol v7:** update every app that hosts or joins a session. From this version on, a neighbouring version joins read-only instead of being refused, with a message telling the guest to update Inkboard (or reload the page) to edit.
+- **File format version 3:** a board that uses shadow, SVG recoloring, arrowhead size, stroke arrows, connector attachment side, label position or vertical text alignment is now saved as version 3, so versions before 0.2.0 refuse it cleanly instead of silently dropping those settings. A board that uses none of them is saved exactly as before (version 2).
+- **Empty board help:** an empty board now shows a discreet hint (pick a tool, double-click to type, and the shortcut to open a draw.io, Excalidraw or Mermaid file). It disappears with the first object and is never part of a screenshot or export.
+- **Main menu:** the export entries are grouped in one "Export…" sub-menu (PNG, SVG, PDF, draw.io, Excalidraw, JSON Canvas), so the menu fits a small window. Copying the image to the clipboard stays at the first level.
+- **Small touches:** the font buttons show a word in their font (Sans, Hand, Serif, Mono) instead of "Aa"; "Join" is the highlighted button of the Join window, and both buttons are taller in a narrow window; unsaved changes are marked by an accent dot and normal-colored text in the title card.
+
+### Fixed
+
+- **Automatic backup:** a failed backup (full disk, unreadable folder) is now reported by a message, once, instead of being ignored silently.
+- **Live mode (MCP):** the token that protects the local server now comes from the operating system's random source, and on Linux and macOS the file that holds it is readable by its owner only.
+
 ## [0.2.0-rc.5] - 2026-11-05
 
 **Release candidate.** Two points of friction from daily use: the page bar adapts to the room available (ellipsized tabs, then a compact drop-down) and exports can cover several pages at once. No change to the file format or to live sharing.

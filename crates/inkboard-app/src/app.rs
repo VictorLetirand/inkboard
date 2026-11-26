@@ -195,6 +195,8 @@ pub struct App {
     /// The "time's up" warning of the current timer has been shown.
     pub timer_done: bool,
     pub last_autosave: Instant,
+    /// The last automatic backup failed (the error has been shown once).
+    pub autosave_failed: bool,
     pub last_title: String,
     pub paste_count: u32,
     /// When the last paste event arrived and when Ctrl / Cmd was last down (see `image_paste_released`).
@@ -220,6 +222,7 @@ impl App {
     }
 
     /// `restore`: reloads the last autosave (disabled in tests).
+    #[allow(clippy::too_many_lines)] // one flat list of field initialisers
     pub fn build(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>, screenshot: Option<PathBuf>, restore: bool) -> Self {
         // like the language, the font setting is read only for the real application (tests use the system set)
         let fonts_pref = restore && fonts::load_embedded_pref();
@@ -297,6 +300,7 @@ impl App {
             editor_probe: None,
             timer_done: false,
             last_autosave: Instant::now(),
+            autosave_failed: false,
             last_title: String::new(),
             paste_count: 0,
             last_paste_at: None,
@@ -1078,14 +1082,27 @@ impl App {
         }
         if self.dirty() && self.last_autosave.elapsed() > Duration::from_secs(10) {
             let p = autosave_path();
-            if let Some(dir) = p.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            // text being typed is part of the safety copy even though it is not validated yet
-            let _ = match self.pending_document() {
-                Some(doc) => inkboard_core::serial::save(&doc, &p),
-                None => inkboard_core::serial::save(&self.ed.doc, &p),
+            let dir_made = match p.parent() {
+                Some(dir) => std::fs::create_dir_all(dir).map_err(|e| e.to_string()),
+                None => Ok(()),
             };
+            // text being typed is part of the safety copy even though it is not validated yet
+            let saved = dir_made.and_then(|()| {
+                match self.pending_document() {
+                    Some(doc) => inkboard_core::serial::save(&doc, &p),
+                    None => inkboard_core::serial::save(&self.ed.doc, &p),
+                }
+                .map_err(|e| e.to_string())
+            });
+            match saved {
+                Ok(()) => self.autosave_failed = false,
+                // said once: the same error is not repeated every 10 seconds while it lasts
+                Err(e) if !self.autosave_failed => {
+                    self.autosave_failed = true;
+                    self.toast(&tr!("Automatic backup failed: {}", e));
+                }
+                Err(_) => {}
+            }
             self.last_autosave = Instant::now();
         }
     }
@@ -1309,6 +1326,7 @@ impl eframe::App for App {
             crate::chrome::show(self, ctx);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| crate::tools::canvas(self, ui));
+        ui::empty_hint(self, ctx);
         ui::dialogs(self, ctx);
         crate::join_ui::show(self, ctx);
         if !self.presenting {

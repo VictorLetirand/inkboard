@@ -40,13 +40,29 @@ pub struct LiveServer {
     file: PathBuf,
 }
 
-fn new_token() -> String {
-    use std::fmt::Write;
-    use std::hash::{BuildHasher, Hasher};
-    (0..4).fold(String::with_capacity(64), |mut s, _| {
-        let _ = write!(s, "{:016x}", std::collections::hash_map::RandomState::new().build_hasher().finish());
+/// 256 bits from the operating system, as 64 hexadecimal digits.
+pub(crate) fn new_token() -> std::io::Result<String> {
+    use inkboard_session::crypto::{Entropy, OsEntropy};
+    use std::fmt::Write as _;
+    let mut raw = [0u8; 32];
+    OsEntropy.fill(&mut raw).map_err(|e| std::io::Error::other(e.to_string()))?;
+    Ok(raw.iter().fold(String::with_capacity(64), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
         s
-    })
+    }))
+}
+
+/// Writes the discovery file readable by its owner only (it holds the token). On Windows the per-user data folder already is.
+fn write_private(file: &Path, content: &str) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut f = options.open(file)?;
+    // a file left by an older version keeps its mode when it is reopened: tighten it before the token goes in
+    #[cfg(unix)]
+    f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    f.write_all(content.as_bytes())
 }
 
 fn same_token(a: &str, b: &str) -> bool {
@@ -58,11 +74,11 @@ impl LiveServer {
     pub fn start(ctx: eframe::egui::Context, file: PathBuf) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let port = listener.local_addr()?.port();
-        let token = new_token();
+        let token = new_token()?;
         if let Some(dir) = file.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&file, json!({"port": port, "token": token, "pid": std::process::id()}).to_string())?;
+        write_private(&file, &json!({"port": port, "token": token, "pid": std::process::id()}).to_string())?;
         let (tx, rx) = mpsc::channel();
         let t = token.clone();
         std::thread::spawn(move || {

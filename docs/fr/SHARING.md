@@ -128,6 +128,17 @@ Si vous utilisez Inkboard avec un agent d'IA via MCP (voir [MCP.md](MCP.md)), l'
 
 ---
 
+## Versions
+
+L'hôte et les invités n'ont pas besoin de la même version exacte. Un invité dont la version est proche de celle de l'hôte (protocole v7 ou plus récent des deux côtés) rejoint la session **en lecture seule**, quel que soit le lien utilisé, avec un message qui l'explique : mettre Inkboard à jour (ou recharger la page web) lui rend l'édition. Une version plus ancienne est refusée.
+
+Pour les développeurs, quand le protocole change :
+
+- ajout d'un **champ optionnel** à un objet ou à un message : relever `PROTO_VERSION` seulement ;
+- ajout d'une **variante d'enum**, d'un **type de message**, ou changement du sens d'un champ : relever aussi `MIN_PROTO` (un ancien pair ne pourrait pas le décoder).
+
+---
+
 ## Limites connues
 
 - **Nombre de personnes** : 10 par défaut (vous compris), réglable. Conçu pour environ 20 ; les tests du protocole simulent 50 et 100 invités, mais aucune vraie session de cette taille n'a été essayée.

@@ -1941,3 +1941,42 @@ fn with_many_cursors_each_one_is_relayed_less_often_and_the_latest_position_alwa
     assert_eq!(last.len(), 39, "everybody else was seen");
     assert!(last.values().all(|x| *x == 29.0), "the last position of each cursor arrived: {last:?}");
 }
+
+#[test]
+fn a_guest_of_another_version_is_admitted_read_only_and_one_below_the_floor_is_refused() {
+    let mut w = World::new(31, NetConfig::ideal(), |_| {});
+    let ticket = w.ticket(Role::Edit);
+    // a newer peer asking for edit: the host cannot check what it does not know, so it is let in read-only
+    let mut newer = Raw::new(&w.net, "newer", &ticket);
+    let h = Hello {
+        proto: PROTO_VERSION + 1,
+        name: "newer".into(),
+        join_proof: join_proof(&ticket.key, "newer", Role::Edit),
+        role_requested: Role::Edit,
+        resume: None,
+    };
+    newer.send(&Message::Hello(h));
+    w.rounds(3);
+    w.admit_all(Role::Edit);
+    w.rounds(6);
+    let got = newer.received();
+    assert!(got.iter().any(|m| matches!(m, Message::Welcome(wl) if wl.role == Role::View)), "{got:?}");
+    // and the host cannot make it an editor afterwards
+    let id = w.host.members()[0].id;
+    w.host.set_role(id, Role::Edit);
+    w.rounds(3);
+    assert_eq!(w.host.members()[0].role, Role::View);
+    assert!(!newer.received().iter().any(|m| matches!(m, Message::RoleChange { .. })));
+    // below MIN_PROTO: refused as before
+    let mut old = Raw::new(&w.net, "old", &ticket);
+    let h = Hello {
+        proto: inkboard_session::proto::MIN_PROTO - 1,
+        name: "old".into(),
+        join_proof: join_proof(&ticket.key, "old", Role::Edit),
+        role_requested: Role::Edit,
+        resume: None,
+    };
+    old.send(&Message::Hello(h));
+    w.rounds(3);
+    assert!(old.received().iter().any(|m| matches!(m, Message::Refused { reason: RefuseReason::Version { .. } })));
+}

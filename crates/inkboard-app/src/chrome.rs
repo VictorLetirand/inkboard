@@ -13,7 +13,7 @@ use inkboard_core::{BgPreset, BoxGeom, FontFamily, Id, Kind, Pattern, Pt, View};
 use std::time::Duration;
 
 /// Window width below which the toolbar moves under the title bar (`@media (max-width:1180px)`).
-const NARROW: f32 = 1180.0;
+pub const NARROW: f32 = 1180.0;
 
 /// Window width below which the row of tools does not fit any more (it then scrolls sideways).
 const TOOLS_ROW_WIDTH: f32 = 820.0;
@@ -58,7 +58,14 @@ fn title_card(app: &mut App, ctx: &Context) {
                 .show(|ui| main_menu(app, ui));
             board_name(app, ui);
             let (text, p) = (save_state(app), theme::current(ui.ctx()));
-            ui.label(egui::RichText::new(text).size(11.0).color(p.mute));
+            if app.dirty() {
+                // unsaved changes: an accent dot, and the text in the normal color
+                let (dot, _) = ui.allocate_exact_size(vec2(6.0, 6.0), Sense::hover());
+                ui.painter().circle_filled(dot.center(), 3.0, p.ac);
+                ui.label(egui::RichText::new(text).size(11.0).color(p.tx));
+            } else {
+                ui.label(egui::RichText::new(text).size(11.0).color(p.mute));
+            }
             ui.add_space(6.0);
         });
     });
@@ -490,31 +497,39 @@ fn key(app: &App, a: Action) -> String {
     app.keymap.label(a)
 }
 
-/// Export entries of the main menu.
+/// Export entries of the main menu: one "Export…" sub-menu, and the clipboard copy.
 fn export_items(app: &mut App, ui: &mut Ui) {
     theme::menu_sep(ui);
     let sel = !app.sel.is_empty();
-    if mi(ui, "download", if sel { "Export selection as PNG" } else { "Export as PNG" }, "") {
-        app.open_export("png");
-    }
-    if mi(ui, "download", "Export as SVG", "") {
-        app.open_export("svg");
-    }
-    if mi(ui, "download", "Export as PDF", "") {
-        app.open_export("pdf");
-    }
+    // as wide as the menu, so that the sub-menu opens on the menu's right edge
+    let button = egui::Button::new(egui::RichText::new(t("Export…")).size(13.0))
+        .right_text(egui::containers::menu::SubMenuButton::RIGHT_ARROW)
+        .min_size(vec2(ui.available_width(), 32.0));
+    egui::containers::menu::SubMenuButton::from_button(button).ui(ui, |ui| {
+        theme::menu_style(ui);
+        ui.set_width(230.0);
+        if mi(ui, "download", if sel { "Export selection as PNG" } else { "Export as PNG" }, "") {
+            app.open_export("png");
+        }
+        if mi(ui, "download", "Export as SVG", "") {
+            app.open_export("svg");
+        }
+        if mi(ui, "download", "Export as PDF", "") {
+            app.open_export("pdf");
+        }
+        theme::menu_sep(ui);
+        if mi(ui, "download", "Export as draw.io (.drawio)", "") {
+            app.export("drawio");
+        }
+        if mi(ui, "download", "Export as Excalidraw", "") {
+            app.open_export("excalidraw");
+        }
+        if mi(ui, "download", "Export as JSON Canvas (.canvas)", "") {
+            app.open_export("canvas");
+        }
+    });
     if mi(ui, "copy", "Copy image to clipboard", "") {
         app.copy_as_image();
-    }
-    theme::menu_label(ui, "Exchange with other tools");
-    if mi(ui, "download", "Export as draw.io (.drawio)", "") {
-        app.export("drawio");
-    }
-    if mi(ui, "download", "Export as Excalidraw", "") {
-        app.open_export("excalidraw");
-    }
-    if mi(ui, "download", "Export as JSON Canvas (.canvas)", "") {
-        app.open_export("canvas");
     }
 }
 

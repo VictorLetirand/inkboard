@@ -5,7 +5,7 @@
 
 1. **Le moteur ne connaît pas l'interface.** `inkboard-core` n'a ni fenêtre, ni police, ni dépendance graphique. Tout ce qui peut
    se tester sans écran se teste dans `inkboard-core` / `inkboard-formats` ; l'interface (`inkboard-app`) est une couche mince au-dessus.
-   Le même moteur servira le futur serveur MCP, la CLI et d'éventuels autres fronts (WASM).
+   Le même moteur sert le serveur MCP, la CLI et d'éventuels autres fronts (WASM).
 2. **Les connecteurs ne stockent pas leur tracé.** Un connecteur garde ses extrémités (`Free(point)` ou
    `Bound{cible, ancre}`) ; le chemin est **recalculé à la demande** depuis l'état courant de la page
    (`Page::connector_path`). Déplacer, redimensionner ou tourner une forme fait donc suivre ses flèches, sans aucune mise à jour
@@ -19,6 +19,7 @@
    surlignage). Les couleurs de mots et le surlignage sont déjà rendus (écran, SVG, draw.io).
 6. **Formats d'échange = fonctions pures** `contenu → Document` et `Document → contenu`, testées par aller-retours.
    Un import renvoie un `Report` (éléments approximés / ignorés) plutôt que d'échouer en silence.
+7. **Anglais dans le code source, traductions dans une table.** Les textes d'interface sont écrits en anglais dans le code et cherchés via `t()` / `tr!` ; `i18n_fr.rs` contient la table française. La langue est détectée d'après le système et modifiable dans le menu. Les bibliothèques et le serveur MCP ne parlent qu'anglais.
 
 ## Modèle
 
@@ -42,13 +43,14 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
   `RichText::format` (moteur). La sélection est mémorisée puis rétablie après un clic sur la barre.
 - `keymap.rs` : `Action` (41 commandes) → `Shortcut`s, remplacement en cas de conflit, combinaisons réservées, fichier JSON tolérant.
   `App::run_action` est le point d'entrée unique des commandes (raccourcis, menus).
+- `i18n.rs` / `i18n_fr.rs` : détection et préférence de langue, recherche `t()` / `tr!`, table française.
 - `theme.rs` : palette claire/sombre du prototype, styles egui (arrondis, ombres, tailles de texte) et widgets partagés (boutons à icône, lignes de menu, boutons segmentés, cartes flottantes) ;
   `icons.rs` : jeu d'icônes SVG du prototype, rastérisé une fois (resvg, 3×) en texture blanche puis teinté ; `chrome.rs` : les cartes (titre + menu, outils, pages, zoom, aide), le menu principal et les menus contextuels ;
   `panel.rs` : panneau de style flottant (pastilles, boutons segmentés, ordre, alignement, calques) ; `ui.rs` : présentation, dialogues centrés sur fond assombri, notifications.
   Le canevas occupe toute la fenêtre ; les cartes sont des `egui::Area` au-dessus (l'aire d'une carte nouvellement apparue est trop large pendant ses toutes premières images : les tests laissent le panneau se stabiliser avec `T::tool`). `app.rs` : état, fichiers, sauvegarde automatique.
 - `clipboard.rs` : presse-papiers (objets internes, images et texte du système). `insert.rs` : bloc de code, formule, pastille de vote.
   Mode présentation (`App::presenting`, `present_overlay`) et minuteur dans `app.rs` / `ui.rs`.
-- `tests.rs` : 78 tests qui pilotent l'application avec une vraie souris/clavier simulés (`egui_kittest`), sans fenêtre.
+- `tests.rs` : tests qui pilotent l'application avec une souris et un clavier simulés (`egui_kittest`), sans fenêtre.
 
 ## Modules ajoutés au noyau (`inkboard-core`)
 
@@ -69,6 +71,17 @@ Les traits (`Pen`) stockent leurs points en coordonnées monde dans un `Arc<Vec<
 `inkboard-pen` (Windows) installe un *subclass* de fenêtre qui lit les `WM_POINTER*` sans les consommer et expose `eraser_active()` et `last_sample()` (pression, indicateurs, inclinaison ; utilisés par le diagnostic `--pen-test`, `inkboard-app::pen_test`) ; l'application remplace alors l'outil par la gomme
 pour le geste (`App::eraser_probe`, substituable dans les tests). C'est le seul crate qui autorise `unsafe`.
 
+## Partage en direct
+
+Le partage en direct est réparti sur trois crates et l'application (détails : [SHARING.md](SHARING.md)).
+
+- `inkboard-session` : le protocole, indépendant du réseau et de l'interface ; il se compile en natif et pour `wasm32`. `proto` contient les messages versionnés, `codec` leur encodage,
+  `crypto` le lien d'invitation et le chiffrement de bout en bout (ChaCha20-Poly1305, une clé pour le lien d'édition et une pour le lien en lecture seule, par-dessus le chiffrement propre au transport).
+  `sequencer` est le côté hôte de la cohérence (il ordonne les modifications acceptées, ignore les doublons, répond à « qu'ai-je manqué ») ; `client` est l'invité optimiste ; `limits` valide tout ce qu'envoie un invité.
+- `inkboard-net` : le transport, `inkboard_session::transport` au-dessus d'iroh (QUIC, chemin direct ou relais ; relais publics n0 par défaut, liste personnalisée, ou aucun), et son équivalent navigateur (côté invité seulement, via un relais).
+- `inkboard-crowd` : tests de charge avec des invités simulés, chacun étant le vrai `Client` avec une liaison dégradée (latence, perte, gel) ; le côté hôte est dans `inkboard-app` (`tests_crowd`).
+- Le gestionnaire d'hôte (permissions, quotas, relais) et le côté invité vivent dans `inkboard-app` (`session_host.rs`, `session_guest.rs`).
+
 ### Pourquoi egui ?
 
 Un seul langage et un exécutable natif, hors ligne par construction, avec une API de dessin qui permet de maîtriser le rendu du
@@ -78,11 +91,19 @@ accessibilité limitée. Si le rendu devait dépasser egui
 
 ## Tests
 
-| Crate | Tests | Ce qui est couvert |
-|---|---|---|
-| `inkboard-core` | 101 | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
-| `inkboard-formats` | 46 | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
-| `inkboard-mcp` | 8 | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports) ; le mode direct, les ressources/notifications et `board_changes` en direct sont testés dans `inkboard-app` (5 tests : édition annulable, ciblage du fichier ouvert, jeton, ressources et notifications, changements et images) |
-| `inkboard-app` | 85 | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet |
+| Crate | Ce qui est couvert |
+|---|---|
+| `inkboard-core` | géométrie, modèle, connecteurs (rotation, coude, courbe), sélection, historique, sauvegarde, SVG, mise en page, poignées, texte riche (insertion/suppression/bascule de styles), routage avec obstacles, index spatial, pression du stylet, coloration |
+| `inkboard-formats` | aller-retours draw.io / Excalidraw / JSON Canvas, imports étrangers, draw.io compressé, Mermaid (flowchart, état, séquence, classes, ER), PNG, PDF, composition LaTeX, fichiers Excalidraw/Canvas réalistes |
+| `inkboard-mcp` | session complète sur le vrai binaire (poignée de main, outils, confinement à la racine, exports, ressources et notifications) ; le mode direct et `board_changes` en direct sont testés dans `inkboard-app` (édition annulable, ciblage du fichier ouvert, jeton, ressources et notifications, changements et images) |
+| `inkboard-app` | création, déplacement avec flèches liées, redimensionnement, rotation, lasso, gomme, annulation d'un geste, texte, tableaux, import, zoom ; **texte riche** (frappe, sélection au clavier, gras/couleur/surlignage) ; **raccourcis** (réaffectation, retrait, enregistrement d'une touche, persistance, raccourcis en édition) ; **points de passage**, contournement d'obstacles, bloc de code (coloré), formule composée (insertion, modification, export teinté), vote, gomme du stylet, présentation, minuteur, presse-papiers, stylet, langues ; **partage en direct** (hôte, invité, images, de bout en bout, foules simulées) ; régression visuelle (`tests_visual`, exécutée par le seul workflow `Visual`) |
+| `inkboard-session` | protocole, chiffrement, entrées hostiles envoyées par un invité |
+| `inkboard-net` | transport en boucle locale, politique de relais et diagnostics, format sur le réseau |
+| `inkboard-crowd` | tableaux de départ, PNG générés, profils de charge et statistiques |
+| `inkboard-cli` | sauvegarde interrompue par un arrêt brutal, extensions de fichier natives, métadonnées de publication |
+| `inkboard-pen` | messages de pointeur synthétiques |
+| `inkboard-fonts`, `inkboard-icons` | les polices embarquées et le lecteur de la bibliothèque d'icônes |
+
+`inkboard-fonts` embarque les polices partagées par l'application et le client web, pour que le texte se mette en page de la même façon partout ; `inkboard-icons` lit la bibliothèque d'icônes empaquetée par `scripts/build_icon_library.py`.
 
 En plus : l'export draw.io a été ouvert dans le visualiseur officiel diagrams.net (formes, flèches liées, pointillés, rotation).

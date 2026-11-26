@@ -1143,3 +1143,125 @@ fn a_multi_page_export_builds_one_file_per_page_or_one_pdf() {
     assert_eq!(files.len(), 2);
     let _ = x;
 }
+
+/// A failing automatic backup is reported once, not every 10 seconds, and the report is re-armed by the next success.
+#[test]
+fn a_failing_autosave_is_reported_once_until_it_works_again() {
+    isolated("a_failing_autosave_is_reported_once_until_it_works_again", |_| {
+        // a folder where the file should be: writing the safety copy fails, whatever the platform
+        std::fs::create_dir_all(autosave_file()).unwrap();
+        let (mut t, _) = board();
+        assert!(t.app().dirty());
+        let overdue = |t: &mut T| {
+            t.app().last_autosave = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap();
+            t.h.step();
+        };
+
+        overdue(&mut t);
+        let first = t.app().toast.clone().map(|(m, _)| m);
+        assert!(first.as_deref().is_some_and(|m| m.starts_with("Automatic backup failed")), "the failure is shown: {first:?}");
+        assert!(t.app().autosave_failed);
+
+        t.app().toast = None;
+        overdue(&mut t);
+        overdue(&mut t);
+        assert!(t.app().toast.is_none(), "the same failure is not repeated");
+
+        // the problem goes away: success re-arms the report
+        std::fs::remove_dir(autosave_file()).unwrap();
+        overdue(&mut t);
+        assert!(!t.app().autosave_failed && autosave_file().is_file());
+        std::fs::remove_file(autosave_file()).unwrap();
+        std::fs::create_dir_all(autosave_file()).unwrap();
+        overdue(&mut t);
+        assert!(t.app().toast.is_some(), "a new failure is reported again");
+    });
+}
+
+#[test]
+fn empty_board_shows_a_hint_that_goes_away_and_never_blocks_the_pointer() {
+    let mut t = T::new();
+    assert!(t.objects().is_empty());
+    let open = t.app().keymap.label(Action::Open);
+    let hint = crate::ui::empty_hint_text(t.app()).expect("hint on an empty board");
+    assert_eq!(hint[0], "Pick a tool and draw, or double-click to type");
+    assert_eq!(hint[1], format!("Open a draw.io, Excalidraw or Mermaid file: {open}"));
+
+    // a click in the middle of the empty board with the rectangle tool still draws
+    t.tool(Tool::Shape(BoxGeom::Rect));
+    let c = t.app().canvas_rect.center();
+    let r = t.app().canvas_rect;
+    let v = t.app().ed.page().view;
+    t.click((f64::from(c.x - r.min.x) - v.x, f64::from(c.y - r.min.y) - v.y));
+    assert_eq!(t.objects().len(), 1, "the hint must not capture the click");
+    assert!(crate::ui::empty_hint_text(t.app()).is_none(), "the hint goes away with the first object");
+
+    // never shown in a screenshot
+    let mut t = T::new();
+    t.app().screenshot = Some(std::path::PathBuf::from("x.png"));
+    assert!(crate::ui::empty_hint_text(t.app()).is_none());
+}
+
+#[test]
+fn the_main_menu_groups_the_exports_in_a_sub_menu_that_fits_a_700_px_window() {
+    let mut t = harness((1024.0, 700.0), false);
+    t.add_rect(100.0, 100.0, 80.0, 50.0);
+    for _ in 0..3 {
+        t.h.step();
+    }
+    open_main_menu(&mut t);
+    let before = clickable_rects(&t).iter().filter(|r| r.width() < 600.0).count();
+    t.h.get_by_label_contains("Export…");
+    let menu = t.h.ctx.memory(|m| {
+        m.areas()
+            .visible_layer_ids()
+            .into_iter()
+            .filter(|l| l.order == egui::Order::Foreground)
+            .filter_map(|l| m.area_rect(l.id))
+            .max_by(|a, b| a.area().total_cmp(&b.area()))
+    });
+    let menu = menu.expect("the menu is open");
+    assert!(menu.max.y <= 700.0, "the menu is taller than the window: {menu:?}");
+
+    let b = t.h.get_by_label_contains("Export…").accesskit_node().bounding_box().expect("the button has a box");
+    t.mv(Pos2::new(num::f32(b.x0.midpoint(b.x1)), num::f32(b.y0.midpoint(b.y1))));
+    for _ in 0..4 {
+        t.h.step();
+    }
+    let rects = clickable_rects(&t);
+    assert!(rects.len() > before, "the sub-menu is open");
+    let mut sub: Vec<egui::Rect> =
+        rects.into_iter().filter(|r| r.min.x >= menu.max.x - 1.0 && r.width() > 150.0 && r.height() < 40.0 && r.min.y < 640.0).collect();
+    sub.sort_by(|a, b| a.min.y.total_cmp(&b.min.y));
+    assert_eq!(sub.len(), 6, "entries on the right of the main menu: {sub:?}");
+    let pdf = sub[2].center(); // PNG, SVG, PDF
+    t.mv(pdf);
+    t.button(pdf, true, egui::Modifiers::NONE);
+    t.button(pdf, false, egui::Modifiers::NONE);
+    t.h.step();
+    assert!(matches!(&t.app().dialog, Some(Dialog::Export { ext, .. }) if *ext == "pdf"), "the PDF export dialog is not open");
+}
+
+#[test]
+fn the_font_buttons_show_a_word_in_their_font_that_fits_the_button() {
+    let mut t = T::new();
+    t.h.step();
+    for (family, _, word) in crate::panel::FONT_BUTTONS {
+        let width = t.h.ctx.fonts_mut(|f| {
+            f.layout_no_wrap(word.to_owned(), crate::fonts::font_id(family, crate::panel::FONT_WORD_SIZE, false), egui::Color32::WHITE).size().x
+        });
+        assert!(width <= 37.0 - 2.0, "{word} is {width} px wide, too much for the 37 px button");
+    }
+}
+
+#[test]
+fn join_is_the_main_button_and_both_buttons_are_tall_in_a_narrow_window() {
+    let mut t = harness((1024.0, 700.0), false);
+    t.app().open_join_window(None);
+    for _ in 0..4 {
+        t.h.step();
+    }
+    let height = |t: &mut T, name: &str| t.h.get_by_label(name).accesskit_node().bounding_box().map_or(0.0, |b| b.y1 - b.y0);
+    assert!(height(&mut t, "Join") >= 40.0, "Join is too short for a finger");
+    assert!(height(&mut t, "Cancel") >= 40.0, "Cancel is too short for a finger");
+}

@@ -1,6 +1,7 @@
 //! Native file format (versioned JSON) and atomic saving.
 
-use crate::model::{Document, Id, Kind, Page};
+use crate::connector::{Arrowhead, End};
+use crate::model::{Document, Id, Kind, Label, Page, VAlign};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -15,7 +16,10 @@ const LEGACY_FORMAT: &str = "tableau-blanc";
 pub fn is_native_format(format: &str) -> bool {
     format == FORMAT || format == LEGACY_FORMAT
 }
-pub const VERSION: u32 = 2;
+/// Highest version read. Written only when the board needs it (see [`required_version`]); otherwise 2.
+pub const VERSION: u32 = 3;
+/// Version written by a board that uses none of the fields added after it.
+const BASE_VERSION: u32 = 2;
 
 /// Extension given to new native files (`board.inkboard`).
 pub const NATIVE_EXT: &str = "inkboard";
@@ -61,9 +65,37 @@ struct EnvelopeIn {
 /// Never in practice: every type of the document serializes (string map keys, no fallible `Serialize`).
 #[must_use]
 pub fn to_json(doc: &Document, pretty: bool) -> String {
-    let env = EnvelopeOut { format: FORMAT, version: VERSION, document: doc };
+    let env = EnvelopeOut { format: FORMAT, version: required_version(doc), document: doc };
     let r = if pretty { serde_json::to_string_pretty(&env) } else { serde_json::to_string(&env) };
     r.expect("serializing a document cannot fail")
+}
+
+/// Version a document must be written with: 3 when it uses a field added after version 2, otherwise 2 (the file is then identical to before).
+///
+/// Every optional field added to the model must be listed here (same predicate as its `skip_serializing_if`).
+#[must_use]
+#[allow(clippy::float_cmp, reason = "exact comparison on purpose: only the untouched default is left out of the file")]
+pub fn required_version(doc: &Document) -> u32 {
+    let label_needs_v3 = |l: &Label| l.valign != VAlign::Middle;
+    let side_needs_v3 = |e: &End| e.side().is_some();
+    let needs_v3 = doc.pages.iter().flat_map(|p| p.objects.iter()).any(|o| {
+        o.style.shadow
+            || match &o.kind {
+                Kind::Box(b) => label_needs_v3(&b.label),
+                Kind::Pen(p) => p.head_end != Arrowhead::None,
+                Kind::Connector(c) => {
+                    c.head_scale != 1.0
+                        || c.label_pos.is_some()
+                        || c.label_offset != 0.0
+                        || side_needs_v3(&c.start)
+                        || side_needs_v3(&c.end)
+                        || c.label.as_ref().is_some_and(label_needs_v3)
+                }
+                Kind::Image(i) => !i.recolor.is_empty(),
+                Kind::Table(_) => false,
+            }
+    });
+    if needs_v3 { VERSION } else { BASE_VERSION }
 }
 
 /// Removes a UTF-8 byte order mark (written by Notepad and PowerShell 5): neither JSON nor the text formats accept it.
@@ -217,6 +249,64 @@ mod tests {
         );
         assert!(matches!(from_json(r#"{"format":"inkboard","version":99,"document":{"name":"x","pages":[]}}"#), Err(LoadError::TooNew(99))));
         assert!(matches!(from_json("not json"), Err(LoadError::Json(_))));
+    }
+
+    fn one_object(o: Object) -> Document {
+        let mut d = Document::default();
+        d.pages[0].objects.push(o);
+        d
+    }
+
+    fn version_of(d: &Document) -> String {
+        let v: serde_json::Value = serde_json::from_str(&to_json(d, false)).unwrap();
+        v["version"].to_string()
+    }
+
+    #[test]
+    fn plain_board_is_written_as_version_2() {
+        let mut d = sample();
+        assert!(to_json(&d, false).starts_with(r#"{"format":"inkboard","version":2,"#));
+        d.pages[0].objects.clear();
+        assert_eq!(version_of(&d), "2");
+    }
+
+    #[test]
+    fn each_new_field_requires_version_3() {
+        use crate::connector::AttachSide;
+        let boxed = |style: Style, label: Label| Object::new_box(BoxGeom::Rect, Frame::new(0.0, 0.0, 10.0, 10.0), style, label);
+        let conn = |f: &dyn Fn(&mut Connector)| {
+            let mut c = Connector::new(End::free(Pt::new(0.0, 0.0)), End::free(Pt::new(5.0, 5.0)));
+            f(&mut c);
+            one_object(Object::new(Kind::Connector(c), Style::default()))
+        };
+        let valign = Label { valign: VAlign::Top, ..Label::default() };
+        let mut pen = Object::new_pen(vec![Pt::new(0.0, 0.0), Pt::new(5.0, 5.0)], false, Style::default());
+        if let Kind::Pen(p) = &mut pen.kind {
+            p.head_end = Arrowhead::Arrow;
+        }
+        let mut img = sample().pages[0].objects.pop().unwrap();
+        if let Kind::Image(i) = &mut img.kind {
+            i.recolor = vec![(Color::rgb(1, 2, 3), Color::rgb(4, 5, 6))];
+        }
+        let cases: Vec<(&str, Document)> = vec![
+            ("recolor", one_object(img)),
+            ("head_scale", conn(&|c| c.head_scale = 2.0)),
+            ("shadow", one_object(boxed(Style { shadow: true, ..Style::default() }, Label::default()))),
+            ("pen head_end", one_object(pen)),
+            ("side", conn(&|c| c.start = End::Bound { target: Id::from("x"), anchor: Default::default(), side: Some(AttachSide::Top) })),
+            ("label_pos", conn(&|c| c.label_pos = Some(0.25))),
+            ("label_offset", conn(&|c| c.label_offset = 12.0)),
+            ("valign", one_object(boxed(Style::default(), valign))),
+        ];
+        for (name, d) in cases {
+            assert_eq!(version_of(&d), "3", "{name}");
+        }
+    }
+
+    #[test]
+    fn version_3_is_read_and_version_4_is_too_new() {
+        assert!(from_json(r#"{"format":"inkboard","version":3,"document":{"name":"x","pages":[]}}"#).is_ok());
+        assert!(matches!(from_json(r#"{"format":"inkboard","version":4,"document":{"name":"x","pages":[]}}"#), Err(LoadError::TooNew(4))));
     }
 
     #[test]

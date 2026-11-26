@@ -1422,6 +1422,22 @@ fn live_calls_target_the_open_file_only() {
 }
 
 #[test]
+fn the_live_token_is_256_random_bits_and_its_file_is_private() {
+    let (a, b) = (crate::live::new_token().unwrap(), crate::live::new_token().unwrap());
+    assert!(a.len() == 64 && a.bytes().all(|c| c.is_ascii_hexdigit()), "{a}");
+    assert_ne!(a, b);
+    let mut t = T::new();
+    let live = start_live(&mut t, "private");
+    let info = inkboard_mcp::live::read_info(&live.file).expect("discovery file");
+    assert_eq!(info.token.len(), 64);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&live.file).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+}
+
+#[test]
 fn live_server_rejects_a_wrong_token_and_cleans_up_its_discovery_file() {
     use std::io::{BufRead, BufReader, Write};
     let mut t = T::new();

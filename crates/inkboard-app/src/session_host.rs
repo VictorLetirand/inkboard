@@ -21,8 +21,8 @@ use inkboard_session::codec::{Codec, read_hello};
 use inkboard_session::crypto::{Entropy, FrameCipher, HostKeys, Link, OsEntropy, SecureChannel, SeededEntropy, SessionKey, verify_join_proof};
 use inkboard_session::limits::{Limits, Quota, RateLimiter, Violation, check_message, check_message_size, check_page_count};
 use inkboard_session::proto::{
-    AgentEvent as WireAgent, AssetChunk, AssetInfo, ByeReason, DocMeta, Message, PROTO_VERSION, ParticipantId, ParticipantInfo, Presence, RefuseReason,
-    RejectReason, Role, Seq, Snapshot, Submit, UploadStatus, Welcome,
+    AgentEvent as WireAgent, AssetChunk, AssetInfo, ByeReason, Compat, DocMeta, Message, PROTO_VERSION, ParticipantId, ParticipantInfo, Presence, RefuseReason,
+    RejectReason, Role, Seq, Snapshot, Submit, UploadStatus, Welcome, compat,
 };
 use inkboard_session::sequencer::{Sequencer, Submitted};
 use inkboard_session::snapshot::{PART_BYTES, into_messages};
@@ -525,6 +525,8 @@ struct Conn {
     /// The first frame was opened with a key of a revoked link (see `regenerate_links`): only a guest already admitted may use it,
     /// to resume its place.
     revoked_key: Option<SessionKey>,
+    /// The guest speaks another (admitted) version of the protocol: it joins read-only, whatever it asked for.
+    version_view: bool,
     state: ConnState,
     opened: u64,
     last_rx: u64,
@@ -589,6 +591,8 @@ struct Member {
     name: String,
     color: (u8, u8, u8),
     role: Role,
+    /// Admitted with another version of the protocol (see `Conn::version_view`): it stays read-only, the host cannot make it an editor.
+    version_view: bool,
     /// Transport identity of the guest: only the same identity can resume the place.
     peer: String,
     conn: Option<u64>,
@@ -618,6 +622,8 @@ struct Request {
     conn: u64,
     name: String,
     key_role: Role,
+    /// See `Conn::version_view`.
+    version_view: bool,
     peer: String,
     /// When the request was made (it expires, see `HostConfig::pending_ms`).
     at: u64,
@@ -934,7 +940,8 @@ impl SessionHost {
 
     pub fn set_role(&mut self, pid: ParticipantId, role: Role) {
         let Some(m) = self.members.get_mut(&pid) else { return };
-        if m.role == role {
+        // a guest of another version would drop the fields it does not know: it never becomes an editor
+        if m.role == role || (role == Role::Edit && m.version_view) {
             return;
         }
         m.role = role;
@@ -1080,6 +1087,7 @@ impl SessionHost {
                 chan: None,
                 key_role: Role::View,
                 revoked_key: None,
+                version_view: false,
                 state: ConnState::New,
                 opened: self.now,
                 last_rx: self.now,
@@ -1593,6 +1601,8 @@ impl SessionHost {
             return self.refuse(i, RefuseReason::Full);
         }
         let name = sanitize_name(&h.name, &t("Guest"));
+        let version_view = matches!(compat(PROTO_VERSION, h.proto), Ok(Compat::ReadOnly));
+        self.conns[i].version_view = version_view;
         if key_role == Role::View && self.cfg.auto_accept_view {
             return self.admit(i, name, Role::View, peer);
         }
@@ -1606,7 +1616,7 @@ impl SessionHost {
         let request = self.next_request;
         self.next_request += 1;
         self.conns[i].state = ConnState::Pending(request);
-        self.requests.push(Request { id: request, conn: self.conns[i].id, name: name.clone(), key_role, peer, at: self.now });
+        self.requests.push(Request { id: request, conn: self.conns[i].id, name: name.clone(), key_role, version_view, peer, at: self.now });
         self.events.push(HostEvent::JoinRequest { request, name });
     }
 
@@ -1619,7 +1629,7 @@ impl SessionHost {
                 None => self.refuse(i, RefuseReason::Declined),
                 Some(_) if !self.capacity_left() => self.refuse(i, RefuseReason::Full),
                 Some(role) => {
-                    let role = if req.key_role == Role::View { Role::View } else { role };
+                    let role = if req.key_role == Role::View || req.version_view { Role::View } else { role };
                     self.admit(i, req.name, role, req.peer);
                 }
             }
@@ -1639,6 +1649,7 @@ impl SessionHost {
             name: name.clone(),
             color: color_for(pid, &used),
             role,
+            version_view: self.conns[i].version_view,
             peer,
             conn: Some(self.conns[i].id),
             away_since: None,

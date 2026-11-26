@@ -68,6 +68,7 @@ pub const FR: &[(&str, &str)] = &[
     ("At most {} relays.", "{} relais au maximum."),
     ("Auto", "Auto"),
     ("Automatic (system language)", "Automatique (langue du système)"),
+    ("Automatic backup failed: {}", "Échec de la sauvegarde automatique : {}"),
     ("Automatic layout", "Mise en page automatique"),
     ("Back to 100 %", "Revenir à 100 %"),
     ("Background", "Arrière-plan"),
@@ -180,7 +181,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Eraser end detected", "Extrémité gomme détectée"),
     ("Esc", "Échap"),
     ("Everybody who opens a link needs your approval to enter.", "Toute personne qui ouvre un lien doit être acceptée par vous pour entrer."),
-    ("Exchange with other tools", "Échange avec d'autres outils"),
+    ("Export…", "Exporter…"),
     ("Export as Excalidraw", "Exporter en Excalidraw"),
     ("Export as JSON Canvas (.canvas)", "Exporter en JSON Canvas (.canvas)"),
     ("Export as PDF", "Exporter en PDF"),
@@ -312,6 +313,8 @@ pub const FR: &[(&str, &str)] = &[
     ("Original color: {}", "Couleur d'origine : {}"),
     ("Original colors", "Couleurs d'origine"),
     ("Open / import", "Ouvrir / importer"),
+    ("Pick a tool and draw, or double-click to type", "Choisissez un outil et dessinez, ou double-cliquez pour écrire"),
+    ("Open a draw.io, Excalidraw or Mermaid file: {}", "Ouvrez un fichier draw.io, Excalidraw ou Mermaid : {}"),
     ("Open / import a file…", "Ouvrir / importer un fichier…"),
     (
         "Open the address of the service in your browser (https://{}) and accept the warning if there is one, then try again.",
@@ -435,6 +438,10 @@ pub const FR: &[(&str, &str)] = &[
     (
         "This link was made by a newer version of Inkboard: please update Inkboard.",
         "Ce lien vient d'une version plus récente d'Inkboard : mettez Inkboard à jour.",
+    ),
+    (
+        "This session uses another version of Inkboard: you can view it but not edit. Update Inkboard (or reload the page) to edit.",
+        "Cette session utilise une autre version d'Inkboard : vous pouvez la consulter mais pas la modifier. Mettez Inkboard à jour (ou rechargez la page) pour modifier.",
     ),
     ("This text is too long to be an invitation link.", "Ce texte est trop long pour être un lien d'invitation."),
     ("Tilt detected", "Inclinaison détectée"),

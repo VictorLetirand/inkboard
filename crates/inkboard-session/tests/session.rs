@@ -289,7 +289,7 @@ fn an_incompatible_protocol_gets_a_clear_refusal() {
     let mut w = World::new(9, 0, NetConfig::ideal(), 1000);
     let key = w.host.ticket(Role::Edit).key;
     let mut raw = Raw::new(&w.net, "old", &key);
-    raw.send(&hello("old", &key, Role::Edit, 99));
+    raw.send(&hello("old", &key, Role::Edit, inkboard_session::proto::MIN_PROTO - 1));
     w.rounds(3, 10);
     let refused = raw.received().into_iter().find_map(|m| if let Message::Refused { reason } = m { Some(reason) } else { None });
     let text = refused.expect("refused").message();
@@ -310,6 +310,35 @@ fn an_incompatible_protocol_gets_a_clear_refusal() {
     assert!(matches!(err, Error::IncompatibleProtocol { theirs: 99, .. }));
     assert!(err.to_string().contains("update Inkboard"));
     assert_eq!(g.client.phase(), Phase::Closed);
+}
+
+#[test]
+fn a_newer_host_that_gives_read_only_opens_a_session_that_cannot_submit() {
+    let w = World::new(9, 0, NetConfig::ideal(), 1000);
+    let mut g = Guest::new(&w.net, "g", &w.host.ticket(Role::Edit), 1);
+    let welcome = |role| Welcome {
+        participant: ParticipantId(1),
+        color: (0, 0, 0),
+        role,
+        doc_meta: inkboard_session::proto::DocMeta { name: "x".into(), seq: 0, pages: 1 },
+        host_proto: inkboard_session::PROTO_VERSION + 1,
+        host_name: String::new(),
+        participants: vec![],
+    };
+    // a newer host that lets us edit: refused (it cannot have checked what it does not know)
+    let err = g.client.handle(Message::Welcome(welcome(Role::Edit)), 0).unwrap_err();
+    assert!(matches!(err, Error::IncompatibleProtocol { .. }));
+    assert_eq!(g.client.phase(), Phase::Closed);
+
+    // read-only: the session opens and nothing can be submitted
+    let mut g = Guest::new(&w.net, "g2", &w.host.ticket(Role::Edit), 1);
+    g.client.handle(Message::Welcome(welcome(Role::View)), 0).unwrap();
+    assert_eq!(g.client.phase(), Phase::Live);
+    assert_eq!(g.client.role(), Role::View);
+    assert!(g.client.version_view());
+    // even a RoleChange to Edit does not lift it
+    g.client.handle(Message::RoleChange { participant: ParticipantId(1), role: Role::Edit }, 1).unwrap();
+    assert_eq!(g.client.role(), Role::View);
 }
 
 trait HelloExt {

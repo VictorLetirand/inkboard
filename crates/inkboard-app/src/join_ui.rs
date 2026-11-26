@@ -353,10 +353,12 @@ fn form_window(app: &mut App, ctx: &egui::Context) {
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            let go = ui.button(t("Join"));
+            // comfortable touch targets when the window is narrow
+            let height = if ctx.content_rect().width() < crate::chrome::NARROW { 40.0 } else { 0.0 };
+            let go = crate::theme::primary_button(ui, "Join", height);
             mark("join_go", &go);
             join |= go.clicked();
-            let no = ui.button(t("Cancel"));
+            let no = ui.add(egui::Button::new(t("Cancel")).min_size(egui::vec2(0.0, height)));
             mark("join_cancel", &no);
             cancel = no.clicked();
         });
