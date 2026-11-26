@@ -2,29 +2,29 @@
   {
     "name": "draw.io",
     "repo": "https://github.com/jgraph/drawio",
-    "commit": "17b367b91dbab91804f852645788d7ffb46dcb79",
-    "date": "2026-10-18",
+    "commit": "f411a11f4f6b8994d869bdbc45f4d4d9e2284f34",
+    "date": "2026-11-17",
     "license": "Apache-2.0"
   },
   {
     "name": "Simple Icons",
     "repo": "https://github.com/simple-icons/simple-icons",
-    "commit": "4d29a35c954699b389a834aacc97dd6e7e74143c",
-    "date": "2026-10-13",
+    "commit": "c01109118e134e061c9bdf2e1a7f814117f1f032",
+    "date": "2026-11-23",
     "license": "CC0-1.0"
   },
   {
     "name": "Tabler Icons",
     "repo": "https://github.com/tabler/tabler-icons",
-    "commit": "a4ce1404bc6d24d3c365afe7b258d6bf6f48d62d",
-    "date": "2026-10-05",
+    "commit": "85e870dbe8680c2d6deefd062122d30ef1544a41",
+    "date": "2026-11-16",
     "license": "MIT"
   },
   {
     "name": "Lucide",
     "repo": "https://github.com/lucide-icons/lucide",
-    "commit": "1ef60af944de207e0d5176905a0759ba12e6ee8d",
-    "date": "2026-10-16",
+    "commit": "e00b2b26350fe4dfb6f5273aa366f94974430903",
+    "date": "2026-11-22",
     "license": "ISC"
   },
   {

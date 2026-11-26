@@ -195,7 +195,7 @@ The AppImage also carries two Ubuntu 22.04 libraries that the window layer loads
 | foreign-types | 0.5.0 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | foreign-types-shared | 0.3.1 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
-| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
+| form_urlencoded | 1.2.3 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | futures | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-buffered | 0.2.13 | MIT | https://github.com/conradludgate/futures-buffered |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
@@ -521,7 +521,7 @@ The AppImage also carries two Ubuntu 22.04 libraries that the window layer loads
 | universal-hash | 0.5.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | universal-hash | 0.6.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | untrusted | 0.9.0 | ISC | https://github.com/briansmith/untrusted |
-| url | 2.5.8 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
+| url | 2.5.9 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | usvg | 0.45.1 | Apache-2.0 OR MIT | https://github.com/linebender/resvg |
 | usvg | 0.48.1 | Apache-2.0 OR MIT | https://github.com/linebender/resvg |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter |
@@ -5139,7 +5139,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 74 — data-url 0.3.2, idna 1.1.0, percent-encoding 2.3.2, url 2.5.8
+### Text 74 — data-url 0.3.2, idna 1.1.0, percent-encoding 2.3.2, url 2.5.9
 
 ```text
 Copyright (c) 2013-2025 The rust-url developers
@@ -6853,7 +6853,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Text 111 — form_urlencoded 1.2.2
+### Text 111 — form_urlencoded 1.2.3
 
 ```text
 Copyright (c) 2013-2016 The rust-url developers
